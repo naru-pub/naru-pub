@@ -499,7 +499,23 @@ const comments = await db.collection("comments").list({
                   선택하세요.
                 </li>
               </ul>
-              <Code>{`try {\n  await db.collection("guestbook").add({ message: "안녕하세요" });\n} catch (error) {\n  // SDK API 오류는 NaruDataError이며 HTTP 상태가 status에 있습니다.\n  // 네트워크 오류는 status가 없을 수 있습니다.\n  document.querySelector("#status").textContent =\n    error.status === 429 ? "잠시 후 다시 시도하세요." : error.message;\n}`}</Code>
+              <Code>{`try {\n  await db.collection("guestbook").add({ message: "안녕하세요" });\n} catch (error) {\n  // NaruDataError.status는 HTTP 상태이며, 응답을 받지 못하면 0입니다.\n  // 잘못된 입력은 TypeError입니다.\n  document.querySelector("#status").textContent =\n    error.status === 429 ? "잠시 후 다시 시도하세요." : error.message;\n}`}</Code>
+              <p>
+                네트워크 오류가 나도 쓰기는 서버에 저장되었을 수 있습니다. SDK는
+                자동 재시도하지 않습니다. 특히 add()를 다시 호출하면 중복 문서가
+                생길 수 있으므로 먼저 저장 여부를 확인하세요.
+              </p>
+              <p>
+                데이터에는 JSON 값만 사용하세요. undefined, NaN, Infinity,
+                BigInt, 함수, 순환 참조, 빈 배열 슬롯은 허용하지 않습니다.
+                Date는 문자열로 명시적으로 변환하세요. 객체는 일반 객체여야 하며
+                getter, Symbol 키, 열거할 수 없는 속성도 허용하지 않습니다.
+              </p>
+              <p>
+                TypeScript에서는 collection&lt;Post&gt;("posts")로 읽기와 쓰기
+                타입을 지정할 수 있습니다. 이 타입은 서버 데이터의 런타임 검증을
+                대신하지 않습니다.
+              </p>
               <dl className="space-y-4">
                 {[
                   [

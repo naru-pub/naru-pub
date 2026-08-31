@@ -6,6 +6,47 @@ export class NaruDataError extends Error {
     this.status = status;
   }
 }
+// Reject values JSON.stringify would silently discard or coerce.
+function validateJson(value, ancestors = new Set()) {
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return;
+  if (typeof value === "number" && Number.isFinite(value)) return;
+  if (typeof value !== "object" || ancestors.has(value))
+    throw new TypeError(
+      "Data must contain only finite JSON values without cycles.",
+    );
+  const array = Array.isArray(value);
+  if (
+    !array &&
+    Object.getPrototypeOf(value) !== Object.prototype &&
+    Object.getPrototypeOf(value) !== null
+  )
+    throw new TypeError(
+      "Data must use plain objects and arrays; convert dates to strings explicitly.",
+    );
+  ancestors.add(value);
+  const keys = Reflect.ownKeys(value).filter(
+    (key) => !(array && key === "length"),
+  );
+  if (array && keys.length !== value.length)
+    throw new TypeError(
+      "Data arrays must not contain holes or extra properties.",
+    );
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      typeof key !== "string" ||
+      !descriptor.enumerable ||
+      !("value" in descriptor) ||
+      (array && !/^(0|[1-9][0-9]*)$/.test(key))
+    )
+      throw new TypeError(
+        "Data must contain only enumerable JSON values, without getters or symbols.",
+      );
+    validateJson(descriptor.value, ancestors);
+  }
+  ancestors.delete(value);
+}
 const segment = (value) => {
   if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(value))
     throw new TypeError("Invalid collection or document ID.");
@@ -26,22 +67,53 @@ export function createDatabase({ site }) {
   const root = `${base.origin}/api/data/${encodeURIComponent(site)}`;
   const storageKey = `naru:owner:${base.origin}:${site}`;
   async function request(url, method = "GET", body, token) {
-    const response = await fetch(url, {
-      method,
-      credentials: "omit",
-      cache: "no-store",
-      redirect: "error",
-      headers: {
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const result = await response.json();
+    // Serialize before awaiting so later caller mutations cannot change the write.
+    const serialized = body === undefined ? undefined : JSON.stringify(body);
+    let response;
+    try {
+      response = await fetch(url, {
+        method,
+        credentials: "omit",
+        cache: "no-store",
+        redirect: "error",
+        headers: {
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: serialized,
+      });
+    } catch (cause) {
+      const error = new NaruDataError(
+        0,
+        "Network request failed. Check your connection before retrying.",
+      );
+      error.cause = cause;
+      throw error;
+    }
+    let result;
+    try {
+      result = await response.json();
+    } catch (cause) {
+      const error = new NaruDataError(
+        response.status,
+        response.ok
+          ? "Invalid JSON response from the database."
+          : `Database request failed (HTTP ${response.status}).`,
+      );
+      error.cause = cause;
+      throw error;
+    }
     if (!response.ok)
       throw new NaruDataError(
         response.status,
-        result.error || "Database request failed.",
+        typeof result?.error === "string"
+          ? result.error
+          : `Database request failed (HTTP ${response.status}).`,
+      );
+    if (!result || typeof result !== "object" || Array.isArray(result))
+      throw new NaruDataError(
+        response.status,
+        "Invalid response from the database.",
       );
     return result;
   }
@@ -51,7 +123,7 @@ export function createDatabase({ site }) {
         const path = `${root}/${segment(collectionName)}`;
         const send = async (url, method, body) => {
           try {
-            return await request(url, method, body, await getToken());
+            return await request(url, method, body, getToken());
           } catch (error) {
             if (error.status === 401) unauthorized();
             throw error;
@@ -93,9 +165,11 @@ export function createDatabase({ site }) {
             return send(`${path}?${query}`);
           },
           add(data) {
+            validateJson(data);
             return send(path, "POST", { data });
           },
           set(id, data) {
+            validateJson(data);
             return send(`${path}/${segment(id)}`, "PUT", { data });
           },
           delete(id) {
@@ -116,17 +190,24 @@ export function createDatabase({ site }) {
     function clear() {
       const current = token;
       token = null;
-      // An older client must not erase a newer sign-in on the same page.
-      const stored = window.sessionStorage.getItem(key);
-      if (stored) {
-        try {
-          if (JSON.parse(stored).accessToken === current)
-            window.sessionStorage.removeItem(key);
-        } catch {
-          window.sessionStorage.removeItem(key);
-        }
-      }
       if (activeOwner === owner) activeOwner = null;
+      // An older client must not erase a newer sign-in on the same page.
+      try {
+        const stored = window.sessionStorage.getItem(key);
+        if (stored) {
+          let parsed;
+          try {
+            parsed = JSON.parse(stored);
+          } catch {
+            // Malformed saved credentials cannot represent a newer login.
+          }
+          if (!parsed || parsed.accessToken === current)
+            window.sessionStorage.removeItem(key);
+        }
+      } catch {
+        // Storage may become unavailable after sign-in. Still revoke remotely
+        // and invalidate this client instead of masking a 401 or blocking logout.
+      }
     }
     const owner = {
       ...client(() => {
@@ -172,7 +253,11 @@ export function createDatabase({ site }) {
       saved.expiresAt <= Date.now() ||
       saved.expiresAt > Date.now() + 24 * 60 * 60 * 1000 + 60000
     ) {
-      window.sessionStorage.removeItem(key);
+      try {
+        window.sessionStorage.removeItem(key);
+      } catch {
+        // Unavailable storage is not a usable owner session.
+      }
       return null;
     }
     // Restoring never extends the deadline. The server checks authorization on every request.

@@ -12,29 +12,34 @@ export interface Document<T = Json> {
   updated_at: string;
 }
 export class NaruDataError extends Error {
+  /** HTTP status, or 0 when no HTTP response was received. */
   status: number;
+  cause?: unknown;
+  constructor(status: number, message: string);
+}
+export interface Collection<T = Json> {
+  get(id: string): Promise<Document<T>>;
+  list(options?: {
+    limit?: number;
+    /** Opaque cursor from the same collection, sort order and filters. */
+    after?: string;
+    /** Up to 5 top-level scalar equality filters, combined with AND. */
+    where?: Record<string, string | number | boolean | null>;
+    orderBy?: "id" | "created_at" | "updated_at";
+    direction?: "asc" | "desc";
+  }): Promise<{ documents: Document<T>[]; nextCursor: string | null }>;
+  add(data: T): Promise<{ id: string }>;
+  set(id: string, data: T): Promise<{ id: string }>;
+  delete(id: string): Promise<{ success: true }>;
 }
 export interface Database {
-  collection(name: string): {
-    get(id: string): Promise<Document>;
-    list(options?: {
-      limit?: number;
-      /** Opaque cursor from the same collection, sort order and filters. */
-      after?: string;
-      /** Up to 5 top-level scalar equality filters, combined with AND. */
-      where?: Record<string, string | number | boolean | null>;
-      orderBy?: "id" | "created_at" | "updated_at";
-      direction?: "asc" | "desc";
-    }): Promise<{ documents: Document[]; nextCursor: string | null }>;
-    add(data: Json): Promise<{ id: string }>;
-    set(id: string, data: Json): Promise<{ id: string }>;
-    delete(id: string): Promise<{ success: true }>;
-  };
+  /** Types describe your schema; reads are not runtime schema validation. */
+  collection<T = Json>(name: string): Collection<T>;
 }
 export interface OwnerDatabase extends Database {
   /** Maximum owner session expiration (up to 24 hours), in Unix milliseconds. */
   expiresAt: number;
-  /** Drops local credentials even if server revocation fails. */
+  /** Invalidates this client and attempts storage cleanup before server revocation. Offline revocation may fail. */
   signOut(): Promise<void>;
 }
 export const CONTROL_PLANE_ORIGIN: "https://naru.pub";

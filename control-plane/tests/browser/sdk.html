@@ -1,0 +1,156 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Naru SDK local browser acceptance</title>
+<h1>Naru SDK local browser acceptance</h1>
+<p>
+  Uses the local SDK, native browser storage and crypto, and simulated API
+  responses. No production writes.
+</p>
+<button id="run">Run checks</button>
+<button id="reload">Check page reload</button>
+<pre id="results" role="status">Ready</pre>
+<script type="module">
+  import { createDatabase, NaruDataError } from "/sdk/1.0.0/naru-data.js";
+  const output = document.querySelector("#results");
+  const reloadKey = "naru-sdk-fixture-reload";
+  const sessionKey = `naru:owner:https://naru.pub:sdk-browser-test:session:${location.origin}${location.pathname}`;
+  const reloadDeadline = sessionStorage.getItem(reloadKey);
+  if (reloadDeadline) {
+    try {
+      const owner = await createDatabase({
+        site: "sdk-browser-test",
+      }).completeOwnerSignIn();
+      output.textContent =
+        owner?.expiresAt === Number(reloadDeadline)
+          ? "PASS actual page reload restores the original deadline"
+          : "FAIL page reload changed or lost the deadline";
+    } finally {
+      sessionStorage.removeItem(reloadKey);
+      sessionStorage.removeItem(sessionKey);
+    }
+  }
+  document.querySelector("#reload").onclick = () => {
+    const expiresAt = Date.now() + 60000;
+    sessionStorage.setItem(
+      sessionKey,
+      JSON.stringify({
+        accessToken: "t".repeat(43),
+        expiresAt,
+        redirectUri: location.origin + location.pathname,
+      }),
+    );
+    sessionStorage.setItem(reloadKey, String(expiresAt));
+    location.reload();
+  };
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+    output.textContent += "\nPASS " + message;
+  };
+  document.querySelector("#run").onclick = async () => {
+    output.textContent = "Running";
+    const original = window.fetch;
+    const key = `naru:owner:https://naru.pub:sdk-browser-test:session:${location.origin}${location.pathname}`;
+    try {
+      const expiresAt = Date.now() + 60000;
+      const saved = {
+        accessToken: "t".repeat(43),
+        expiresAt,
+        redirectUri: location.origin + location.pathname,
+      };
+      sessionStorage.setItem(key, JSON.stringify(saved));
+      const db = createDatabase({ site: "sdk-browser-test" });
+      const owner = await db.completeOwnerSignIn();
+      check(
+        owner.expiresAt === expiresAt,
+        "native sessionStorage restores exact expiry",
+      );
+      const restored = await createDatabase({
+        site: "sdk-browser-test",
+      }).completeOwnerSignIn();
+      check(
+        restored.expiresAt === expiresAt,
+        "new SDK instance preserves session deadline",
+      );
+      const calls = [];
+      window.fetch = async (url, options) => {
+        calls.push({ url, options });
+        return Response.json({ documents: [], nextCursor: null, id: "one" });
+      };
+      await owner.collection("posts").set("one", { title: "브라우저 테스트" });
+      await db.collection("posts").list({
+        where: { category: "일상" },
+        orderBy: "created_at",
+        direction: "desc",
+      });
+      check(
+        calls[0].options.headers.Authorization ===
+          `Bearer ${saved.accessToken}`,
+        "admin write uses bearer",
+      );
+      check(
+        !calls[1].options.headers.Authorization &&
+          calls.every((c) => c.options.credentials === "omit"),
+        "public reads stay anonymous",
+      );
+      check(
+        new URL(calls[1].url).searchParams.get("where") ===
+          JSON.stringify({ category: "일상" }),
+        "Korean filters survive URL encoding",
+      );
+      let invalid = false;
+      try {
+        db.collection("posts").add({ title: undefined });
+      } catch (e) {
+        invalid = e instanceof TypeError;
+      }
+      check(
+        invalid && calls.length === 2,
+        "invalid JSON is rejected before a request",
+      );
+      window.fetch = async () =>
+        new Response("<html>Unauthorized</html>", { status: 401 });
+      let revoked = false;
+      try {
+        await owner.collection("posts").get("one");
+      } catch (e) {
+        revoked = e instanceof NaruDataError && e.status === 401;
+      }
+      check(
+        revoked && sessionStorage.getItem(key) === null,
+        "HTML 401 clears persisted session",
+      );
+      sessionStorage.setItem(key, JSON.stringify(saved));
+      const logout = await createDatabase({
+        site: "sdk-browser-test",
+      }).completeOwnerSignIn();
+      window.fetch = async () => {
+        throw new TypeError("Offline");
+      };
+      let offline = false;
+      try {
+        await logout.signOut();
+      } catch (e) {
+        offline = e.status === 0;
+      }
+      check(
+        offline && sessionStorage.getItem(key) === null,
+        "offline logout removes local credentials",
+      );
+      check(
+        (
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode("test"),
+          )
+        ).byteLength === 32,
+        "native secure-context crypto is available",
+      );
+      output.textContent += "\nALL CHECKS PASSED";
+    } catch (e) {
+      output.textContent += "\nFAIL " + e.message;
+    } finally {
+      window.fetch = original;
+      sessionStorage.removeItem(key);
+    }
+  };
+</script>

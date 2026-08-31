@@ -377,12 +377,197 @@ test("revocation clears persisted credentials; logout clears them even offline",
     globalThis.fetch = async () => {
       throw new Error("Offline");
     };
-    await assert.rejects(restored.signOut(), /Offline/);
+    await assert.rejects(
+      restored.signOut(),
+      (e) =>
+        e instanceof NaruDataError &&
+        e.status === 0 &&
+        e.cause.message === "Offline",
+    );
     assert.equal(browser.storage.size, 0);
     await assert.rejects(
       restored.collection("posts").list(),
       (e) => e.status === 401,
     );
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.fetch = oldFetch;
+  }
+});
+
+test("non-JSON HTTP errors preserve status; network failures are distinct", async () => {
+  const original = globalThis.fetch;
+  const entries = createDatabase({ site: "alice" }).collection("posts");
+  try {
+    for (const [status, body] of [
+      [502, "<html>proxy error</html>"],
+      [401, ""],
+      [429, "null"],
+      [200, "broken JSON"],
+      [200, "null"],
+    ]) {
+      globalThis.fetch = async () => new Response(body, { status });
+      await assert.rejects(
+        entries.get("one"),
+        (e) =>
+          e instanceof NaruDataError &&
+          e.status === status &&
+          !e.message.includes("<html>"),
+      );
+    }
+    const cause = new TypeError("Failed to fetch");
+    globalThis.fetch = async () => {
+      throw cause;
+    };
+    await assert.rejects(
+      entries.get("one"),
+      (e) => e.status === 0 && e.cause === cause,
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("writes reject lossy JSON without requests and snapshot valid shared references", async () => {
+  const original = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return Response.json({ id: "one" });
+  };
+  const entries = createDatabase({ site: "alice" }).collection("posts");
+  const cyclic = {};
+  cyclic.self = cyclic;
+  let getterCalled = false;
+  const getter = {
+    get x() {
+      getterCalled = true;
+      return 1;
+    },
+  };
+  try {
+    for (const value of [
+      undefined,
+      NaN,
+      Infinity,
+      { a: undefined },
+      [undefined],
+      Array(1),
+      1n,
+      () => 1,
+      Symbol(),
+      new Date(),
+      new Map(),
+      cyclic,
+      getter,
+      { [Symbol()]: 1 },
+    ]) {
+      assert.throws(() => entries.add(value), TypeError);
+      assert.throws(() => entries.set("one", value), TypeError);
+    }
+    assert.equal(getterCalled, false);
+    assert.equal(bodies.length, 0);
+    const shared = { title: "before", count: 0, active: false, optional: null };
+    const pending = entries.add({ a: shared, b: shared });
+    shared.title = "after";
+    await pending;
+    assert.equal(bodies[0].data.a.title, "before");
+    assert.deepEqual(bodies[0].data.a, bodies[0].data.b);
+    await entries.set("one", null);
+    assert.equal(bodies[1].data, null);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("storage denial does not mask revocation or prevent remote logout", async () => {
+  const oldWindow = globalThis.window,
+    oldFetch = globalThis.fetch;
+  const key =
+    "naru:owner:https://naru.pub:alice:session:https://alice.example/admin.html";
+  try {
+    for (const action of ["logout", "unauthorized"]) {
+      const browser = fakeBrowser();
+      globalThis.window = browser;
+      browser.storage.set(
+        key,
+        JSON.stringify({
+          accessToken: "t".repeat(43),
+          expiresAt: Date.now() + 60000,
+          redirectUri: browser.location.href,
+        }),
+      );
+      const db = createDatabase({ site: "alice" });
+      const admin = await db.completeOwnerSignIn();
+      browser.sessionStorage.getItem = browser.sessionStorage.removeItem =
+        () => {
+          throw new DOMException("Storage denied", "SecurityError");
+        };
+      const calls = [];
+      globalThis.fetch = async (url) => {
+        calls.push(url);
+        return action === "logout"
+          ? Response.json({ success: true })
+          : new Response("Unauthorized", { status: 401 });
+      };
+      if (action === "logout") {
+        await admin.signOut();
+        assert.ok(calls[0].endsWith("/revoke"));
+      } else
+        await assert.rejects(
+          admin.collection("posts").get("one"),
+          (e) => e.status === 401,
+        );
+      await assert.rejects(
+        admin.collection("posts").get("one"),
+        (e) => e.status === 401,
+      );
+      assert.equal(calls.length, 1);
+      assert.equal(await db.completeOwnerSignIn(), null);
+    }
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.fetch = oldFetch;
+  }
+});
+
+test("failed token persistence revokes the new token and concurrent completions exchange once", async () => {
+  const oldWindow = globalThis.window,
+    oldFetch = globalThis.fetch;
+  try {
+    const browser = fakeBrowser();
+    globalThis.window = browser;
+    const db = createDatabase({ site: "alice" });
+    await db.signInAsOwner({ clientId: "registered", collections: ["posts"] });
+    const pending = JSON.parse([...browser.storage.values()][0]);
+    browser.location.href = `${pending.redirectUri}?code=code&state=${pending.state}`;
+    browser.sessionStorage.setItem = () => {
+      throw new DOMException("Full", "QuotaExceededError");
+    };
+    const calls = [];
+    globalThis.fetch = async (url) => {
+      calls.push(url);
+      return Response.json(
+        url.endsWith("/token")
+          ? {
+              accessToken: "t".repeat(43),
+              tokenType: "Bearer",
+              expiresIn: 60,
+              expiresAt: Date.now() + 60000,
+            }
+          : { success: true },
+      );
+    };
+    const first = db.completeOwnerSignIn(),
+      second = db.completeOwnerSignIn();
+    assert.equal(first, second);
+    await assert.rejects(first, { name: "QuotaExceededError" });
+    assert.deepEqual(
+      calls.map((url) => new URL(url).pathname),
+      ["/api/data-auth/token", "/api/data-auth/revoke"],
+    );
+    assert.equal(browser.storage.size, 0);
+    assert.equal(await db.completeOwnerSignIn(), null);
   } finally {
     globalThis.window = oldWindow;
     globalThis.fetch = oldFetch;

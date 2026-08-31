@@ -262,3 +262,23 @@ Every `/api/data-auth/token` exchange returns `{accessToken, tokenType: "Bearer"
 In the control plane, create or edit a registered admin page and set its token lifetime in minutes (1-1440, default 1440). The account registration API accepts `tokenLifetimeSeconds` as a whole-minute integer in seconds, from 60 through 86400. Existing registrations and outstanding codes migrate with a default of 86400; existing token deadlines are preserved. `PATCH /api/account/database-clients` can update only `{id, tokenLifetimeSeconds}`. Omitting this field preserves the current lifetime. Other users and website bearer tokens cannot change it. Database constraints enforce the range as well as application validation.
 
 Consent displays the configured duration and submits that displayed value. Approval binds the smaller of the current registration limit and the displayed duration to the one-use code; exchange cannot widen it with an SDK argument or a concurrent settings increase. Shortening a registration revokes pending codes as well as issued tokens. Rollback revokes outstanding grants before returning to the old fixed-lifetime behavior.
+
+### SDK 1.0.0 data and error contract
+
+`collection<Post>("posts")` types reads, lists, and complete replacement writes.
+Types describe the application's schema; they do not validate server responses at runtime.
+
+Writes accept JSON primitives, dense arrays, and plain objects. The SDK rejects
+undefined, non-finite numbers, BigInt, functions, symbols, cycles, sparse arrays,
+getters, non-enumerable properties, and class instances. Convert dates to strings
+explicitly. `set()` replaces the entire document rather than merging fields.
+
+HTTP failures throw `NaruDataError` with the original `status`, including non-JSON
+proxy responses. Network failures use `status: 0` and preserve `cause`. Invalid
+JSON or primitive success responses also throw `NaruDataError`, retaining the
+HTTP status (which can be 200). Invalid caller data throws `TypeError`.
+
+There are no automatic retries. A failed or interrupted response does not prove
+that a write failed: retrying `add()` can create another document. Read back or
+reconcile before retrying. Cursor pagination is not a snapshot: concurrent edits
+can move records between pages, especially when sorting by `updated_at`.
