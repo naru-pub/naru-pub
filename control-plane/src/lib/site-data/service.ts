@@ -10,13 +10,17 @@ import {
   MAX_SITE_BYTES,
   name,
   permission,
+  writePermission,
 } from "./validation";
+import { tokenScope, limitPublicCreate } from "./owner-auth";
 
 export type DataCommand = {
   site: string;
   path: string[];
   method: string;
   adminUserId?: number;
+  bearer?: { token: string; origin: string | null };
+  clientIp?: string;
   body?: Record<string, unknown>;
   after?: string;
   limit?: number;
@@ -36,12 +40,22 @@ export async function executeData(command: DataCommand) {
       .forUpdate()
       .executeTakeFirst();
     if (!owner) throw new DataError(404, "Site not found.");
-    const admin = adminUserId === owner.id;
+    const allowedIds = command.bearer
+      ? await tokenScope(
+          tx,
+          owner.id,
+          command.bearer.token,
+          command.bearer.origin,
+        )
+      : undefined;
+    const admin = adminUserId === owner.id || allowedIds !== undefined;
     if (adminUserId !== undefined && !admin)
       throw new DataError(403, "Permission denied.");
     const collections = () =>
       tx.selectFrom("site_data_collections").where("user_id", "=", owner.id);
     if (!path.length) {
+      if (allowedIds !== undefined)
+        throw new DataError(403, "Website tokens only allow document access.");
       if (!admin) throw new DataError(403, "Admin access required.");
       if (method === "GET")
         return {
@@ -70,7 +84,7 @@ export async function executeData(command: DataCommand) {
           user_id: owner.id,
           name: collectionName,
           read_access: permission(body.read ?? "admin"),
-          write_access: permission(body.write ?? "admin"),
+          write_access: writePermission(body.write ?? "admin"),
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -81,7 +95,11 @@ export async function executeData(command: DataCommand) {
       .selectAll()
       .executeTakeFirst();
     if (!collection) throw new DataError(404, "Collection not found.");
+    if (allowedIds !== undefined && !allowedIds.includes(collection.id))
+      throw new DataError(403, "Collection is outside the approved scope.");
     if (path.length === 1 && (method === "PATCH" || method === "DELETE")) {
+      if (allowedIds !== undefined)
+        throw new DataError(403, "Website tokens cannot manage collections.");
       if (!admin) throw new DataError(403, "Admin access required.");
       if (method === "DELETE") {
         await tx
@@ -95,7 +113,7 @@ export async function executeData(command: DataCommand) {
         .where("id", "=", collection.id)
         .set({
           read_access: permission(body.read),
-          write_access: permission(body.write),
+          write_access: writePermission(body.write),
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -129,7 +147,9 @@ export async function executeData(command: DataCommand) {
         nextCursor: rows.length > limit ? rows[limit - 1].id : null,
       };
     }
-    authorize(collection.write_access, admin);
+    const creating = method === "POST" && path.length === 1;
+    if (!(creating && collection.write_access === "create"))
+      authorize(collection.write_access, admin);
     if (method === "DELETE" && path.length === 2) {
       await tx
         .deleteFrom("site_data_documents")
@@ -147,6 +167,8 @@ export async function executeData(command: DataCommand) {
       throw new DataError(405, "Method not allowed.");
     if (!Object.hasOwn(body, "data"))
       throw new DataError(400, "data is required.");
+    if (creating && !admin)
+      await limitPublicCreate(tx, owner.id, command.clientIp);
     const id = path[1] ?? randomUUID();
     const encoded = JSON.stringify(body.data);
     const size = Buffer.byteLength(encoded);
@@ -172,24 +194,31 @@ export async function executeData(command: DataCommand) {
     ) {
       throw new DataError(409, "Site database quota exceeded.");
     }
-    await tx
-      .insertInto("site_data_documents")
-      .values({
-        collection_id: collection.id,
-        id,
-        data: sql`${encoded}::jsonb`,
-        size_bytes: size,
-      })
-      .onConflict((oc) =>
-        oc
-          .columns(["collection_id", "id"])
-          .doUpdateSet({
+    const insert = tx.insertInto("site_data_documents").values({
+      collection_id: collection.id,
+      id,
+      data: sql`${encoded}::jsonb`,
+      size_bytes: size,
+    });
+    if (creating) {
+      // Never overwrite a document, even in the event of an ID collision.
+      const inserted = await insert
+        .onConflict((oc) => oc.columns(["collection_id", "id"]).doNothing())
+        .returning("id")
+        .executeTakeFirst();
+      if (!inserted)
+        throw new DataError(409, "Document ID collision. Retry creation.");
+    } else {
+      await insert
+        .onConflict((oc) =>
+          oc.columns(["collection_id", "id"]).doUpdateSet({
             data: sql`${encoded}::jsonb`,
             size_bytes: size,
             updated_at: new Date(),
           }),
-      )
-      .execute();
+        )
+        .execute();
+    }
     // Do not read/return stored data: write-only callers may not read it.
     return { id };
   });

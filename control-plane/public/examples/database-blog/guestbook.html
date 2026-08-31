@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>방명록 · 작은 기록</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-page="guestbook">
+    <header>
+      <a class="brand" href="./index.html">작은 기록.</a>
+      <nav aria-label="메뉴">
+        <a href="./index.html">글 목록</a
+        ><a href="./guestbook.html" aria-current="page">방명록</a
+        ><a href="./admin.html">글쓰기</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">SAY HELLO</p>
+      <h1>다녀간 마음</h1>
+      <p class="lead">
+        짧은 인사를 남겨 주세요. 내용은 바로 공개되며 방문자는 수정·삭제할 수
+        없습니다. 개인정보를 적지 마세요.
+      </p>
+      <form id="entry-form" class="card">
+        <label for="name">이름</label
+        ><input
+          id="name"
+          required
+          maxlength="60"
+          autocomplete="nickname"
+        /><label for="message">인사</label
+        ><textarea id="message" required maxlength="2000" rows="4"></textarea
+        ><button id="submit">인사 남기기</button>
+      </form>
+      <div id="entries"></div>
+      <button id="more" hidden>더 보기</button>
+      <p class="hint">
+        이름은 본인 인증되지 않습니다. 목록은 문서 ID 순서입니다.
+      </p>
+      <p id="status" role="status" aria-live="polite">불러오는 중…</p>
+    </main>
+    <footer>
+      나루 데이터베이스 예제 ·
+      <a href="https://naru.pub/database/docs/">사용 안내</a>
+    </footer>
+    <script type="module" src="./list.js"></script>
+  </body>
+</html>

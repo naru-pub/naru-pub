@@ -63,7 +63,21 @@ export default function LoginPage() {
 
       const res = await response.json();
       if (res.success) {
-        location.href = "/";
+        // Only resume the local database consent page; never accept an open redirect.
+        const next = new URLSearchParams(window.location.search).get("next");
+        let destination = "/";
+        if (next) {
+          try {
+            const url = new URL(next, window.location.origin);
+            if (
+              url.origin === window.location.origin &&
+              url.pathname === "/database/authorize"
+            ) {
+              destination = url.pathname + url.search;
+            }
+          } catch {}
+        }
+        location.href = destination;
       } else {
         toast.error(res.message);
       }

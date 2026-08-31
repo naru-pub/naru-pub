@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>관리자 글쓰기 · 작은 기록</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-page="admin">
+    <header>
+      <a class="brand" href="./index.html">작은 기록.</a>
+      <nav aria-label="메뉴">
+        <a href="./index.html">글 목록</a><a href="./guestbook.html">방명록</a
+        ><a href="./admin.html" aria-current="page">글쓰기</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">WRITING ROOM</p>
+      <h1>오늘의 기록</h1>
+      <p id="auth" class="lead">관리자 권한을 확인하고 있습니다.</p>
+      <button id="login" type="button">나루로 관리자 로그인</button
+      ><button id="logout" type="button" hidden>관리자 권한 해제</button>
+      <p class="hint">
+        승인 권한은 10분간 유지됩니다. 새로고침하면 다시 로그인하세요. 초안은 이
+        탭의 임시 저장소에 남으므로 공용 기기에서는 탭을 닫으세요.
+      </p>
+      <form id="post-form" class="card">
+        <label for="title">제목</label
+        ><input id="title" required maxlength="160" /><label for="body"
+          >본문</label
+        ><textarea id="body" required maxlength="12000" rows="14"></textarea>
+        <p class="hint">
+          일반 텍스트로 공개됩니다. HTML은 실행하지 않습니다. 공개 후
+          수정·삭제는 제어판에서 할 수 있습니다.
+        </p>
+        <button id="publish" disabled>글 공개하기</button>
+      </form>
+      <a id="view-post" hidden>공개한 글 보기 →</a>
+      <p id="status" role="status" aria-live="polite">불러오는 중…</p>
+    </main>
+    <footer>
+      나루 데이터베이스 예제 ·
+      <a href="https://naru.pub/database/docs/">사용 안내</a>
+    </footer>
+    <script type="module" src="./admin.js"></script>
+  </body>
+</html>

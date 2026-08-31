@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import WebsiteAccess from "./WebsiteAccess";
 
 type Collection = { name: string; read_access: string; write_access: string };
 type Document = { id: string; data: unknown };
@@ -57,17 +58,24 @@ export default function DatabaseManager({ site }: { site: string }) {
     setOrigin(window.location.origin);
     void run(refresh);
   }, []);
-  const snippet = `import { createDatabase } from "${origin}/sdk/naru-data.js";\nconst db = createDatabase({ site: ${JSON.stringify(site)} });\nconst entries = db.collection(${JSON.stringify(selected || "guestbook")});\nconst page = await entries.list();`;
+  const snippet = `import { createDatabase } from "${origin}/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: ${JSON.stringify(site)} });\nconst entries = db.collection(${JSON.stringify(selected || "guestbook")});\nconst page = await entries.list();`;
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6 overflow-auto h-full">
       <h1 className="text-2xl font-bold">데이터베이스</h1>
+      <a
+        href="/database/docs/"
+        className="text-sm underline underline-offset-4"
+      >
+        사용 안내 및 예제 블로그 →
+      </a>
       <p className="text-muted-foreground">
         사이트별 JSON 문서 저장소 · 최대 10 MiB / 문서 10,000개 / 컬렉션 100개
       </p>
       <p className="text-sm">
-        관리자는 사이트 소유자입니다. 공개 쓰기를 허용하면 누구나 문서를 생성,
-        덮어쓰기, 삭제할 수 있습니다. 공개 읽기를 허용한 데이터는 누구나 볼 수
-        있습니다.
+        관리자는 사이트 소유자입니다. 공개 생성만 허용하면 방문자는 문서를
+        추가할 수 있지만 덮어쓰거나 삭제할 수 없습니다. 전체 공개 쓰기는
+        생성·덮어쓰기·삭제를 모두 허용합니다. 공개 읽기를 허용한 데이터는 누구나
+        볼 수 있습니다.
       </p>
       {error && (
         <p role="alert" className="text-destructive">
@@ -141,7 +149,8 @@ export default function DatabaseManager({ site }: { site: string }) {
                     onChange={(e) => setWrite(e.target.value)}
                   >
                     <option value="admin">관리자만</option>
-                    <option value="world">누구나</option>
+                    <option value="create">누구나 생성만</option>
+                    <option value="world">누구나 생성·덮어쓰기·삭제</option>
                   </select>
                 </label>
                 <Button
@@ -271,11 +280,14 @@ export default function DatabaseManager({ site }: { site: string }) {
           </>
         )}
       </fieldset>
+      <WebsiteAccess collections={collections} />
       <section className="space-y-2">
         <h2 className="font-bold">웹 SDK</h2>
         <p className="text-sm">
-          사이트의 &lt;script type="module"&gt;에서 사용하세요. SDK는 공개
-          권한만 사용하며 관리자 쿠키를 전송하지 않습니다.
+          사이트의 &lt;script type="module"&gt;에서 사용하세요. 기본
+          클라이언트는 공개 권한만 사용합니다. 웹사이트 관리자 로그인은 위에서
+          등록한 콜백 페이지에서 별도로 시작하세요. SDK는 관리자 쿠키를 전송하지
+          않습니다.
         </p>
         <pre className="p-4 bg-muted rounded overflow-auto text-sm">
           {snippet}

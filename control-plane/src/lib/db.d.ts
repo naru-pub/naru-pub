@@ -239,7 +239,34 @@ export interface SiteDataDocuments {
   updated_at: Generated<Timestamp>;
 }
 
+export interface SiteDataClients {
+  id: string;
+  user_id: number;
+  redirect_uri: string;
+  collection_ids: number[];
+  created_at: Generated<Timestamp>;
+}
+export interface SiteDataAccessTokens {
+  hash: string;
+  client_id: string;
+  session_id: string;
+  collection_ids: number[];
+  expires_at: Timestamp;
+}
+export interface SiteDataAuthCodes extends SiteDataAccessTokens {
+  challenge: string;
+}
+export interface SiteDataRateLimits {
+  user_id: number;
+  key: string;
+  window_start: Timestamp;
+  count: number;
+}
 export interface DB {
+  site_data_clients: SiteDataClients;
+  site_data_access_tokens: SiteDataAccessTokens;
+  site_data_auth_codes: SiteDataAuthCodes;
+  site_data_rate_limits: SiteDataRateLimits;
   site_data_collections: SiteDataCollections;
   site_data_documents: SiteDataDocuments;
   account_deletion_tokens: AccountDeletionTokens;

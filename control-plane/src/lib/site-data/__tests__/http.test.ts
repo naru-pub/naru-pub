@@ -66,3 +66,91 @@ test("preflight needs no authentication and performs no database work", async ()
   expect(auth).not.toHaveBeenCalled();
   expect(execute).not.toHaveBeenCalled();
 });
+
+test("website bearer is passed with origin without consulting owner cookies", async () => {
+  const token = "t".repeat(43);
+  const response = await dataRequest(
+    new Request("https://naru.pub/api/data/alice/posts", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Origin: "https://alice.example",
+        Cookie: "auth_session=owner",
+      },
+    }),
+    ["posts"],
+    "alice",
+  );
+  expect(response.status).toBe(200);
+  expect(auth).not.toHaveBeenCalled();
+  expect(execute.mock.calls[0][0].bearer).toEqual({
+    token,
+    origin: "https://alice.example",
+  });
+  expect(response.headers.get("access-control-allow-origin")).toBe(
+    "https://alice.example",
+  );
+  expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+});
+test.each(["", "Basic abc", "Bearer malformed"])(
+  "invalid authorization never falls back to public access: %s",
+  async (authorization) => {
+    const response = await dataRequest(
+      new Request("https://naru.pub/api/data/alice/posts", {
+        headers: { Authorization: authorization },
+      }),
+      ["posts"],
+      "alice",
+    );
+    expect(response.status).toBe(401);
+    expect(execute).not.toHaveBeenCalled();
+  },
+);
+test("untrusted IP headers do not select a separate rate limit bucket", async () => {
+  const previous = process.env.SITE_DATA_TRUST_CLOUDFLARE_IP;
+  delete process.env.SITE_DATA_TRUST_CLOUDFLARE_IP;
+  try {
+    await dataRequest(
+      new Request("https://naru.pub/api/data/alice/posts", {
+        headers: { "cf-connecting-ip": "192.0.2.99" },
+      }),
+      ["posts"],
+      "alice",
+    );
+    expect(execute.mock.calls[0][0].clientIp).toBeUndefined();
+  } finally {
+    if (previous === undefined)
+      delete process.env.SITE_DATA_TRUST_CLOUDFLARE_IP;
+    else process.env.SITE_DATA_TRUST_CLOUDFLARE_IP = previous;
+  }
+});
+
+test("canonical control-plane origin works behind a proxy without trusting forwarded host", async () => {
+  const { sameOrigin } = await import("../validation");
+  const previous = process.env.SITE_DATA_CONTROL_PLANE_ORIGIN;
+  process.env.SITE_DATA_CONTROL_PLANE_ORIGIN = "https://naru.pub";
+  try {
+    expect(() =>
+      sameOrigin(
+        new Request("http://localhost:3000/api/data-auth/authorize", {
+          method: "POST",
+          headers: { Origin: "https://naru.pub" },
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      sameOrigin(
+        new Request("http://localhost:3000/api/data-auth/authorize", {
+          method: "POST",
+          headers: {
+            Origin: "https://evil.example",
+            "x-forwarded-host": "evil.example",
+          },
+        }),
+      ),
+    ).toThrow();
+  } finally {
+    if (previous === undefined)
+      delete process.env.SITE_DATA_CONTROL_PLANE_ORIGIN;
+    else process.env.SITE_DATA_CONTROL_PLANE_ORIGIN = previous;
+  }
+});

@@ -1,0 +1,108 @@
+/** @jest-environment node */
+import { beforeEach, expect, jest, test } from "@jest/globals";
+jest.mock("@/lib/auth", () => ({ validateRequest: jest.fn() }));
+jest.mock("../owner-auth", () => ({
+  exchangeCode: jest.fn(),
+  approveAuthorization: jest.fn(),
+  authorizationInput: jest.fn((x: unknown) => x),
+  revokeToken: jest.fn(),
+  registerClient: jest.fn(),
+  removeClient: jest.fn(),
+  revokeClientTokens: jest.fn(),
+}));
+const { ownerAuthRequest } =
+  require("../auth-http") as typeof import("../auth-http");
+const auth = jest.mocked(
+  (require("@/lib/auth") as typeof import("@/lib/auth")).validateRequest,
+);
+const owner = jest.mocked(
+  require("../owner-auth") as typeof import("../owner-auth"),
+);
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
+test.each(["authorize", "clients"])(
+  "%s requires same-origin confirmation even with login cookies",
+  async (action) => {
+    for (const origin of ["https://alice.naru.pub", "null", ""]) {
+      const response = await ownerAuthRequest(
+        new Request(`https://naru.pub/api/data-auth/${action}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(origin ? { Origin: origin } : {}),
+            Cookie: "auth_session=owner",
+          },
+          body: "{}",
+        }),
+        action,
+      );
+      expect(response.status).toBe(403);
+      expect(auth).not.toHaveBeenCalled();
+    }
+  },
+);
+test("authorization cannot issue codes without an authenticated owner", async () => {
+  auth.mockResolvedValue({ user: null, session: null });
+  const response = await ownerAuthRequest(
+    new Request("https://naru.pub/api/data-auth/authorize", {
+      method: "POST",
+      headers: {
+        Origin: "https://naru.pub",
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    }),
+    "authorize",
+  );
+  expect(response.status).toBe(401);
+  expect(owner.approveAuthorization).not.toHaveBeenCalled();
+});
+test("token exchange ignores ambient cookies and forwards origin to grant verification", async () => {
+  owner.exchangeCode.mockResolvedValue({
+    accessToken: "t".repeat(43),
+    tokenType: "Bearer",
+    expiresIn: 600,
+  });
+  const body = {
+    code: "code",
+    verifier: "verifier",
+    clientId: "client",
+    redirectUri: "https://alice.example/admin",
+  };
+  const response = await ownerAuthRequest(
+    new Request("https://naru.pub/api/data-auth/token", {
+      method: "POST",
+      headers: {
+        Origin: "https://alice.example",
+        "Content-Type": "application/json",
+        Cookie: "auth_session=owner",
+      },
+      body: JSON.stringify(body),
+    }),
+    "token",
+  );
+  expect(response.status).toBe(200);
+  expect(owner.exchangeCode).toHaveBeenCalledWith(
+    body,
+    "https://alice.example",
+  );
+  expect(auth).not.toHaveBeenCalled();
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+});
+test("revocation requires explicit bearer credentials", async () => {
+  const response = await ownerAuthRequest(
+    new Request("https://naru.pub/api/data-auth/revoke", {
+      method: "POST",
+      headers: {
+        Origin: "https://alice.example",
+        Cookie: "auth_session=owner",
+      },
+    }),
+    "revoke",
+  );
+  expect(response.status).toBe(401);
+  expect(owner.revokeToken).not.toHaveBeenCalled();
+});

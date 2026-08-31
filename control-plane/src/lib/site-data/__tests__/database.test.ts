@@ -4,7 +4,7 @@ import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { executeData } from "../service";
 import { jsonBody, MAX_DOCUMENT_BYTES } from "../validation";
-import { up, down } from "@/migrations/1788176027971_add_site_database";
+import { setupTestDatabase, teardownTestDatabase } from "./test-database";
 
 // Opt in against a dedicated disposable database, never the developer's app DB.
 const integration =
@@ -29,14 +29,7 @@ integration("site database integration", () => {
       ...extra,
     });
   beforeAll(async () => {
-    if (new URL(process.env.DATABASE_URL!).pathname !== "/naru_data_test")
-      throw new Error("Use a disposable naru_data_test database.");
-    await db.schema
-      .createTable("users")
-      .addColumn("id", "serial", (c) => c.primaryKey())
-      .addColumn("login_name", "text", (c) => c.notNull().unique())
-      .execute();
-    await up(db);
+    await setupTestDatabase();
     initialized = true;
     owner = (
       await sql<{
@@ -48,8 +41,7 @@ integration("site database integration", () => {
   });
   afterAll(async () => {
     if (initialized) {
-      await down(db);
-      await db.schema.dropTable("users").execute();
+      await teardownTestDatabase();
     }
     await db.destroy();
   });
@@ -174,6 +166,72 @@ integration("site database integration", () => {
     await expect(
       call("PUT", ["bytes", "c"], { data: "x".repeat(4000) }),
     ).resolves.toBeDefined();
+  });
+  test("create-only allows server IDs but denies replacement, custom IDs and deletion", async () => {
+    await call(
+      "POST",
+      [],
+      { name: "comments", read: "world", write: "create" },
+      true,
+    );
+    const result = await call("POST", ["comments"], {
+      data: { message: "hi" },
+      id: "chosen",
+    });
+    expect(result.id).not.toBe("chosen");
+    expect(result.id).toMatch(/^[a-f0-9-]{36}$/);
+    await expect(call("GET", ["comments", result.id!])).resolves.toMatchObject({
+      document: { data: { message: "hi" } },
+    });
+    for (const id of [result.id!, "unused"]) {
+      await expect(
+        call("PUT", ["comments", id], { data: "overwrite" }),
+      ).rejects.toMatchObject({ status: 403 });
+      await expect(call("DELETE", ["comments", id])).rejects.toMatchObject({
+        status: 403,
+      });
+    }
+    await call("PUT", ["comments", result.id!], { data: "moderated" }, true);
+    await call("DELETE", ["comments", result.id!], undefined, true);
+    await call("PATCH", ["comments"], { read: "admin", write: "create" }, true);
+    const privateResult = await call("POST", ["comments"], { data: "private" });
+    await expect(
+      call("GET", ["comments", privateResult.id!]),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+  test("public creation rate limits are shared across workers and do not limit owners", async () => {
+    await sql`delete from site_data_rate_limits`.execute(db);
+    await call("POST", [], { name: "limited", write: "create" }, true);
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: 21 }, () =>
+        call("POST", ["limited"], { data: 1 }, false, {
+          clientIp: "192.0.2.1",
+        }),
+      ),
+    );
+    expect(outcomes.filter((r) => r.status === "fulfilled")).toHaveLength(20);
+    expect(outcomes.find((r) => r.status === "rejected")).toMatchObject({
+      reason: { status: 429 },
+    });
+    await expect(
+      call("POST", ["limited"], { data: 1 }, true),
+    ).resolves.toBeDefined();
+    await expect(
+      call("POST", ["limited"], { data: 1 }, false, { clientIp: "192.0.2.2" }),
+    ).resolves.toBeDefined();
+    await sql`update site_data_rate_limits set count = 60 where key = 'site'`.execute(
+      db,
+    );
+    await expect(
+      call("POST", ["limited"], { data: 1 }, false, { clientIp: "192.0.2.3" }),
+    ).rejects.toMatchObject({ status: 429 });
+    await sql`update site_data_rate_limits set window_start = now() - interval '2 minutes'`.execute(
+      db,
+    );
+    await expect(
+      call("POST", ["limited"], { data: 1 }, false, { clientIp: "192.0.2.3" }),
+    ).resolves.toBeDefined();
+    await sql`delete from site_data_rate_limits`.execute(db);
   });
   test("concurrent writes cannot exceed document quota", async () => {
     await sql`delete from site_data_collections`.execute(db);

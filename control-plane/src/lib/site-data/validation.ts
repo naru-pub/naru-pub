@@ -34,6 +34,32 @@ export function authorize(access: string, admin: boolean) {
     throw new DataError(403, "Permission denied.");
 }
 
+export function writePermission(value: unknown): "admin" | "world" | "create" {
+  return value === "create" ? "create" : permission(value);
+}
+
+export function sameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  // Next can reconstruct request.url with its internal localhost address behind
+  // a reverse proxy. Use an explicit canonical origin in production, never a
+  // client-controlled forwarded host header, for owner authorization.
+  const configured =
+    process.env.SITE_DATA_CONTROL_PLANE_ORIGIN ||
+    (process.env.NODE_ENV === "production"
+      ? `https://${process.env.NEXT_PUBLIC_DOMAIN || "naru.pub"}`
+      : null);
+  const expectedOrigin = new URL(configured || request.url).origin;
+  if (
+    (origin && origin !== expectedOrigin) ||
+    (!origin && request.method !== "GET") ||
+    ["cross-site", "same-site"].includes(
+      request.headers.get("sec-fetch-site") ?? "",
+    )
+  ) {
+    throw new DataError(403, "Same-origin admin request required.");
+  }
+}
+
 // Bound the stream, not just Content-Length (which clients can omit or forge).
 export async function jsonBody(
   request: Request,
