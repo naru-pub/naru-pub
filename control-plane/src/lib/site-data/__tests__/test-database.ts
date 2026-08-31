@@ -9,6 +9,11 @@ import {
   down as authDown,
 } from "@/migrations/1788177446828_add_site_data_owner_auth";
 
+import {
+  up as sortingUp,
+  down as sortingDown,
+} from "@/migrations/1788180032055_add_site_data_created_at";
+
 export async function setupTestDatabase() {
   if (new URL(process.env.DATABASE_URL!).pathname !== "/naru_data_test")
     throw new Error("Use a disposable naru_data_test database.");
@@ -24,8 +29,10 @@ export async function setupTestDatabase() {
   );
   await baseUp(db);
   await authUp(db);
+  await sortingUp(db);
 }
 export async function teardownTestDatabase() {
+  await sortingDown(db);
   await authDown(db);
   await baseDown(db);
   await db.schema.dropTable("custom_domains").execute();

@@ -201,3 +201,27 @@ test("owner callback rejects tampering, missing state and denial without token r
     globalThis.fetch = oldFetch;
   }
 });
+
+test("SDK carries sort options and opaque cursors unchanged", async () => {
+  const original = globalThis.fetch,
+    urls = [];
+  globalThis.fetch = async (url) => {
+    urls.push(new URL(url));
+    return Response.json({ documents: [], nextCursor: "v1.opaque-cursor" });
+  };
+  try {
+    const posts = createDatabase({
+      site: "alice",
+      baseUrl: "https://naru.pub",
+    }).collection("posts");
+    const sort = { orderBy: "created_at", direction: "desc" };
+    const first = await posts.list({ ...sort, limit: 20 });
+    await posts.list({ ...sort, after: first.nextCursor, limit: 10 });
+    assert.equal(urls[1].searchParams.get("orderBy"), "created_at");
+    assert.equal(urls[1].searchParams.get("direction"), "desc");
+    assert.equal(urls[1].searchParams.get("after"), "v1.opaque-cursor");
+    assert.equal(urls[1].searchParams.get("limit"), "10");
+  } finally {
+    globalThis.fetch = original;
+  }
+});

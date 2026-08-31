@@ -8,7 +8,12 @@ async function load(reset = false) {
     db ??= await connect();
     const page = await db
       .collection(guestbook ? "guestbook" : "posts")
-      .list({ limit: 20, ...(reset ? {} : cursor ? { after: cursor } : {}) });
+      .list({
+        limit: 20,
+        orderBy: "created_at",
+        direction: "desc",
+        ...(reset ? {} : cursor ? { after: cursor } : {}),
+      });
     if (reset) $("entries").replaceChildren();
     for (const doc of page.documents) {
       const data = doc.data && typeof doc.data === "object" ? doc.data : {};
@@ -28,7 +33,7 @@ async function load(reset = false) {
           element("p", text(data.body).slice(0, 160), "excerpt"),
         );
       }
-      card.append(element("p", date(data.createdAt), "meta"));
+      card.append(element("p", date(doc.created_at), "meta"));
       $("entries").append(card);
     }
     cursor = page.nextCursor;
@@ -58,14 +63,12 @@ if (guestbook)
     $("submit").disabled = true;
     try {
       db ??= await connect();
-      await db
-        .collection("guestbook")
-        .add({ name, message: body, createdAt: new Date().toISOString() });
+      await db.collection("guestbook").add({ name, message: body });
       $("entry-form").reset();
       const refreshed = await load(true);
       message(
         refreshed
-          ? "인사를 남겼습니다. 목록은 문서 ID 순서입니다."
+          ? "인사를 남겼습니다. 최신 인사부터 표시됩니다."
           : "인사는 저장되었지만 목록을 불러오지 못했습니다. 다시 제출하지 말고 페이지를 새로고침하세요.",
       );
     } catch (e) {

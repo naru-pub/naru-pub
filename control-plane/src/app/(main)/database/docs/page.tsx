@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import Code from "./Code";
 
 export const metadata: Metadata = {
   title: "데이터베이스 사용 안내 | 나루",
@@ -14,13 +15,6 @@ const sections = [
   ["example", "05 · 예제 블로그 설치"],
   ["limits", "06 · 한도와 문제 해결"],
 ];
-function Code({ children }: { children: string }) {
-  return (
-    <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-sm leading-7">
-      <code>{children}</code>
-    </pre>
-  );
-}
 function Section({
   id,
   title,
@@ -50,7 +44,7 @@ export default function DatabaseDocs() {
           </h1>
           <p className="text-lg leading-8 text-muted-foreground">
             별도 서버 없이 글을 공개하고, 방문자의 인사를 받고, 내 웹사이트에서
-            글을 작성하세요. 이 안내는 로그인 없이 누구나 읽을 수 있습니다.
+            글을 작성하세요.
           </p>
           <div className="flex flex-wrap gap-5 text-sm underline underline-offset-4">
             <a href="/database">데이터베이스 제어판 열기 →</a>
@@ -87,8 +81,7 @@ export default function DatabaseDocs() {
               <ol className="list-decimal space-y-3 pl-6">
                 <li>
                   <a href="/database">/database</a>로 이동해 나루에
-                  로그인합니다. 전역 헤더에는 데이터베이스 링크가 없으므로 이
-                  주소를 북마크하세요.
+                  로그인합니다.
                 </li>
                 <li>
                   컬렉션 이름에 <code>posts</code>를 입력하고 ‘컬렉션 만들기’를
@@ -105,7 +98,10 @@ export default function DatabaseDocs() {
                   전체를 교체합니다.
                 </li>
               </ol>
-              <Code>{`문서 ID: hello\nJSON:\n{\n  "title": "첫 번째 글",\n  "body": "안녕하세요, 나루!",\n  "createdAt": "2026-08-31T00:00:00.000Z"\n}`}</Code>
+              <p>
+                문서 ID: <code>hello</code>
+              </p>
+              <Code language="json">{`{\n  "title": "첫 번째 글",\n  "body": "안녕하세요, 나루!"\n}`}</Code>
               <p>
                 컬렉션 생성·삭제와 권한 설정은 제어판에서 합니다. 웹사이트에
                 부여한 관리자 권한은 선택한 컬렉션의 문서 읽기·쓰기만
@@ -186,7 +182,7 @@ export default function DatabaseDocs() {
                 <code>site</code>에는 전체 도메인이 아니라 나루 로그인 이름을
                 넣으세요. 공개 작업에는 API 키가 필요 없습니다.
               </p>
-              <Code>{`<script type="module">\n  import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\n  const db = createDatabase({ site: "내-로그인-이름" });\n  const posts = db.collection("posts");\n  const page = await posts.list({ limit: 20 });\n  for (const document of page.documents) {\n    console.log(document.id, document.data, document.updated_at);\n  }\n  if (page.nextCursor) {\n    const next = await posts.list({ limit: 20, after: page.nextCursor });\n  }\n  const post = await posts.get("hello");\n  await db.collection("guestbook").add({\n    name: "방문자", message: "잘 읽었습니다!"\n  });\n</script>`}</Code>
+              <Code language="html">{`<script type="module">\n  import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\n  const db = createDatabase({ site: "내-로그인-이름" });\n  const posts = db.collection("posts");\n  const sort = { orderBy: "created_at", direction: "desc" };\n  const page = await posts.list({ ...sort, limit: 20 });\n  for (const document of page.documents) {\n    console.log(document.id, document.data, document.created_at);\n  }\n  if (page.nextCursor) {\n    const next = await posts.list({ ...sort, limit: 20, after: page.nextCursor });\n  }\n  const post = await posts.get("hello");\n  await db.collection("guestbook").add({\n    name: "방문자", message: "잘 읽었습니다!"\n  });\n</script>`}</Code>
               <p>
                 현재 제공 버전은 <strong>1.0.0</strong>이며 이 버전 안에서 계속
                 개선합니다. 버전 없는 URL은 제공하지 않습니다. 자체 번들로 옮긴
@@ -210,10 +206,10 @@ export default function DatabaseDocs() {
                     {[
                       [
                         "get(id)",
-                        "문서 한 개 → { id, data, updated_at }. 없으면 404",
+                        "문서 한 개 → { id, data, created_at, updated_at }. 없으면 404",
                       ],
                       [
-                        "list({ limit, after })",
+                        "list({ limit, after, orderBy, direction })",
                         "{ documents, nextCursor }. 기본 50개, 최대 100개",
                       ],
                       ["add(data)", "서버 ID로 새 문서 생성 → { id }"],
@@ -233,9 +229,42 @@ export default function DatabaseDocs() {
                   </tbody>
                 </table>
               </div>
+              <h3 className="font-bold">정렬과 페이지 이동</h3>
               <p>
-                목록은 <strong>문서 ID 순서</strong>입니다. 날짜 정렬·조건
-                검색·실시간 구독·부분 필드 갱신은 제공하지 않습니다.{" "}
+                기본 정렬은 ID 오름차순입니다. <code>orderBy</code>는{" "}
+                <code>id</code>, <code>created_at</code>(서버 생성 시각),{" "}
+                <code>updated_at</code>(서버 수정 시각) 중 하나이며,{" "}
+                <code>direction</code>은 <code>asc</code>(기본값) 또는{" "}
+                <code>desc</code>입니다. 블로그와 방명록은{" "}
+                <code>created_at</code> 내림차순으로 최신 글부터 표시합니다.
+                JSON 내부 필드(예: <code>data.createdAt</code>) 정렬은 지원하지
+                않습니다.
+              </p>
+              <p>
+                동일한 시각의 문서는 같은 방향의 ID 순서로 정렬합니다. 다음
+                페이지에는 응답의 <code>nextCursor</code>를 그대로{" "}
+                <code>after</code>로 보내고, 같은 컬렉션·정렬 필드·방향을
+                유지하세요. 커서를 직접 해석하거나 만들지 마세요. 다른 정렬에
+                사용하면 400 오류가 발생합니다. 정렬을 바꾸려면 커서와 기존
+                목록을 비우고 첫 페이지부터 다시 불러오세요.
+              </p>
+              <p>
+                <code>nextCursor</code>가 <code>null</code>이면 마지막
+                페이지입니다. 이전 페이지는 페이지 내용이나 시작 커서를 저장해
+                구현할 수 있습니다. 페이지 번호·offset·전체 개수는 제공하지
+                않습니다. 페이지 이동은 하나의 스냅샷이 아니므로, 새 문서는
+                새로고침해야 보일 수 있고 정렬 기준 값이 바뀐 문서는 이동 중
+                빠지거나 다시 나타날 수 있습니다.
+              </p>
+              <p>
+                <code>created_at</code>은 처음 저장할 때 서버가 정하고
+                덮어쓰기에도 유지됩니다. <code>updated_at</code>은 저장할 때
+                갱신됩니다. 기존 문서는 생성 시각을 기록하지 않았으므로
+                마이그레이션 당시의 수정 시각으로 채워집니다. JSON에 같은 이름의
+                필드를 넣어도 서버 시각을 변경할 수 없습니다.
+              </p>
+              <p>
+                조건 검색·실시간 구독·부분 필드 갱신은 제공하지 않습니다.{" "}
                 <code>set()</code>은 기존 필드를 합치지 않고 전체 JSON을
                 교체합니다. 공개 생성 전용에서는 <code>set()</code>으로 새 ID를
                 만드는 것도 금지됩니다.

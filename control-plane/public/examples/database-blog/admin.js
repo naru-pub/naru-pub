@@ -3,17 +3,14 @@ import { connect } from "./client.js";
 import { $, message, errorMessage } from "./utils.js";
 let db,
   owner = null,
-  draftId,
-  createdAt;
+  draftId;
 const draftKey = `naru:blog-draft:${config.site}:${location.pathname}`;
 function saveDraft() {
   draftId ??= crypto.randomUUID();
-  createdAt ??= new Date().toISOString();
   sessionStorage.setItem(
     draftKey,
     JSON.stringify({
       id: draftId,
-      createdAt,
       title: $("title").value,
       body: $("body").value,
     }),
@@ -46,7 +43,6 @@ try {
     $("body").value = draft.body;
     if (typeof draft.id === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(draft.id))
       draftId = draft.id;
-    if (typeof draft.createdAt === "string") createdAt = draft.createdAt;
   }
 } catch {
   message(
@@ -107,12 +103,11 @@ $("post-form").addEventListener("submit", async (event) => {
     await owner.collection("posts").set(draftId, {
       title: $("title").value.trim(),
       body: $("body").value.trim(),
-      createdAt,
     });
     $("view-post").href = `./post.html?id=${encodeURIComponent(draftId)}`;
     $("view-post").hidden = false;
     $("post-form").reset();
-    draftId = createdAt = undefined;
+    draftId = undefined;
     sessionStorage.removeItem(draftKey);
     message("글을 공개했습니다.");
   } catch (e) {

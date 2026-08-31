@@ -232,6 +232,7 @@ export interface SiteDataCollections {
 }
 
 export interface SiteDataDocuments {
+  created_at: Generated<Timestamp>;
   collection_id: number;
   id: string;
   data: unknown;

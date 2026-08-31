@@ -58,7 +58,7 @@ Create a collection in the control plane, choose its permissions, then use this 
 </script>
 ```
 
-`get` returns `{ id, data, updated_at }`; a missing document throws a 404 error. `set` replaces the whole document or creates it if absent. `add` generates a UUID and returns only `{ id }`, without requiring read permission. `delete` is idempotent. JSON null is stored as a value, not treated as deletion. Render user data with `textContent`, not `innerHTML`.
+`get` returns `{ id, data, created_at, updated_at }`; a missing document throws a 404 error. `set` replaces the whole document or creates it if absent. `add` generates a UUID and returns only `{ id }`, without requiring read permission. `delete` is idempotent. JSON null is stored as a value, not treated as deletion. Render user data with `textContent`, not `innerHTML`.
 
 SDK declarations are available alongside the module at `/sdk/1.0.0/naru-data.d.ts`. Set `baseUrl` explicitly if bundling/copying the SDK rather than importing it from the control plane.
 
@@ -148,7 +148,7 @@ Public/website-token root: `/api/data/:site`. Control-plane root: `/api/account/
 | POST   | `/`                              | Admin only: `{ name, read?, write? }` creates collection |
 | PATCH  | `/:collection`                   | Admin only: `{ read, write }` replaces permissions       |
 | DELETE | `/:collection`                   | Admin only: deletes collection and its documents         |
-| GET    | `/:collection?limit=50&after=id` | `{ documents, nextCursor }`                              |
+| GET    | `/:collection?limit=50&after=cursor` | `{ documents, nextCursor }`                              |
 | POST   | `/:collection`                   | `{ data }` creates document; returns `{ id }`            |
 | GET    | `/:collection/:id`               | `{ document }`                                           |
 | PUT    | `/:collection/:id`               | `{ data }` replaces document; returns `{ id }`           |
@@ -174,7 +174,7 @@ There are at most 20 registrations per site, 20 pending codes and 50 live tokens
 - 100 collections, 10,000 documents, and 10 MiB of serialized JSON per site, separate from the hosted-file quota.
 - Maximum request body: 64 KiB, including the `{ data }` envelope; enforced while streaming, even without Content-Length.
 - Collection names and document IDs: 1–64 ASCII letters, numbers, underscores or hyphens.
-- Pages: 1–100 documents (default 50), ordered by ID under the database collation. Pass the returned cursor; pagination is not a snapshot across concurrent changes.
+- Pages: 1–100 documents (default 50), defaulting to ID ascending under the database collation. See sorting below; pagination is not a snapshot across concurrent changes.
 - PostgreSQL JSONB semantics apply, including JavaScript number precision and no significant object key order.
 - Owner-row locks serialize permission checks, writes, and quota checks across server processes. Deletes free quota; account deletion cascades through collections and documents.
 - Replacements are atomic and last-write-wins; creates are insert-only. No realtime subscriptions, offline persistence, custom indexes/queries, compare-and-set, SDK transactions, per-document rules or visitor accounts in v1.
@@ -202,3 +202,22 @@ Integration tests require an empty database named exactly `naru_data_test`. They
 ## Public guide and example
 
 The Korean guide is served publicly at `/database/docs/`. The control panel links to it without adding a global header link. The static blog example lives in `control-plane/public/examples/database-blog/`; `/database/docs/blog.zip` packages these same source files at build time. See its README for installation and permission setup.
+
+## Server-side sorting and pagination (SDK 1.0.0)
+
+```js
+const posts = db.collection("posts");
+const sort = { orderBy: "created_at", direction: "desc" };
+const page = await posts.list({ ...sort, limit: 20 });
+if (page.nextCursor !== null) {
+  const next = await posts.list({ ...sort, limit: 20, after: page.nextCursor });
+}
+```
+
+`orderBy`: `id` (default), `created_at`, or `updated_at`. `direction`: `asc` (default) or `desc`. These are server metadata, not JSON fields. Arbitrary JSON-field sorting and filters are not supported. Timestamp ties use document ID in the same direction. Both timestamp orders have composite collection/time/ID indexes.
+
+`get` and `list` return `created_at` as well as `updated_at`. Creation time is assigned by the server, preserved on replacement, and cannot be changed by fields in `data`. The new migration backfills existing documents from their recorded `updated_at`; their original creation time is unknown.
+
+Pass `nextCursor` unchanged as `after` with the same collection, orderBy, and direction. Cursors preserve PostgreSQL timestamp precision and the last ID, and remain usable after that document is deleted. They are bound to the collection's internal ID (including across deletion/recreation), field, and direction; mismatches and malformed cursors return 400. They are not credentials: read permissions are checked on every request. Legacy raw ID cursors are accepted only for ID ascending, but all new responses return opaque cursors. Changing page size is allowed.
+
+A null cursor marks the end. Cache prior pages or their starting cursors for a Previous button. There are no page numbers, offsets or total counts. Reset the cursor and displayed results when switching sort order. Pagination is not a snapshot: newly inserted records before the cursor require a refresh; changing a sort value during traversal can skip or repeat a record. Prefer immutable `created_at` for feeds. The example uses newest-first server creation time for both posts and guestbook entries.

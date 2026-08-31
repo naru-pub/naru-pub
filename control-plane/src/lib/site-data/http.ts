@@ -62,6 +62,8 @@ export async function dataRequest(
       bearer,
       clientIp: forwardedIp && isIP(forwardedIp) ? forwardedIp : undefined,
       body,
+      orderBy: url.searchParams.get("orderBy") ?? undefined,
+      direction: url.searchParams.get("direction") ?? undefined,
       after: url.searchParams.get("after") ?? undefined,
       limit: url.searchParams.has("limit")
         ? Number(url.searchParams.get("limit"))

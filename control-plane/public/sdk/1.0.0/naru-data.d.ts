@@ -8,6 +8,7 @@ export type Json =
 export interface Document<T = Json> {
   id: string;
   data: T;
+  created_at: string;
   updated_at: string;
 }
 export class NaruDataError extends Error {
@@ -18,7 +19,10 @@ export interface Database {
     get(id: string): Promise<Document>;
     list(options?: {
       limit?: number;
+      /** Opaque cursor from the same collection and sort order. */
       after?: string;
+      orderBy?: "id" | "created_at" | "updated_at";
+      direction?: "asc" | "desc";
     }): Promise<{ documents: Document[]; nextCursor: string | null }>;
     add(data: Json): Promise<{ id: string }>;
     set(id: string, data: Json): Promise<{ id: string }>;

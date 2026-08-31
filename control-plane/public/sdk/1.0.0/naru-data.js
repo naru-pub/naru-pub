@@ -73,8 +73,10 @@ export function createDatabase({
           async get(id) {
             return (await send(`${path}/${segment(id)}`)).document;
           },
-          list({ limit = 50, after } = {}) {
+          list({ limit = 50, after, orderBy, direction } = {}) {
             const query = new URLSearchParams({ limit: String(limit) });
+            if (orderBy !== undefined) query.set("orderBy", orderBy);
+            if (direction !== undefined) query.set("direction", direction);
             if (after !== undefined) query.set("after", after);
             return send(`${path}?${query}`);
           },

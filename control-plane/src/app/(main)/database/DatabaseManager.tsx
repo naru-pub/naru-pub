@@ -18,7 +18,13 @@ async function api(path = "", method = "GET", body?: unknown) {
   if (!response.ok) throw new Error(result.error);
   return result;
 }
-export default function DatabaseManager({ site }: { site: string }) {
+export default function DatabaseManager({
+  site,
+  websiteUrl,
+}: {
+  site: string;
+  websiteUrl: string;
+}) {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [selected, setSelected] = useState("");
   const [newName, setNewName] = useState("");
@@ -280,7 +286,7 @@ export default function DatabaseManager({ site }: { site: string }) {
           </>
         )}
       </fieldset>
-      <WebsiteAccess collections={collections} />
+      <WebsiteAccess collections={collections} websiteUrl={websiteUrl} />
       <section className="space-y-2">
         <h2 className="font-bold">웹 SDK</h2>
         <p className="text-sm">

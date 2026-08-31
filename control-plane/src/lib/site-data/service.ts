@@ -12,6 +12,7 @@ import {
   permission,
   writePermission,
 } from "./validation";
+import { sorting, decodeCursor, encodeCursor } from "./pagination";
 import { tokenScope, limitPublicCreate } from "./owner-auth";
 
 export type DataCommand = {
@@ -24,6 +25,8 @@ export type DataCommand = {
   body?: Record<string, unknown>;
   after?: string;
   limit?: number;
+  orderBy?: string;
+  direction?: string;
 };
 
 export async function executeData(command: DataCommand) {
@@ -128,7 +131,7 @@ export async function executeData(command: DataCommand) {
       if (path.length === 2) {
         const document = await documents()
           .where("id", "=", path[1])
-          .select(["id", "data", "updated_at"])
+          .select(["id", "data", "created_at", "updated_at"])
           .executeTakeFirst();
         if (!document) throw new DataError(404, "Document not found.");
         return { document };
@@ -136,15 +139,50 @@ export async function executeData(command: DataCommand) {
       const limit = command.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 100)
         throw new DataError(400, "Limit must be 1–100.");
+      const { orderBy, direction } = sorting(
+        command.orderBy,
+        command.direction,
+      );
+      const cursor = decodeCursor(
+        command.after,
+        collection.id,
+        orderBy,
+        direction,
+      );
+      const comparison = direction === "asc" ? ">" : "<";
       let query = documents()
-        .select(["id", "data", "updated_at"])
-        .orderBy("id")
+        .select(["id", "data", "created_at", "updated_at"])
+        .select(
+          (orderBy === "id"
+            ? sql<string | null>`null`
+            : sql<string>`to_char(${sql.ref(orderBy)} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+          ).as("cursor_value"),
+        )
+        .orderBy(orderBy, direction)
         .limit(limit + 1);
-      if (command.after) query = query.where("id", ">", name(command.after));
+      if (orderBy !== "id") query = query.orderBy("id", direction);
+      if (cursor) {
+        if (orderBy === "id") query = query.where("id", comparison, cursor.id);
+        else
+          query = query.where(
+            sql<boolean>`(${sql.ref(orderBy)}, id) ${sql.raw(comparison)} (${cursor.value}::timestamptz, ${cursor.id})`,
+          );
+      }
       const rows = await query.execute();
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
       return {
-        documents: rows.slice(0, limit),
-        nextCursor: rows.length > limit ? rows[limit - 1].id : null,
+        documents: page.map(({ cursor_value: _, ...document }) => document),
+        nextCursor:
+          rows.length > limit && last
+            ? encodeCursor(
+                collection.id,
+                orderBy,
+                direction,
+                last.id,
+                last.cursor_value,
+              )
+            : null,
       };
     }
     const creating = method === "POST" && path.length === 1;

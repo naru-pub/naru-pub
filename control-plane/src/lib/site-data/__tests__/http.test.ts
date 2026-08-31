@@ -154,3 +154,25 @@ test("canonical control-plane origin works behind a proxy without trusting forwa
     else process.env.SITE_DATA_CONTROL_PLANE_ORIGIN = previous;
   }
 });
+
+test("list sort and opaque cursor are passed through for both API surfaces", async () => {
+  auth.mockResolvedValue({
+    user: { id: 1, loginName: "alice" },
+    session: {},
+  } as never);
+  for (const site of ["alice", undefined]) {
+    await dataRequest(
+      new Request(
+        "https://naru.pub/api/data/alice/posts?orderBy=created_at&direction=desc&after=v1.example&limit=7",
+      ),
+      ["posts"],
+      site,
+    );
+    expect(execute.mock.lastCall![0]).toMatchObject({
+      orderBy: "created_at",
+      direction: "desc",
+      after: "v1.example",
+      limit: 7,
+    });
+  }
+});

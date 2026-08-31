@@ -5,10 +5,10 @@ try {
   if (!id)
     throw new Error("글 주소에 id가 없습니다. 글 목록에서 다시 선택하세요.");
   const db = await connect();
-  const { data } = await db.collection("posts").get(id);
+  const { data, created_at } = await db.collection("posts").get(id);
   $("title").textContent = text(data?.title, "제목 없음");
   $("body").textContent = text(data?.body);
-  $("date").textContent = date(data?.createdAt);
+  $("date").textContent = date(created_at);
   document.title = `${text(data?.title, "제목 없음")} · 작은 기록`;
   message("");
 } catch (e) {

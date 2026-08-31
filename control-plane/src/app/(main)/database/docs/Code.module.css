@@ -1,0 +1,45 @@
+.block {
+  background: #f6f8fa;
+  color: #24292f;
+  --syntax-comment: #57606a;
+  --syntax-keyword: #cf222e;
+  --syntax-string: #0a3069;
+  --syntax-number: #0550ae;
+  --syntax-title: #6639ba;
+  --syntax-tag: #116329;
+}
+:global(.dark) .block {
+  background: #161b22;
+  color: #e6edf3;
+  --syntax-comment: #9da7b3;
+  --syntax-keyword: #ff7b72;
+  --syntax-string: #a5d6ff;
+  --syntax-number: #79c0ff;
+  --syntax-title: #d2a8ff;
+  --syntax-tag: #7ee787;
+}
+.block :global(.hljs-comment),
+.block :global(.hljs-doctag) {
+  color: var(--syntax-comment);
+}
+.block :global(.hljs-keyword),
+.block :global(.hljs-selector-tag) {
+  color: var(--syntax-keyword);
+}
+.block :global(.hljs-string),
+.block :global(.hljs-template-tag) {
+  color: var(--syntax-string);
+}
+.block :global(.hljs-number),
+.block :global(.hljs-literal),
+.block :global(.hljs-attr),
+.block :global(.hljs-attribute),
+.block :global(.hljs-built_in) {
+  color: var(--syntax-number);
+}
+.block :global(.hljs-title) {
+  color: var(--syntax-title);
+}
+.block :global(.hljs-name) {
+  color: var(--syntax-tag);
+}

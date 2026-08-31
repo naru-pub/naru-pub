@@ -18,11 +18,13 @@ async function api(method = "GET", body?: unknown) {
 }
 export default function WebsiteAccess({
   collections,
+  websiteUrl,
 }: {
   collections: { name: string }[];
+  websiteUrl: string;
 }) {
   const [clients, setClients] = useState<Client[]>([]);
-  const [callback, setCallback] = useState("");
+  const [callback, setCallback] = useState(websiteUrl);
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -74,7 +76,7 @@ export default function WebsiteAccess({
                   collections.some((c) => c.name === n),
                 ),
               });
-              setCallback("");
+              setCallback(websiteUrl);
               setSelected([]);
               await reload();
             });
@@ -84,7 +86,7 @@ export default function WebsiteAccess({
             aria-label="관리자 로그인 콜백 URL"
             type="url"
             required
-            placeholder="https://your-site.naru.pub/admin.html"
+            placeholder={`${websiteUrl}admin.html`}
             value={callback}
             onChange={(e) => setCallback(e.target.value)}
           />

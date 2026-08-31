@@ -110,10 +110,13 @@ integration("site database integration", () => {
     const first = await call("GET", ["pages"], undefined, false, { limit: 2 });
     expect(first).toMatchObject({
       documents: [{ id: "a" }, { id: "b" }],
-      nextCursor: "b",
+      nextCursor: expect.stringMatching(/^v1\./),
     });
     expect(
-      await call("GET", ["pages"], undefined, false, { limit: 2, after: "b" }),
+      await call("GET", ["pages"], undefined, false, {
+        limit: 2,
+        after: first.nextCursor,
+      }),
     ).toMatchObject({ documents: [{ id: "c" }], nextCursor: null });
     await call("PUT", ["pages", "a"], { data: { replacement: true } }, true);
     expect(await call("GET", ["pages", "a"])).toMatchObject({
