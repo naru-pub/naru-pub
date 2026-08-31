@@ -223,7 +223,25 @@ export interface Activities {
   created_at: Generated<Timestamp>;
 }
 
+export interface SiteDataCollections {
+  id: Generated<number>;
+  user_id: number;
+  name: string;
+  read_access: Generated<string>;
+  write_access: Generated<string>;
+}
+
+export interface SiteDataDocuments {
+  collection_id: number;
+  id: string;
+  data: unknown;
+  size_bytes: number;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface DB {
+  site_data_collections: SiteDataCollections;
+  site_data_documents: SiteDataDocuments;
   account_deletion_tokens: AccountDeletionTokens;
   activities: Activities;
   custom_domains: CustomDomains;

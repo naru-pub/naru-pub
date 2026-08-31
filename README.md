@@ -40,6 +40,8 @@
 
 ## 📚 문서
 
+- [사이트 데이터베이스](docs/database.md) — JSON 문서 저장소, 공개/관리자 권한, 웹 SDK
+
 - [개발 환경 설정](docs/development.md) — 설치, 환경 변수, 실행, 프로젝트 구조, 테스트, 스크립트
 - [커스텀 도메인](docs/custom-domains.md) — Cloudflare for SaaS + Tunnel, catch-all 라우트, 인증 자동 폴링
 - [후원과 결제](docs/billing.md) — 시간 기반 엔티틀먼트와 Toss Payments 자동결제
