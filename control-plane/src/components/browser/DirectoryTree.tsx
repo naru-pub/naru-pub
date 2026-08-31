@@ -29,6 +29,8 @@ interface DirectoryTreeProps {
   onFileSelect: (filePath: string, isDirectory: boolean) => void;
   onFolderToggle: (folderPath: string) => void;
   onRefresh: () => void;
+  uploading: boolean;
+  onUpload: (files: File[], directory: string) => Promise<boolean>;
 }
 
 function getFileIcon(fileName: string, isDirectory: boolean): React.ReactNode {
@@ -314,8 +316,9 @@ export default function DirectoryTree({
   onFileSelect,
   onFolderToggle,
   onRefresh,
+  uploading,
+  onUpload,
 }: DirectoryTreeProps) {
-  const [uploading, setUploading] = useState(false);
   const [newDirectoryName, setNewDirectoryName] = useState("");
   const [newFileName, setNewFileName] = useState("");
   const [showNewDirectoryInput, setShowNewDirectoryInput] = useState(false);
@@ -370,42 +373,14 @@ export default function DirectoryTree({
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    setUploading(true);
-    
+    if (uploading) return;
+    const selected = Array.from(files);
     try {
-      const formData = new FormData();
-      formData.append("directory", targetDirectory ? `${targetDirectory}/` : "");
-      
-      for (let i = 0; i < files.length; i++) {
-        formData.append("file", files[i]);
-      }
-
-      const response = await fetch("/api/files/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      const result = await response.json();
-      
-      if (result.success) {
-        onRefresh();
-        // Flash uploaded files
-        for (let i = 0; i < files.length; i++) {
-          const filePath = targetDirectory ? `${targetDirectory}/${files[i].name}` : files[i].name;
-          flashItem(filePath);
-        }
-      } else {
-        toast.error(result.message);
-      }
-    } catch (error) {
-      console.error("Upload error:", error);
-      toast.error("파일 업로드에 실패했습니다.");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
+      if (await onUpload(selected, targetDirectory)) {
+        selected.forEach(file => flashItem(targetDirectory ? `${targetDirectory}/${file.name}` : file.name));
       }
     }
+    finally { if (fileInputRef.current) fileInputRef.current.value = ""; }
   };
 
   const handleCreateDirectory = async () => {

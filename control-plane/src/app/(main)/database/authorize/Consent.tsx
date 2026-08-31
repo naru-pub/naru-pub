@@ -5,12 +5,18 @@ import { Button } from "@/components/ui/button";
 export default function Consent({
   input,
   names,
+  tokenLifetimeSeconds,
 }: {
   input: AuthorizationInput;
   names: string[];
+  tokenLifetimeSeconds: number;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const duration =
+    tokenLifetimeSeconds % 3600 === 0
+      ? `${tokenLifetimeSeconds / 3600}시간`
+      : `${tokenLifetimeSeconds / 60}분`;
   async function approve() {
     setBusy(true);
     setError("");
@@ -19,7 +25,7 @@ export default function Consent({
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...input, tokenLifetimeSeconds }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
@@ -40,7 +46,7 @@ export default function Consent({
       <h1 className="text-2xl font-bold">웹사이트 관리자 접근 승인</h1>
       <p>
         사이트 <strong>{input.site}</strong>의 데이터에 아래 웹사이트가 최대
-        24시간 동안 접근할 수 있도록 허용할까요?
+        {duration} 동안 접근할 수 있도록 허용할까요?
       </p>
       <p className="break-all rounded bg-muted p-3">{input.redirectUri}</p>
       <p>
@@ -62,7 +68,7 @@ export default function Consent({
       )}
       <div className="flex gap-3">
         <Button disabled={busy} onClick={approve}>
-          최대 24시간 동안 허용
+          최대 {duration} 동안 허용
         </Button>
         <Button disabled={busy} variant="outline" onClick={deny}>
           취소

@@ -24,6 +24,11 @@ import {
   down as sessionsDown,
 } from "@/migrations/1788206726527_stable_site_clients_and_owner_sessions";
 
+import {
+  up as lifetimeUp,
+  down as lifetimeDown,
+} from "@/migrations/1788208716196_configurable_admin_token_lifetime";
+
 export async function setupTestDatabase() {
   if (new URL(process.env.DATABASE_URL!).pathname !== "/naru_data_test")
     throw new Error("Use a disposable naru_data_test database.");
@@ -42,8 +47,10 @@ export async function setupTestDatabase() {
   await sortingUp(db);
   await filterUp(db);
   await sessionsUp(db);
+  await lifetimeUp(db);
 }
 export async function teardownTestDatabase() {
+  await lifetimeDown(db);
   await sessionsDown(db);
   await filterDown(db);
   await sortingDown(db);

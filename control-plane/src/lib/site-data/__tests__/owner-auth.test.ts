@@ -10,6 +10,7 @@ import {
   exchangeCode,
   siteClientId,
   updateClient,
+  tokenLifetime,
   registerClient,
   removeClient,
   revokeClientTokens,
@@ -402,6 +403,76 @@ integration("website owner authorization", () => {
       .where("id", "=", "alice-session")
       .execute();
   });
+  test("per-page lifetimes are bounded, snapshotted at consent, and shortening revokes grants", async () => {
+    const uri = "https://alice.example/short.html";
+    const page = await registerClient(owner, {
+      redirectUri: uri,
+      collections: ["posts"],
+      tokenLifetimeSeconds: 120,
+    });
+    const input = (extra = {}) => authInput({ redirectUri: uri, ...extra });
+    const code = async (extra = {}) =>
+      new URL(
+        (await approveAuthorization(owner, "alice-session", input(extra)))
+          .redirect,
+      ).searchParams.get("code")!;
+    const redeem = (code: string, extra = {}) =>
+      exchange(code, { redirectUri: uri, ...extra });
+    const first = await redeem(await code(), { tokenLifetimeSeconds: 86400 });
+    expect(first.expiresIn).toBeGreaterThan(115);
+    expect(first.expiresIn).toBeLessThanOrEqual(120);
+    const beforeIncrease = await code({ tokenLifetimeSeconds: 60 });
+    await updateClient(owner, page.id, { tokenLifetimeSeconds: 300 });
+    await expect(data(first.accessToken, ["posts"])).resolves.toBeDefined();
+    expect(
+      (
+        await db
+          .selectFrom("site_data_access_tokens")
+          .select("expires_at")
+          .where("hash", "=", digest(first.accessToken))
+          .executeTakeFirstOrThrow()
+      ).expires_at.getTime(),
+    ).toBe(first.expiresAt);
+    const approvedShort = await redeem(beforeIncrease);
+    expect(approvedShort.expiresIn).toBeLessThanOrEqual(60);
+    // A stale consent screen remains capped at the duration it displayed.
+    const stale = await redeem(await code({ tokenLifetimeSeconds: 120 }));
+    expect(stale.expiresIn).toBeLessThanOrEqual(120);
+    const longer = await redeem(await code());
+    expect(longer.expiresIn).toBeGreaterThan(295);
+    const pending = await code();
+    await updateClient(owner, page.id, {
+      redirectUri: uri,
+      collections: ["posts"],
+      tokenLifetimeSeconds: 60,
+    });
+    await expect(data(longer.accessToken, ["posts"])).rejects.toMatchObject({
+      status: 401,
+    });
+    await expect(redeem(pending)).rejects.toMatchObject({ status: 401 });
+    const short = await redeem(await code({ tokenLifetimeSeconds: 86400 }));
+    expect(short.expiresIn).toBeLessThanOrEqual(60);
+    await expect(
+      updateClient(bob, page.id, {
+        redirectUri: uri,
+        collections: ["posts"],
+        tokenLifetimeSeconds: 60,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      updateClient(owner, page.id, {
+        redirectUri: uri,
+        collections: ["posts"],
+        tokenLifetimeSeconds: 86460,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      sql`update site_data_clients set token_lifetime_seconds = 86460 where id = ${page.id}`.execute(
+        db,
+      ),
+    ).rejects.toThrow();
+    await removeClient(owner, page.id);
+  });
   test("lost domain verification, deleted sessions and removed registrations invalidate access", async () => {
     const access = await token();
     await sql`update custom_domains set verified_at = null`.execute(db);
@@ -429,4 +500,23 @@ integration("website owner authorization", () => {
       await db.selectFrom("site_data_access_tokens").selectAll().execute(),
     ).toEqual([]);
   });
+});
+
+test("token lifetime validation accepts whole minutes within platform bounds", () => {
+  for (const value of [60, 3600, 86400])
+    expect(tokenLifetime(value)).toBe(value);
+  for (const value of [
+    null,
+    undefined,
+    "60",
+    0,
+    -60,
+    59,
+    61,
+    60.5,
+    86460,
+    Infinity,
+    NaN,
+  ])
+    expect(() => tokenLifetime(value)).toThrow();
 });

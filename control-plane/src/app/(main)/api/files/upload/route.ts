@@ -9,6 +9,7 @@ import {
   ALLOWED_FILE_EXTENSIONS,
   FILE_EXTENSION_MIMETYPE_MAP,
 } from "@/lib/const";
+import { streamUpload } from "@/lib/upload-progress";
 import { recordSiteEdit } from "@/lib/database";
 
 function validateFilename(filename: string) {
@@ -155,6 +156,17 @@ export async function POST(request: NextRequest) {
         { success: false, message: "파일을 선택해주세요." },
         { status: 400 }
       );
+    }
+
+    if (request.headers.get("accept")?.includes("application/x-ndjson")) {
+      return new Response(streamUpload(files,
+        file => uploadSingleFile(user, directory, file),
+        async () => { revalidatePath("/files", "layout"); await recordSiteEdit(user.id); },
+      ), { headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-store, no-transform",
+        "X-Accel-Buffering": "no",
+      } });
     }
 
     for (const file of files) {

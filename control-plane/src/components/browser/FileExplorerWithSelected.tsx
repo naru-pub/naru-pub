@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useFileUpload } from "./useFileUpload";
+import UploadStatus from "./UploadStatus";
 import DirectoryTree from "./DirectoryTree";
 import FileViewer, { FileViewerRef } from "./FileViewer";
 import { FileNode } from "@/lib/fileUtils";
@@ -108,6 +110,8 @@ export default function FileExplorerWithSelected({
     }
   };
 
+  const { uploading, progress, upload } = useFileUpload(handleRefresh);
+
   return (
     <div className="flex h-full bg-card overflow-hidden">
       {/* Left Sidebar - Directory Tree */}
@@ -122,7 +126,10 @@ export default function FileExplorerWithSelected({
           onFileSelect={handleFileSelect}
           onFolderToggle={handleFolderToggle}
           onRefresh={handleRefresh}
+          uploading={uploading}
+          onUpload={upload}
         />
+        {progress && <div className="p-3"><UploadStatus progress={progress} /></div>}
       </div>
 
       {/* Resize Handle */}

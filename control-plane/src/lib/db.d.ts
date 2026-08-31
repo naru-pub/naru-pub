@@ -241,6 +241,7 @@ export interface SiteDataDocuments {
 }
 
 export interface SiteDataClients {
+  token_lifetime_seconds: Generated<number>;
   id: string;
   user_id: number;
   redirect_uri: string;
@@ -256,6 +257,7 @@ export interface SiteDataGrant {
 }
 export interface SiteDataAccessTokens extends SiteDataGrant {}
 export interface SiteDataAuthCodes extends SiteDataGrant {
+  token_lifetime_seconds: Generated<number>;
   challenge: string;
 }
 export interface SiteDataRateLimits {

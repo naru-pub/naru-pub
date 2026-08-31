@@ -68,6 +68,7 @@ export async function ownerAuthRequest(request: Request, action: string) {
           clients: clients.map((c) => ({
             id: c.id,
             redirectUri: c.redirect_uri,
+            tokenLifetimeSeconds: c.token_lifetime_seconds,
             collections: collections
               .filter((col) => c.collection_ids.includes(col.id))
               .map((col) => col.name),
@@ -95,7 +96,11 @@ export async function ownerAuthRequest(request: Request, action: string) {
       if (typeof body.id !== "string" || body.id.length > 64)
         throw new DataError(400, "Registration ID required.");
       if (request.method === "DELETE") await removeClient(user.id, body.id);
-      else if (body.redirectUri !== undefined || body.collections !== undefined)
+      else if (
+        body.redirectUri !== undefined ||
+        body.collections !== undefined ||
+        body.tokenLifetimeSeconds !== undefined
+      )
         await updateClient(user.id, body.id, body);
       else await revokeClientTokens(user.id, body.id);
       return Response.json({ success: true }, { headers });

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import UploadStatus from "./UploadStatus";
+import { useFileUpload } from "./useFileUpload";
 import DirectoryTree from "./DirectoryTree";
 import FileViewer, { FileViewerRef } from "./FileViewer";
 import { FileNode } from "@/lib/fileUtils";
@@ -69,8 +71,6 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set([""]));
   const [isDragOver, setIsDragOver] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newFileName, setNewFileName] = useState("");
   const dragCounterRef = useRef(0);
@@ -201,53 +201,10 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
     const droppedFiles = Array.from(e.dataTransfer.files);
     if (droppedFiles.length === 0) return;
 
-    setUploading(true);
-    setUploadProgress(0);
-
-    try {
-      const formData = new FormData();
-      const targetDirectory = getCurrentDirectory();
-      formData.append("directory", targetDirectory ? `${targetDirectory}/` : "");
-
-      droppedFiles.forEach((file) => {
-        formData.append("file", file);
-      });
-
-      // Simulate progress for better UX
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev < 90) return prev + 10;
-          return prev;
-        });
-      }, 100);
-
-      const response = await fetch("/api/files/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      const result = await response.json();
-      clearInterval(progressInterval);
-
-      if (result.success) {
-        setUploadProgress(100);
-        await handleRefresh();
-
-        // Show success for a moment before hiding
-        setTimeout(() => {
-          setUploadProgress(0);
-          setUploading(false);
-        }, 1000);
-      } else {
-        toast.error(result.message);
-        setUploading(false);
-      }
-    } catch (error) {
-      console.error("Upload error:", error);
-      toast.error("파일 업로드에 실패했습니다.");
-      setUploading(false);
-    }
+    await handleUpload(droppedFiles, getCurrentDirectory());
   };
+
+  const { uploading, progress: uploadProgress, upload: handleUpload } = useFileUpload(handleRefresh);
 
   const handleStartRename = () => {
     if (!selectedFile) return;
@@ -389,6 +346,8 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
           onFileSelect={handleFileSelect}
           onFolderToggle={handleFolderToggle}
           onRefresh={handleRefresh}
+          uploading={uploading}
+          onUpload={handleUpload}
         />
       </div>
 
@@ -574,14 +533,7 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
         <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-card p-6 rounded-lg border-2 border-border shadow-lg text-center">
             <ArrowUpToLine size={28} className="mx-auto mb-2" />
-            <p className="text-lg font-semibold mb-2">파일 업로드 중...</p>
-            <div className="w-64 bg-secondary rounded-full h-2">
-              <div
-                className="bg-primary h-2 rounded-full transition-all duration-300"
-                style={{ width: `${uploadProgress}%` }}
-              ></div>
-            </div>
-            <p className="text-sm text-muted-foreground mt-2">{uploadProgress}%</p>
+            {uploadProgress && <UploadStatus progress={uploadProgress} />}
           </div>
         </div>
       )}

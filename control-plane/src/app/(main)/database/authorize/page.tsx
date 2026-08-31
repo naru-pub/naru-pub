@@ -1,5 +1,6 @@
 import { validateRequest } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import {
   authorizationInput,
   previewAuthorization,
@@ -35,8 +36,14 @@ export default async function AuthorizePage({
       ...Object.fromEntries(query),
       collections: query.get("collections")?.split(","),
     });
-    const { collections } = await previewAuthorization(user.id, input);
-    return <Consent input={input} names={collections.map((c) => c.name)} />;
+    const { client, collections } = await previewAuthorization(user.id, input);
+    return (
+      <Consent
+        input={input}
+        names={collections.map((c) => c.name)}
+        tokenLifetimeSeconds={client.token_lifetime_seconds}
+      />
+    );
   } catch (error) {
     return (
       <div className="max-w-xl mx-auto p-6">
@@ -46,6 +53,9 @@ export default async function AuthorizePage({
             ? error.message
             : "요청을 확인하지 못했습니다. 다시 시도해 주세요."}
         </p>
+        <Link href="/database" className="underline">
+          데이터베이스 설정으로 이동
+        </Link>
       </div>
     );
   }

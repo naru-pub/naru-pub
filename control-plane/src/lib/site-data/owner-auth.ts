@@ -5,6 +5,20 @@ import { db } from "@/lib/database";
 import { DataError, name } from "./validation";
 
 export const TOKEN_SECONDS = 24 * 60 * 60;
+export function tokenLifetime(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 60 ||
+    value > TOKEN_SECONDS ||
+    value % 60 !== 0
+  )
+    throw new DataError(
+      400,
+      "Token lifetime must be 1-1440 whole minutes (in seconds).",
+    );
+  return value;
+}
 const CODE_SECONDS = 60;
 export const digest = (value: string) =>
   createHash("sha256").update(value).digest("base64url");
@@ -141,17 +155,23 @@ export async function updateClient(
   id: string,
   body: Record<string, unknown>,
 ) {
-  const redirectUri = callbackUrl(body.redirectUri).href;
-  const names = collectionNames(body.collections);
+  const names =
+    body.collections === undefined
+      ? undefined
+      : collectionNames(body.collections);
   return db.transaction().execute(async (tx) => {
     await lockOwner(tx, userId);
     const current = await tx
       .selectFrom("site_data_clients")
-      .select("id")
+      .selectAll()
       .where("id", "=", id)
       .where("user_id", "=", userId)
       .executeTakeFirst();
     if (!current) throw new DataError(404, "Registration not found.");
+    const redirectUri =
+      body.redirectUri === undefined
+        ? current.redirect_uri
+        : callbackUrl(body.redirectUri).href;
     await assertSiteOrigin(tx, userId, redirectUri);
     const duplicate = await tx
       .selectFrom("site_data_clients")
@@ -161,12 +181,27 @@ export async function updateClient(
       .where("id", "!=", id)
       .executeTakeFirst();
     if (duplicate) throw new DataError(409, "Callback already registered.");
-    const collections = await scope(tx, userId, names);
-    await clearClientGrants(tx, id);
+    const collections = names
+      ? await scope(tx, userId, names)
+      : current.collection_ids.map((id) => ({ id }));
+    const lifetime =
+      body.tokenLifetimeSeconds === undefined
+        ? current.token_lifetime_seconds
+        : tokenLifetime(body.tokenLifetimeSeconds);
+    const ids = collections.map((c) => c.id);
+    if (
+      current.redirect_uri !== redirectUri ||
+      lifetime < current.token_lifetime_seconds ||
+      ids.length !== current.collection_ids.length ||
+      ids.some((id) => !current.collection_ids.includes(id))
+    ) {
+      await clearClientGrants(tx, id);
+    }
     await tx
       .updateTable("site_data_clients")
       .set({
         redirect_uri: redirectUri,
+        token_lifetime_seconds: lifetime,
         collection_ids: collections.map((c) => c.id),
       })
       .where("id", "=", id)
@@ -181,6 +216,11 @@ export async function registerClient(
 ) {
   const redirectUri = callbackUrl(body.redirectUri).href;
   const names = collectionNames(body.collections);
+  const lifetime = tokenLifetime(
+    body.tokenLifetimeSeconds === undefined
+      ? TOKEN_SECONDS
+      : body.tokenLifetimeSeconds,
+  );
   return db.transaction().execute(async (tx) => {
     await lockOwner(tx, userId);
     await assertSiteOrigin(tx, userId, redirectUri);
@@ -212,6 +252,7 @@ export async function registerClient(
         id: randomUUID(),
         user_id: userId,
         redirect_uri: redirectUri,
+        token_lifetime_seconds: lifetime,
         collection_ids: collections.map((c) => c.id),
       })
       .returningAll()
@@ -257,6 +298,9 @@ export function authorizationInput(body: Record<string, unknown>) {
     challenge,
     state,
     collections: collectionNames(body.collections),
+    ...(body.tokenLifetimeSeconds === undefined
+      ? {}
+      : { tokenLifetimeSeconds: tokenLifetime(body.tokenLifetimeSeconds) }),
   };
 }
 async function authorizationDetails(
@@ -268,7 +312,13 @@ async function authorizationDetails(
     .selectFrom("site_data_clients as c")
     .innerJoin("users as u", "u.id", "c.user_id")
     .innerJoin("site_data_site_clients as w", "w.user_id", "c.user_id")
-    .select(["c.id", "c.redirect_uri", "c.collection_ids", "u.login_name"])
+    .select([
+      "c.id",
+      "c.redirect_uri",
+      "c.collection_ids",
+      "c.token_lifetime_seconds",
+      "u.login_name",
+    ])
     .where("w.id", "=", input.clientId)
     .where("c.redirect_uri", "=", input.redirectUri)
     .where("c.user_id", "=", userId)
@@ -284,8 +334,12 @@ async function authorizationDetails(
     );
   await assertSiteOrigin(tx, userId, client.redirect_uri);
   const collections = await scope(tx, userId, input.collections);
-  if (collections.some((c) => !client.collection_ids.includes(c.id)))
-    throw new DataError(403, "Requested collections exceed registered access.");
+  const missing = collections.filter((c) => !client.collection_ids.includes(c.id));
+  if (missing.length)
+    throw new DataError(
+      403,
+      `이 관리자 페이지에 허용되지 않은 컬렉션을 요청했습니다: ${missing.map((c) => c.name).join(", ")}. 제어판의 ‘웹사이트 관리자 로그인’에서 해당 관리자 페이지를 수정하여 필요한 컬렉션을 선택한 뒤, 웹사이트에서 다시 로그인해 주세요.`,
+    );
   return { client, collections };
 }
 export async function previewAuthorization(
@@ -341,6 +395,10 @@ export async function approveAuthorization(
         session_id: sessionId,
         collection_ids: collections.map((c) => c.id),
         challenge: input.challenge,
+        token_lifetime_seconds: Math.min(
+          client.token_lifetime_seconds,
+          input.tokenLifetimeSeconds ?? TOKEN_SECONDS,
+        ),
         expires_at: new Date(Date.now() + CODE_SECONDS * 1000),
       })
       .execute();
@@ -385,7 +443,13 @@ export async function exchangeCode(
     const grant = await tx
       .selectFrom("site_data_auth_codes as g")
       .innerJoin("sessions as s", "s.id", "g.session_id")
-      .select(["g.hash", "g.challenge", "g.session_id", "g.collection_ids"])
+      .select([
+        "g.hash",
+        "g.challenge",
+        "g.session_id",
+        "g.collection_ids",
+        "g.token_lifetime_seconds",
+      ])
       .where("g.hash", "=", digest(code))
       .where("g.client_id", "=", client.id)
       .where("g.expires_at", ">", new Date())
@@ -423,7 +487,13 @@ export async function exchangeCode(
       .where("id", "=", grant.session_id)
       .executeTakeFirstOrThrow();
     const expiresAt = Math.min(
-      Date.now() + TOKEN_SECONDS * 1000,
+      Date.now() +
+        Math.min(
+          TOKEN_SECONDS,
+          current.token_lifetime_seconds,
+          grant.token_lifetime_seconds,
+        ) *
+          1000,
       new Date(parent.expires_at).getTime(),
     );
     const expiresIn = Math.floor((expiresAt - Date.now()) / 1000);

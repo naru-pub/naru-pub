@@ -3,7 +3,12 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-type Client = { id: string; redirectUri: string; collections: string[] };
+type Client = {
+  id: string;
+  redirectUri: string;
+  collections: string[];
+  tokenLifetimeSeconds: number;
+};
 async function api(method = "GET", body?: unknown) {
   const response = await fetch("/api/account/database-clients", {
     method,
@@ -27,6 +32,7 @@ export default function WebsiteAccess({
   const [editing, setEditing] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [callback, setCallback] = useState(websiteUrl);
+  const [lifetimeMinutes, setLifetimeMinutes] = useState("1440");
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -65,11 +71,7 @@ export default function WebsiteAccess({
         관리자 페이지를 사용하세요.
       </p>
       <p className="text-sm break-all">
-        웹사이트 공통 Client ID: <code>{clientId || "불러오는 중…"}</code>
-      </p>
-      <p className="text-sm text-muted-foreground">
-        관리자 페이지를 추가하거나 수정해도 Client ID는 바뀌지 않습니다.
-        페이지를 수정하면 해당 페이지의 로그인 권한을 모두 취소합니다.
+        Client ID: <code>{clientId || "불러오는 중…"}</code>
       </p>
       {error && (
         <p role="alert" className="text-destructive">
@@ -86,6 +88,7 @@ export default function WebsiteAccess({
               await api(editing ? "PATCH" : "POST", {
                 ...(editing ? { id: editing } : {}),
                 redirectUri: callback,
+                tokenLifetimeSeconds: Number(lifetimeMinutes) * 60,
                 collections: selected.filter((n) =>
                   collections.some((c) => c.name === n),
                 ),
@@ -93,6 +96,7 @@ export default function WebsiteAccess({
               setEditing(null);
               setCallback(websiteUrl);
               setSelected([]);
+              setLifetimeMinutes("1440");
               await reload();
             });
           }}
@@ -105,6 +109,22 @@ export default function WebsiteAccess({
             value={callback}
             onChange={(e) => setCallback(e.target.value)}
           />
+          <label className="block space-y-1 text-sm">
+            <span>관리자 토큰 유효 시간 (분)</span>
+            <Input
+              type="number"
+              min={1}
+              max={1440}
+              step={1}
+              required
+              value={lifetimeMinutes}
+              onChange={(e) => setLifetimeMinutes(e.target.value)}
+            />
+            <span className="text-muted-foreground">
+              1–1,440분, 기본 24시간. 나루 로그인 세션이 먼저 만료되면 토큰도
+              종료됩니다.
+            </span>
+          </label>
           <div className="flex gap-3 flex-wrap">
             {collections.map((c) => (
               <label className="flex gap-2 items-center" key={c.name}>
@@ -134,6 +154,7 @@ export default function WebsiteAccess({
                 setEditing(null);
                 setCallback(websiteUrl);
                 setSelected([]);
+                setLifetimeMinutes("1440");
               }}
             >
               수정 취소
@@ -146,6 +167,9 @@ export default function WebsiteAccess({
             <p className="text-sm">
               컬렉션: {c.collections.join(", ") || "(삭제됨)"}
             </p>
+            <p className="text-sm">
+              토큰 유효 시간: {c.tokenLifetimeSeconds / 60}분
+            </p>
             <div className="flex gap-2 flex-wrap">
               <Button
                 variant="outline"
@@ -153,6 +177,7 @@ export default function WebsiteAccess({
                   setEditing(c.id);
                   setCallback(c.redirectUri);
                   setSelected(c.collections);
+                  setLifetimeMinutes(String(c.tokenLifetimeSeconds / 60));
                 }}
               >
                 수정
@@ -182,6 +207,7 @@ export default function WebsiteAccess({
                         setEditing(null);
                         setCallback(websiteUrl);
                         setSelected([]);
+                        setLifetimeMinutes("1440");
                       }
                       await reload();
                     });
