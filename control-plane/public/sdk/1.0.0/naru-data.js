@@ -18,29 +18,11 @@ const base64url = (bytes) =>
     .replace(/=+$/, "");
 const random = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
 
-export function createDatabase({
-  site,
-  baseUrl = new URL(import.meta.url).origin,
-}) {
+export const CONTROL_PLANE_ORIGIN = "https://naru.pub";
+export function createDatabase({ site }) {
   if (typeof site !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(site))
     throw new TypeError("A valid Naru site login name is required.");
-  const base = new URL(baseUrl);
-  if (
-    base.username ||
-    base.password ||
-    base.search ||
-    base.hash ||
-    base.pathname !== "/" ||
-    !(
-      base.protocol === "https:" ||
-      (base.protocol === "http:" &&
-        ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname))
-    )
-  ) {
-    throw new TypeError(
-      "baseUrl must be an HTTPS origin (or HTTP localhost for development).",
-    );
-  }
+  const base = new URL(CONTROL_PLANE_ORIGIN);
   const root = `${base.origin}/api/data/${encodeURIComponent(site)}`;
   const storageKey = `naru:owner:${base.origin}:${site}`;
   async function request(url, method = "GET", body, token) {
@@ -63,12 +45,18 @@ export function createDatabase({
       );
     return result;
   }
-  function client(getToken = () => undefined) {
+  function client(getToken = () => undefined, unauthorized = () => {}) {
     return {
       collection(collectionName) {
         const path = `${root}/${segment(collectionName)}`;
-        const send = (url, method, body) =>
-          request(url, method, body, getToken());
+        const send = async (url, method, body) => {
+          try {
+            return await request(url, method, body, await getToken());
+          } catch (error) {
+            if (error.status === 401) unauthorized();
+            throw error;
+          }
+        };
         return {
           async get(id) {
             return (await send(`${path}/${segment(id)}`)).document;
@@ -117,6 +105,79 @@ export function createDatabase({
       },
     };
   }
+  // Each callback has an independent tab-scoped session. No localStorage or cookies.
+  const sessionKey = () =>
+    `${storageKey}:session:${window.location.origin}${window.location.pathname}`;
+  let activeOwner = null;
+  let completing = null;
+  function ownerClient(saved, key) {
+    let token = saved.accessToken;
+    const expiresAt = saved.expiresAt;
+    function clear() {
+      const current = token;
+      token = null;
+      // An older client must not erase a newer sign-in on the same page.
+      const stored = window.sessionStorage.getItem(key);
+      if (stored) {
+        try {
+          if (JSON.parse(stored).accessToken === current)
+            window.sessionStorage.removeItem(key);
+        } catch {
+          window.sessionStorage.removeItem(key);
+        }
+      }
+      if (activeOwner === owner) activeOwner = null;
+    }
+    const owner = {
+      ...client(() => {
+        if (!token || Date.now() >= expiresAt) {
+          clear();
+          throw new NaruDataError(
+            401,
+            "Owner session expired or signed out. Sign in again.",
+          );
+        }
+        return token;
+      }, clear),
+      expiresAt,
+      async signOut() {
+        const current = token;
+        clear();
+        if (current)
+          await request(
+            `${base.origin}/api/data-auth/revoke`,
+            "POST",
+            undefined,
+            current,
+          );
+      },
+    };
+    return owner;
+  }
+  function restoreOwner() {
+    if (activeOwner && activeOwner.expiresAt > Date.now()) return activeOwner;
+    activeOwner = null;
+    const key = sessionKey();
+    let saved;
+    try {
+      saved = JSON.parse(window.sessionStorage.getItem(key));
+    } catch {
+      /* malformed */
+    }
+    if (
+      !saved ||
+      !/^[A-Za-z0-9_-]{43}$/.test(saved.accessToken) ||
+      saved.redirectUri !== window.location.origin + window.location.pathname ||
+      !Number.isFinite(saved.expiresAt) ||
+      saved.expiresAt <= Date.now() ||
+      saved.expiresAt > Date.now() + 24 * 60 * 60 * 1000 + 60000
+    ) {
+      window.sessionStorage.removeItem(key);
+      return null;
+    }
+    // Restoring never extends the deadline. The server checks authorization on every request.
+    return (activeOwner = ownerClient(saved, key));
+  }
   return {
     ...client(),
     async signInAsOwner({
@@ -155,7 +216,7 @@ export function createDatabase({
           ),
         ),
       );
-      // Only the short-lived PKCE transaction is persisted; never an access token.
+      // Persist the short-lived PKCE transaction across the approval redirect.
       window.sessionStorage.setItem(
         storageKey,
         JSON.stringify({
@@ -177,81 +238,84 @@ export function createDatabase({
       }).toString();
       window.location.assign(url.href);
     },
-    async completeOwnerSignIn() {
-      const url = new URL(window.location.href);
-      if (!url.searchParams.has("code") && !url.searchParams.has("error"))
-        return null;
-      const code = url.searchParams.get("code"),
-        state = url.searchParams.get("state"),
-        error = url.searchParams.get("error");
-      for (const key of ["code", "state", "error"])
-        url.searchParams.delete(key);
-      // Remove the authorization response before fetching or rendering user content.
-      window.history.replaceState(null, "", url.href);
-      const saved = window.sessionStorage.getItem(storageKey);
-      window.sessionStorage.removeItem(storageKey);
-      let pending;
-      try {
-        pending = JSON.parse(saved);
-      } catch {
-        /* handled below */
-      }
-      if (
-        !pending ||
-        pending.state !== state ||
-        pending.redirectUri !== url.href ||
-        !Number.isFinite(pending.startedAt) ||
-        Date.now() - pending.startedAt > 10 * 60 * 1000 ||
-        pending.startedAt > Date.now()
-      ) {
-        throw new NaruDataError(
-          401,
-          "Owner sign-in state is missing, invalid or expired. Sign in again.",
-        );
-      }
-      if (error) throw new NaruDataError(403, "Owner sign-in was denied.");
-      const result = await request(
-        `${base.origin}/api/data-auth/token`,
-        "POST",
-        {
-          code,
-          verifier: pending.verifier,
-          clientId: pending.clientId,
-          redirectUri: pending.redirectUri,
-        },
-      );
-      if (
-        typeof result.accessToken !== "string" ||
-        !/^[A-Za-z0-9_-]{43}$/.test(result.accessToken) ||
-        result.tokenType !== "Bearer" ||
-        result.expiresIn !== 600
-      )
-        throw new NaruDataError(502, "Invalid owner token response.");
-      let token = result.accessToken;
-      const expiresAt = Date.now() + result.expiresIn * 1000;
-      const getToken = () => {
-        if (!token || Date.now() >= expiresAt)
-          throw new NaruDataError(
-            401,
-            "Owner session expired or signed out. Sign in again.",
-          );
-        return token;
-      };
-      return {
-        ...client(getToken),
-        expiresAt,
-        async signOut() {
-          const current = token;
-          token = null;
-          if (current)
-            await request(
-              `${base.origin}/api/data-auth/revoke`,
-              "POST",
-              undefined,
-              current,
-            );
-        },
-      };
+    completeOwnerSignIn() {
+      if (!completing)
+        completing = complete().finally(() => {
+          completing = null;
+        });
+      return completing;
     },
   };
+  async function complete() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("code") && !url.searchParams.has("error"))
+      return restoreOwner();
+    const code = url.searchParams.get("code"),
+      state = url.searchParams.get("state"),
+      error = url.searchParams.get("error");
+    for (const key of ["code", "state", "error"]) url.searchParams.delete(key);
+    // Remove the authorization response before fetching or rendering user content.
+    window.history.replaceState(null, "", url.href);
+    const saved = window.sessionStorage.getItem(storageKey);
+    window.sessionStorage.removeItem(storageKey);
+    let pending;
+    try {
+      pending = JSON.parse(saved);
+    } catch {
+      /* handled below */
+    }
+    if (
+      !pending ||
+      pending.state !== state ||
+      pending.redirectUri !== url.href ||
+      !Number.isFinite(pending.startedAt) ||
+      Date.now() - pending.startedAt > 10 * 60 * 1000 ||
+      pending.startedAt > Date.now()
+    ) {
+      throw new NaruDataError(
+        401,
+        "Owner sign-in state is missing, invalid or expired. Sign in again.",
+      );
+    }
+    if (error) throw new NaruDataError(403, "Owner sign-in was denied.");
+    const result = await request(`${base.origin}/api/data-auth/token`, "POST", {
+      code,
+      verifier: pending.verifier,
+      clientId: pending.clientId,
+      redirectUri: pending.redirectUri,
+    });
+    if (
+      !result ||
+      !/^[A-Za-z0-9_-]{43}$/.test(result.accessToken) ||
+      result.tokenType !== "Bearer" ||
+      !Number.isInteger(result.expiresIn) ||
+      result.expiresIn <= 0 ||
+      result.expiresIn > 24 * 60 * 60 ||
+      !Number.isFinite(result.expiresAt) ||
+      result.expiresAt <= Date.now() ||
+      result.expiresAt > Date.now() + 24 * 60 * 60 * 1000 + 60000
+    )
+      throw new NaruDataError(502, "Invalid owner token response.");
+    const credentials = {
+      accessToken: result.accessToken,
+      expiresAt: result.expiresAt,
+      redirectUri: pending.redirectUri,
+    };
+    const key = sessionKey();
+    try {
+      window.sessionStorage.setItem(key, JSON.stringify(credentials));
+    } catch (error) {
+      // If persistence fails, do not leave a newly issued token active unnecessarily.
+      try {
+        await request(
+          `${base.origin}/api/data-auth/revoke`,
+          "POST",
+          undefined,
+          result.accessToken,
+        );
+      } catch {}
+      throw error;
+    }
+    return (activeOwner = ownerClient(credentials, key));
+  }
 }

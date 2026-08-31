@@ -191,9 +191,10 @@ export default function DatabaseDocs() {
               <Code language="html">{`<script type="module">\n  import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\n  const db = createDatabase({ site: "내-로그인-이름" });\n  const posts = db.collection("posts");\n  const sort = { orderBy: "created_at", direction: "desc" };\n  const page = await posts.list({ ...sort, limit: 20 });\n  for (const document of page.documents) {\n    console.log(document.id, document.data, document.created_at);\n  }\n  if (page.nextCursor) {\n    const next = await posts.list({ ...sort, limit: 20, after: page.nextCursor });\n  }\n  const post = await posts.get("hello");\n  await db.collection("guestbook").add({\n    name: "방문자", message: "잘 읽었습니다!"\n  });\n</script>`}</Code>
               <p>
                 현재 제공 버전은 <strong>1.0.0</strong>이며 이 버전 안에서 계속
-                개선합니다. 버전 없는 URL은 제공하지 않습니다. 자체 번들로 옮긴
-                경우 <code>createDatabase</code>에{" "}
-                <code>baseUrl: "https://naru.pub"</code>도 지정하세요.{" "}
+                개선합니다. 버전 없는 URL은 제공하지 않습니다. 제어판 주소는
+                SDK에
+                <code>https://naru.pub</code>로 고정되어 별도 설정이 필요
+                없습니다. 자체 번들로 옮겨도 같습니다.{" "}
                 <a href="/sdk/1.0.0/naru-data.d.ts">TypeScript 타입 정의</a>도
                 제공합니다.
               </p>
@@ -331,7 +332,7 @@ const comments = await db.collection("comments").list({
               <p>
                 정적 웹사이트에서도 관리자 글쓰기를 할 수 있습니다. 사이트에
                 비밀번호나 장기 API 키를 넣지 않습니다. 사용자가 나루에서
-                로그인하고 승인하면 웹사이트가 10분짜리 문서 접근 권한을
+                로그인하고 승인하면 웹사이트가 최대 24시간의 관리자 세션을
                 받습니다.
               </p>
               <ol className="list-decimal space-y-3 pl-6">
@@ -343,7 +344,9 @@ const comments = await db.collection("comments").list({
                 <li>
                   접근할 컬렉션을 선택합니다. 이 예제는 <code>posts</code>와{" "}
                   <code>drafts</code>를 선택합니다. 표시된 Client ID를
-                  복사합니다. Client ID는 공개해도 되는 식별자입니다.
+                  복사합니다. Client ID는 웹사이트마다 고정된 공개 식별자입니다.
+                  여러 관리자 페이지에서 같은 ID를 사용합니다. 각 페이지의 URL과
+                  컬렉션 권한은 따로 등록하고 수정할 수 있습니다.
                 </li>
                 <li>
                   로그인 버튼에서 <code>signInAsOwner()</code>를 호출합니다.
@@ -354,7 +357,7 @@ const comments = await db.collection("comments").list({
                   호출하고, 반환받은 관리자 클라이언트로 문서를 저장합니다.
                 </li>
               </ol>
-              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  // 페이지 시작 시 처리. 승인 콜백이 아니면 null을 반환합니다.\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\n\n// 로그인 버튼의 클릭 핸들러에서 호출하세요.\nasync function login() {\n  await db.signInAsOwner({\n    clientId: "제어판의-Client-ID",\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts", "drafts"],\n  });\n}\n\n// 저장 버튼 핸들러에서 호출하고 오류를 표시하세요.\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
+              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  // Complete approval or restore this tab; null means signed out.\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\n\n// 로그인 버튼의 클릭 핸들러에서 호출하세요.\nasync function login() {\n  await db.signInAsOwner({\n    clientId: "제어판의-Client-ID",\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts", "drafts"],\n  });\n}\n\n// 저장 버튼 핸들러에서 호출하고 오류를 표시하세요.\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
               <p>
                 콜백은 본인 나루 사이트 또는 활성화된 인증 도메인의 HTTPS
                 주소여야 합니다. 쿼리·해시·와일드카드는 사용할 수 없습니다.
@@ -363,17 +366,29 @@ const comments = await db.collection("comments").list({
               </p>
               <p>
                 관리자 클라이언트는 기존 공개 클라이언트 <code>db</code>와
-                별개입니다. 토큰은 메모리에만 남으며 새로고침하면 다시
-                승인받아야 합니다. 자동 갱신은 없습니다.{" "}
-                <code>owner.expiresAt</code>은 밀리초 단위 만료 시각입니다.
-                로그인 이동 전에 초안을 저장하되 토큰을 직접 저장하지 마세요.
+                별개입니다. 관리자 토큰 하나를 이 탭의 sessionStorage에 저장하여
+                같은 관리자 페이지를 새로고침해도 복원합니다. 자동 갱신은 없으며
+                새로고침하거나 요청해도 만료 시각은 늘어나지 않습니다. 서버는 매
+                요청마다 권한과 폐기 여부를 확인합니다.
+                <code>owner.expiresAt</code>은 최대 24시간인 관리자 토큰의 만료
+                시각입니다(Unix 밀리초). 나루 로그인 세션이 먼저 만료되면 관리자
+                세션도 종료됩니다.
               </p>
               <p>
-                <code>signOut()</code>은 이 토큰을 폐기합니다. 나루 계정의
-                로그아웃과는 별개입니다. 제어판에서 등록의 전체 토큰 폐기 또는
-                등록 삭제도 가능합니다. 서버 폐기 요청이 실패해도 로컬 토큰은
-                제거되지만, 서버의 권한은 폐기되거나 만료될 때까지 남을 수
-                있습니다.
+                기존 페이지별 Client ID는 더 이상 사용할 수 없습니다. 모든
+                관리자 페이지의 설정을 제어판의 웹사이트 공통 Client ID로 바꾸고
+                다시 로그인하세요. 등록된 URL과 컬렉션 권한은 유지됩니다. 관리자
+                토큰은 비밀이므로 외부 스크립트를 넣거나 복사·공유하지 마세요.
+                같은 출처의 다른 경로는 보안 격리 경계가 아닙니다. 브라우저가 탭
+                상태를 복원할 수 있으므로 명시적인 로그아웃으로 세션을
+                종료하세요.
+              </p>
+              <p>
+                <code>signOut()</code>은 이 관리자 토큰을 폐기합니다. 나루
+                계정의 로그아웃과는 별개입니다. 제어판에서 등록의 전체 토큰 폐기
+                또는 등록 삭제도 가능합니다. 서버 폐기 요청이 실패해도 로컬
+                토큰은 제거되지만, 서버의 권한은 폐기되거나 만료될 때까지 남을
+                수 있습니다.
               </p>
               <p>
                 편집 페이지의 외부 스크립트는 관리자 권한을 악용할 수 있습니다.
@@ -423,7 +438,7 @@ const comments = await db.collection("comments").list({
                   글을 읽고 방명록도 남겨 보세요.
                 </li>
               </ol>
-              <Code>{`export const config = {\n  site: "내-로그인-이름",\n  clientId: "제어판에서-복사한-Client-ID",\n  controlPlaneOrigin: "https://naru.pub",\n};`}</Code>
+              <Code>{`export const config = {\n  site: "내-로그인-이름",\n  clientId: "제어판에서-복사한-Client-ID",\n};`}</Code>
               <p>
                 파일을 직접 더블클릭한 <code>file://</code> 주소에서는 실행하지
                 마세요. 나루의 HTTPS 주소에서 확인하세요. 제공되는 미리보기에는
@@ -439,9 +454,9 @@ const comments = await db.collection("comments").list({
               <p>
                 기존 예제를 업그레이드한다면 관리자 읽기·쓰기의{" "}
                 <code>drafts</code> 컬렉션을 먼저 만드세요. 기존 웹사이트 등록의
-                범위는 수정할 수 없으므로 등록을 삭제한 뒤 같은 콜백에 posts와
-                drafts를 선택해 다시 등록하고, config.js의 Client ID를
-                갱신하세요. 이전 등록의 토큰도 폐기됩니다.
+                수정 버튼으로 posts와 drafts를 선택하세요. Client ID를 바꿀
+                필요가 없습니다. 수정하면 해당 페이지의 기존 로그인 권한이
+                취소되므로 다시 로그인하세요.
               </p>
               <p>
                 작성 중인 내용은 로그인 이동을 위해 이 탭의 sessionStorage에

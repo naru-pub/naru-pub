@@ -2,5 +2,4 @@
 export const config = {
   site: "",
   clientId: "",
-  controlPlaneOrigin: "https://naru.pub",
 };

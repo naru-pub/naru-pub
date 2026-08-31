@@ -3,6 +3,8 @@ import { beforeEach, expect, jest, test } from "@jest/globals";
 jest.mock("@/lib/auth", () => ({ validateRequest: jest.fn() }));
 jest.mock("../owner-auth", () => ({
   exchangeCode: jest.fn(),
+  siteClientId: jest.fn(),
+  updateClient: jest.fn(),
   approveAuthorization: jest.fn(),
   authorizationInput: jest.fn((x: unknown) => x),
   revokeToken: jest.fn(),
@@ -63,7 +65,8 @@ test("token exchange ignores ambient cookies and forwards origin to grant verifi
   owner.exchangeCode.mockResolvedValue({
     accessToken: "t".repeat(43),
     tokenType: "Bearer",
-    expiresIn: 600,
+    expiresIn: 86400,
+    expiresAt: Date.now() + 24 * 3600000,
   });
   const body = {
     code: "code",
@@ -106,3 +109,23 @@ test("revocation requires explicit bearer credentials", async () => {
   expect(response.status).toBe(401);
   expect(owner.revokeToken).not.toHaveBeenCalled();
 });
+
+test.each(["refresh", "end-session"])(
+  "removed route %s returns 404",
+  async (action) => {
+    const route =
+      require("@/app/(main)/api/data-auth/[action]/route") as typeof import("@/app/(main)/api/data-auth/[action]/route");
+    const response = await route.POST(
+      new Request(`https://naru.pub/api/data-auth/${action}`, {
+        method: "POST",
+        headers: {
+          Origin: "https://alice.example",
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      }),
+      { params: Promise.resolve({ action }) },
+    );
+    expect(response.status).toBe(404);
+  },
+);

@@ -60,13 +60,13 @@ Create a collection in the control plane, choose its permissions, then use this 
 
 `get` returns `{ id, data, created_at, updated_at }`; a missing document throws a 404 error. `set` replaces the whole document or creates it if absent. `add` generates a UUID and returns only `{ id }`, without requiring read permission. `delete` is idempotent. JSON null is stored as a value, not treated as deletion. Render user data with `textContent`, not `innerHTML`.
 
-SDK declarations are available alongside the module at `/sdk/1.0.0/naru-data.d.ts`. Set `baseUrl` explicitly if bundling/copying the SDK rather than importing it from the control plane.
+SDK declarations are available alongside the module at `/sdk/1.0.0/naru-data.d.ts`. The SDK pins `https://naru.pub` as its control-plane origin, even when bundled/copied. There is no `baseUrl` or example `controlPlaneOrigin` configuration.
 
 ## Website owner login
 
 1. Open `/database` directly in the control plane (it is intentionally absent from the header).
 2. Under website administrator login, register an exact callback URL such as `https://your-login-name.naru.pub/admin.html` and select the collections it may access. The callback must be on your Naru subdomain or an active, verified custom domain; no query, fragment, credentials, wildcard or arbitrary external origin. Development mode also permits loopback callbacks.
-3. Copy the public Client ID into your editor page. This identifies the registration; it is not a secret.
+3. Copy the public Client ID into your editor page. One stable public Client ID identifies the website; each exact callback keeps independent collection permissions. Adding or editing a callback does not change the ID. Old callback-specific IDs are no longer accepted: update every admin page to the shared website Client ID and sign in again. Registered callbacks and collection permissions are preserved.
 4. Call `signInAsOwner()` from a button. Naru authenticates the owner and asks for explicit consent. The website resumes at the registered callback, where `completeOwnerSignIn()` returns a separate authenticated client.
 
 Minimal editor-page wiring (replace site and Client ID):
@@ -124,9 +124,10 @@ Minimal editor-page wiring (replace site and Client ID):
 
 The requested collections must be a subset of the registration. The basic `db` remains public after signing in; only `admin` sends a bearer token. Tokens permit reading, creating, replacing and deleting documents in those collections, including private documents. They are tied to collection IDs so deleting and recreating a collection does not transfer old grants.
 
-Authentication uses random state and mandatory S256 PKCE. The verifier and state live in tab-scoped sessionStorage for at most ten minutes; authorization codes expire after 60 seconds and are single-use, including concurrent exchanges. The server stores only code/token hashes. Access tokens expire after ten minutes and are kept only in SDK memory, never localStorage, cookies or URLs. Refresh tokens and popup login are not included. Reloading or token expiry requires sign-in again; errors are surfaced to the editor.
+Authentication uses random state and mandatory S256 PKCE. The verifier and state live in tab-scoped sessionStorage for at most ten minutes; authorization codes expire after 60 seconds and are single-use, including concurrent exchanges. The server stores only code/token hashes. Each sign-in issues one opaque admin token lasting up to 24 hours, capped by the approving Naru session. The SDK stores it in sessionStorage under the site and exact callback. `completeOwnerSignIn()` restores it locally on reload without a network request; each subsequent data request rechecks authorization on the server. Neither reloads nor requests extend the original expiration. There are no refresh tokens or automatic renewals.
 
-Owner session expiry/deletion, registration removal and token revocation are checked on subsequent requests. Domain ownership status is also rechecked. Use “revoke all login access” to invalidate a registration's outstanding codes and tokens, or remove the registration to disable future login. `admin.signOut()` drops the local token and requests server revocation; a network failure is reported and the server token can remain valid until expiry. This does not sign out of the Naru control plane.
+Control-plane session expiry/deletion, registration edits/removal, token revocation, and domain status are checked on every authenticated data request. Use the control panel to revoke a page's outstanding codes and tokens, or remove its registration to disable future login. `admin.signOut()` clears local credentials before requesting server revocation. A network failure is reported; a copied token may remain usable until revoked or its 24-hour deadline. This does not sign out of the Naru control plane. Browser session restoration can restore sessionStorage, so use explicit logout to end access. The token is accessible to same-origin JavaScript: URL paths are not security isolation boundaries. Never share it or load untrusted scripts. A stolen token can be used longer than a short-lived access token unless revoked.
+
 
 Authorization approval and registration changes require same-origin owner requests. Token exchange and API access require the registered origin plus the explicit code/verifier or bearer token; CORS never grants authorization. The consent page disallows framing. An origin check cannot prevent use of a stolen bearer token by a non-browser client: scripts running on your editor page can exercise owner privileges while signed in. Use a minimal trusted editor without third-party scripts, avoid unsafe HTML rendering, and set a no-referrer policy on the callback page.
 
@@ -162,7 +163,7 @@ Owner authorization endpoints:
 | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /database/authorize`                    | Login/consent UI; never issues a code on GET.                                                                                           |
 | `POST /api/data-auth/authorize`              | Same-origin owner approval with `clientId`, `site`, `redirectUri`, `challenge`, `state`, `collections`; returns validated redirect URL. |
-| `POST /api/data-auth/token`                  | Exchange JSON `{ code, verifier, clientId, redirectUri }` from the registered Origin; returns `{ accessToken, tokenType, expiresIn }`.  |
+| `POST /api/data-auth/token`                  | Exchange JSON `{ code, verifier, clientId, redirectUri }` from the registered Origin; returns `{ accessToken, tokenType, expiresIn, expiresAt }`.  |
 | `POST /api/data-auth/revoke`                 | Revoke the bearer token supplied in Authorization; requires its registered Origin.                                                      |
 | `GET/POST /api/account/database-clients`     | Same-origin owner registration listing/creation (`{ redirectUri, collections }`).                                                       |
 | `PATCH/DELETE /api/account/database-clients` | Same-origin owner revoke-all/remove registration (`{ id }`).                                                                            |
@@ -242,8 +243,15 @@ Opaque cursors include a SHA-256 fingerprint of normalized filters. Reordering e
 
 ## Extended blog example
 
-Create `posts` (world/admin), `guestbook` (world/create), and **`drafts` (admin/admin)**. Register the callback with `posts` and `drafts`. Existing registrations have immutable scopes: remove/recreate the registration and update `config.js` with its new Client ID when upgrading. This revokes old registration tokens.
+Create `posts` (world/admin), `guestbook` (world/create), and **`drafts` (admin/admin)**. Register the callback with `posts` and `drafts`. Edit the existing callback in the control plane to include both collections; its grants are revoked immediately but its Client ID remains valid. New pages use the shared website Client ID. When upgrading from callback-specific IDs, replace them once with the shared website Client ID and sign in again.
 
 The public list filters by exact `category`. The editor loads paginated posts/drafts, edits documents while preserving other JSON fields, saves private drafts, publishes, and deletes the selected document after confirmation. Local tab storage preserves the editor through the login redirect; explicit server draft saving persists across sessions. Signing out clears the editor and local draft.
 
 Draft and public copies share an ID. Saving a private draft does not unpublish or change an existing public post. Publication writes the post first, then removes the draft; those two requests are not atomic. Failed publication preserves the draft; failed cleanup reports that the post is already public and can be retried with the same ID. Deletion affects only the selected collection. There is no conflict detection: concurrent editors use last-write-wins. Guestbook moderation remains in the control panel.
+
+
+### Website identity and admin tokens
+
+`site_data_site_clients` stores one persistent ID per owner, independently of callback rows. Migration preserves callback rows as internal registration IDs, but invalidates all existing authorization codes and website access tokens. Old callback IDs are not accepted as public Client IDs. Each registered page retains its exact callback and collection IDs. Editing a callback revokes all of its codes and access tokens, including when widening scope. Removing a callback cascades the same revocation; the website ID survives even when the last callback is removed.
+
+Every `/api/data-auth/token` exchange returns `{accessToken, tokenType: "Bearer", expiresIn, expiresAt}`. `expiresAt` is the fixed expiry in Unix milliseconds; the token lasts no longer than 24 hours or the approving Naru session, whichever ends first. `POST /api/data-auth/revoke` takes the bearer token and revokes it idempotently. The unpublished renewal tables and `/refresh` and `/end-session` endpoints have been removed; the existing access-token table is sufficient. Requests use explicit credentials and never ambient cookies.

@@ -39,8 +39,8 @@ export default function Consent({
     <div className="max-w-xl mx-auto p-6 space-y-5">
       <h1 className="text-2xl font-bold">웹사이트 관리자 접근 승인</h1>
       <p>
-        사이트 <strong>{input.site}</strong>의 데이터에 아래 웹사이트가 10분
-        동안 접근할 수 있도록 허용할까요?
+        사이트 <strong>{input.site}</strong>의 데이터에 아래 웹사이트가 최대
+        24시간 동안 접근할 수 있도록 허용할까요?
       </p>
       <p className="break-all rounded bg-muted p-3">{input.redirectUri}</p>
       <p>
@@ -62,7 +62,7 @@ export default function Consent({
       )}
       <div className="flex gap-3">
         <Button disabled={busy} onClick={approve}>
-          10분 동안 허용
+          최대 24시간 동안 허용
         </Button>
         <Button disabled={busy} variant="outline" onClick={deny}>
           취소

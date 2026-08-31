@@ -8,6 +8,8 @@ import {
   authorizationInput,
   digest,
   exchangeCode,
+  siteClientId,
+  updateClient,
   registerClient,
   removeClient,
   revokeClientTokens,
@@ -21,7 +23,8 @@ integration("website owner authorization", () => {
   let ready = false,
     owner: number,
     bob: number,
-    clientId: string;
+    clientId: string,
+    registrationId: string;
   const redirectUri = "https://alice.example/admin.html",
     origin = "https://alice.example";
   const verifier = "v".repeat(43);
@@ -93,12 +96,13 @@ integration("website owner authorization", () => {
         adminUserId: owner,
         body: { name },
       });
-    clientId = (
+    registrationId = (
       await registerClient(owner, {
         redirectUri,
         collections: ["posts", "recreated"],
       })
     ).id;
+    clientId = await siteClientId(owner);
   });
   afterAll(async () => {
     if (ready) await teardownTestDatabase();
@@ -201,7 +205,7 @@ integration("website owner authorization", () => {
       .executeTakeFirstOrThrow();
     expect(stored.hash).not.toBe(access);
     expect(stored.expires_at.getTime() - Date.now()).toBeLessThanOrEqual(
-      600000,
+      3600000,
     );
     await data(access, ["posts", "hello"], "DELETE");
   });
@@ -254,7 +258,7 @@ integration("website owner authorization", () => {
     });
     const revoked = await token(),
       pending = await issue();
-    await revokeClientTokens(owner, clientId);
+    await revokeClientTokens(owner, registrationId);
     await expect(data(revoked, ["posts"])).rejects.toMatchObject({
       status: 401,
     });
@@ -274,6 +278,130 @@ integration("website owner authorization", () => {
       .where("id", "=", "alice-session")
       .execute();
   });
+  test("one stable website ID supports exact callbacks, edits revoke grants, and old callback IDs are rejected", async () => {
+    const stable = await siteClientId(owner);
+    await expect(
+      approveAuthorization(
+        owner,
+        "alice-session",
+        authInput({ clientId: registrationId }),
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    const pending = await issue();
+    await expect(
+      exchange(pending, { clientId: registrationId }),
+    ).rejects.toMatchObject({ status: 401 });
+    await expect(exchange(pending)).resolves.toHaveProperty("accessToken");
+    const callback2 = "https://alice.example/second.html";
+    const second = await registerClient(owner, {
+      redirectUri: callback2,
+      collections: ["private"],
+    });
+    expect(await siteClientId(owner)).toBe(stable);
+    await expect(
+      approveAuthorization(
+        owner,
+        "alice-session",
+        authInput({
+          clientId: registrationId,
+          redirectUri: callback2,
+          collections: ["private"],
+        }),
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      approveAuthorization(
+        owner,
+        "alice-session",
+        authInput({
+          clientId: stable,
+          redirectUri: callback2,
+          collections: ["posts"],
+        }),
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    const response = await approveAuthorization(
+      owner,
+      "alice-session",
+      authInput({
+        clientId: stable,
+        redirectUri: callback2,
+        collections: ["private"],
+      }),
+    );
+    const code = new URL(response.redirect).searchParams.get("code")!;
+    const grant = await exchange(code, {
+      clientId: stable,
+      redirectUri: callback2,
+    });
+    expect(grant).toHaveProperty("accessToken");
+    await expect(data(grant.accessToken, ["private"])).resolves.toBeDefined();
+    await expect(
+      updateClient(bob, second.id, {
+        redirectUri: callback2,
+        collections: ["posts"],
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    await updateClient(owner, second.id, {
+      redirectUri: callback2,
+      collections: ["posts"],
+    });
+    expect(await siteClientId(owner)).toBe(stable);
+    await expect(data(grant.accessToken, ["private"])).rejects.toMatchObject({
+      status: 401,
+    });
+    await removeClient(owner, second.id);
+    expect(await siteClientId(owner)).toBe(stable);
+    await expect(exchange(await issue())).resolves.toHaveProperty(
+      "accessToken",
+    );
+  });
+  test("one opaque token lasts at most 24 hours, is stored hashed and is capped by the parent session", async () => {
+    await db
+      .updateTable("sessions")
+      .set({ expires_at: new Date(Date.now() + 48 * 3600000) })
+      .where("id", "=", "alice-session")
+      .execute();
+    const grant = await exchange(await issue());
+    expect(grant.expiresIn).toBeGreaterThan(86390);
+    expect(grant.expiresIn).toBeLessThanOrEqual(86400);
+    expect(grant.expiresAt - Date.now()).toBeGreaterThan(24 * 3600000 - 5000);
+    expect(grant).not.toHaveProperty("refreshToken");
+    const stored = await db
+      .selectFrom("site_data_access_tokens")
+      .selectAll()
+      .where("hash", "=", digest(grant.accessToken))
+      .executeTakeFirstOrThrow();
+    expect(stored.hash).not.toBe(grant.accessToken);
+    expect(stored.expires_at.getTime()).toBe(grant.expiresAt);
+    await expect(data(grant.accessToken, ["posts"])).resolves.toBeDefined();
+    expect(
+      (
+        await db
+          .selectFrom("site_data_access_tokens")
+          .select("expires_at")
+          .where("hash", "=", digest(grant.accessToken))
+          .executeTakeFirstOrThrow()
+      ).expires_at.getTime(),
+    ).toBe(grant.expiresAt);
+    const parentExpiry = new Date(Date.now() + 120000);
+    await db
+      .updateTable("sessions")
+      .set({ expires_at: parentExpiry })
+      .where("id", "=", "alice-session")
+      .execute();
+    const capped = await exchange(await issue());
+    expect(capped.expiresAt).toBe(parentExpiry.getTime());
+    await revokeToken(grant.accessToken, origin);
+    await expect(data(grant.accessToken, ["posts"])).rejects.toMatchObject({
+      status: 401,
+    });
+    await db
+      .updateTable("sessions")
+      .set({ expires_at: new Date(Date.now() + 3600000) })
+      .where("id", "=", "alice-session")
+      .execute();
+  });
   test("lost domain verification, deleted sessions and removed registrations invalidate access", async () => {
     const access = await token();
     await sql`update custom_domains set verified_at = null`.execute(db);
@@ -281,15 +409,15 @@ integration("website owner authorization", () => {
       status: 403,
     });
     await sql`update custom_domains set verified_at = now()`.execute(db);
-    await removeClient(bob, clientId); // Cannot revoke another site's registration.
+    await removeClient(bob, registrationId); // Cannot revoke another site's registration.
     await expect(data(access, ["posts"])).resolves.toBeDefined();
     const pending = await issue();
-    await removeClient(owner, clientId);
+    await removeClient(owner, registrationId);
     await expect(data(access, ["posts"])).rejects.toMatchObject({
       status: 401,
     });
     await expect(exchange(pending)).rejects.toMatchObject({ status: 401 });
-    clientId = (
+    registrationId = (
       await registerClient(owner, { redirectUri, collections: ["posts"] })
     ).id;
     const sessionDeleted = await token();

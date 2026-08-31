@@ -4,7 +4,7 @@ import type { DB } from "@/lib/db";
 import { db } from "@/lib/database";
 import { DataError, name } from "./validation";
 
-export const TOKEN_SECONDS = 600;
+export const TOKEN_SECONDS = 24 * 60 * 60;
 const CODE_SECONDS = 60;
 export const digest = (value: string) =>
   createHash("sha256").update(value).digest("base64url");
@@ -110,6 +110,71 @@ async function scope(tx: Kysely<DB>, userId: number, names: string[]) {
   return rows;
 }
 
+// Persist independently of callback registrations, so removing the last page does
+// not change the website's public identifier. The unique owner key handles races.
+export async function siteClientId(userId: number, tx: Kysely<DB> = db) {
+  await tx
+    .insertInto("site_data_site_clients")
+    .values({ user_id: userId, id: randomUUID() })
+    .onConflict((oc) => oc.column("user_id").doNothing())
+    .execute();
+  return (
+    await tx
+      .selectFrom("site_data_site_clients")
+      .select("id")
+      .where("user_id", "=", userId)
+      .executeTakeFirstOrThrow()
+  ).id;
+}
+async function clearClientGrants(tx: Kysely<DB>, id: string) {
+  await tx
+    .deleteFrom("site_data_access_tokens")
+    .where("client_id", "=", id)
+    .execute();
+  await tx
+    .deleteFrom("site_data_auth_codes")
+    .where("client_id", "=", id)
+    .execute();
+}
+export async function updateClient(
+  userId: number,
+  id: string,
+  body: Record<string, unknown>,
+) {
+  const redirectUri = callbackUrl(body.redirectUri).href;
+  const names = collectionNames(body.collections);
+  return db.transaction().execute(async (tx) => {
+    await lockOwner(tx, userId);
+    const current = await tx
+      .selectFrom("site_data_clients")
+      .select("id")
+      .where("id", "=", id)
+      .where("user_id", "=", userId)
+      .executeTakeFirst();
+    if (!current) throw new DataError(404, "Registration not found.");
+    await assertSiteOrigin(tx, userId, redirectUri);
+    const duplicate = await tx
+      .selectFrom("site_data_clients")
+      .select("id")
+      .where("user_id", "=", userId)
+      .where("redirect_uri", "=", redirectUri)
+      .where("id", "!=", id)
+      .executeTakeFirst();
+    if (duplicate) throw new DataError(409, "Callback already registered.");
+    const collections = await scope(tx, userId, names);
+    await clearClientGrants(tx, id);
+    await tx
+      .updateTable("site_data_clients")
+      .set({
+        redirect_uri: redirectUri,
+        collection_ids: collections.map((c) => c.id),
+      })
+      .where("id", "=", id)
+      .execute();
+    return { clientId: await siteClientId(userId, tx) };
+  });
+}
+
 export async function registerClient(
   userId: number,
   body: Record<string, unknown>,
@@ -136,10 +201,11 @@ export async function registerClient(
     ) {
       throw new DataError(
         409,
-        "Callback already registered. Remove its registration before changing access.",
+        "Callback already registered. Edit its registration to change access.",
       );
     }
     const collections = await scope(tx, userId, names);
+    await siteClientId(userId, tx);
     return tx
       .insertInto("site_data_clients")
       .values({
@@ -172,14 +238,7 @@ export async function revokeClientTokens(userId: number, id: string) {
       .where("user_id", "=", userId)
       .executeTakeFirst();
     if (!client) throw new DataError(404, "Registration not found.");
-    await tx
-      .deleteFrom("site_data_access_tokens")
-      .where("client_id", "=", id)
-      .execute();
-    await tx
-      .deleteFrom("site_data_auth_codes")
-      .where("client_id", "=", id)
-      .execute();
+    await clearClientGrants(tx, id);
   });
 }
 export type AuthorizationInput = ReturnType<typeof authorizationInput>;
@@ -208,8 +267,10 @@ async function authorizationDetails(
   const client = await tx
     .selectFrom("site_data_clients as c")
     .innerJoin("users as u", "u.id", "c.user_id")
+    .innerJoin("site_data_site_clients as w", "w.user_id", "c.user_id")
     .select(["c.id", "c.redirect_uri", "c.collection_ids", "u.login_name"])
-    .where("c.id", "=", input.clientId)
+    .where("w.id", "=", input.clientId)
+    .where("c.redirect_uri", "=", input.redirectUri)
     .where("c.user_id", "=", userId)
     .executeTakeFirst();
   if (
@@ -301,16 +362,18 @@ export async function exchangeCode(
   return db.transaction().execute(async (tx) => {
     // Lock owner first, matching data operations and revocation; never invert locks.
     const client = await tx
-      .selectFrom("site_data_clients")
-      .selectAll()
-      .where("id", "=", clientId)
+      .selectFrom("site_data_clients as c")
+      .innerJoin("site_data_site_clients as w", "w.user_id", "c.user_id")
+      .selectAll("c")
+      .where("w.id", "=", clientId)
+      .where("c.redirect_uri", "=", redirectUri)
       .executeTakeFirst();
     if (!client) throw denied();
     await lockOwner(tx, client.user_id);
     const current = await tx
       .selectFrom("site_data_clients")
       .selectAll()
-      .where("id", "=", clientId)
+      .where("id", "=", client.id)
       .executeTakeFirst();
     if (
       !current ||
@@ -324,7 +387,7 @@ export async function exchangeCode(
       .innerJoin("sessions as s", "s.id", "g.session_id")
       .select(["g.hash", "g.challenge", "g.session_id", "g.collection_ids"])
       .where("g.hash", "=", digest(code))
-      .where("g.client_id", "=", clientId)
+      .where("g.client_id", "=", client.id)
       .where("g.expires_at", ">", new Date())
       .where("s.expires_at", ">", new Date())
       .where("s.user_id", "=", current.user_id)
@@ -344,28 +407,39 @@ export async function exchangeCode(
       .deleteFrom("site_data_access_tokens")
       .where("expires_at", "<=", new Date())
       .execute();
-    const live = await tx
+    const tokens = await tx
       .selectFrom("site_data_access_tokens")
       .select("hash")
-      .where("client_id", "=", clientId)
+      .where("client_id", "=", client.id)
       .execute();
-    if (live.length >= 50)
+    if (tokens.length >= 50)
       throw new DataError(
         429,
         "Too many active owner sessions. Revoke them in the control plane.",
       );
+    const parent = await tx
+      .selectFrom("sessions")
+      .select("expires_at")
+      .where("id", "=", grant.session_id)
+      .executeTakeFirstOrThrow();
+    const expiresAt = Math.min(
+      Date.now() + TOKEN_SECONDS * 1000,
+      new Date(parent.expires_at).getTime(),
+    );
+    const expiresIn = Math.floor((expiresAt - Date.now()) / 1000);
+    if (expiresIn <= 0) throw denied();
     const accessToken = secret();
     await tx
       .insertInto("site_data_access_tokens")
       .values({
         hash: digest(accessToken),
-        client_id: clientId,
+        client_id: client.id,
         session_id: grant.session_id,
         collection_ids: grant.collection_ids,
-        expires_at: new Date(Date.now() + TOKEN_SECONDS * 1000),
+        expires_at: new Date(expiresAt),
       })
       .execute();
-    return { accessToken, tokenType: "Bearer", expiresIn: TOKEN_SECONDS };
+    return { accessToken, tokenType: "Bearer", expiresIn, expiresAt };
   });
 }
 

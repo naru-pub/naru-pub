@@ -5,6 +5,8 @@ import {
   approveAuthorization,
   authorizationInput,
   exchangeCode,
+  siteClientId,
+  updateClient,
   registerClient,
   removeClient,
   revokeClientTokens,
@@ -12,7 +14,7 @@ import {
 } from "./owner-auth";
 
 export async function ownerAuthRequest(request: Request, action: string) {
-  const crossOrigin = action === "token" || action === "revoke";
+  const crossOrigin = ["token", "revoke"].includes(action);
   const origin = request.headers.get("origin");
   const headers: Record<string, string> = {
     "Cache-Control": "no-store",
@@ -62,6 +64,7 @@ export async function ownerAuthRequest(request: Request, action: string) {
         .execute();
       return Response.json(
         {
+          clientId: await siteClientId(user.id),
           clients: clients.map((c) => ({
             id: c.id,
             redirectUri: c.redirect_uri,
@@ -92,6 +95,8 @@ export async function ownerAuthRequest(request: Request, action: string) {
       if (typeof body.id !== "string" || body.id.length > 64)
         throw new DataError(400, "Registration ID required.");
       if (request.method === "DELETE") await removeClient(user.id, body.id);
+      else if (body.redirectUri !== undefined || body.collections !== undefined)
+        await updateClient(user.id, body.id, body);
       else await revokeClientTokens(user.id, body.id);
       return Response.json({ success: true }, { headers });
     }

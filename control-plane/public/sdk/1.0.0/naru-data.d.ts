@@ -32,21 +32,19 @@ export interface Database {
   };
 }
 export interface OwnerDatabase extends Database {
-  /** Local expiration time in milliseconds since Unix epoch. */
+  /** Maximum owner session expiration (up to 24 hours), in Unix milliseconds. */
   expiresAt: number;
   /** Drops local credentials even if server revocation fails. */
   signOut(): Promise<void>;
 }
-export function createDatabase(options: {
-  site: string;
-  baseUrl?: string;
-}): Database & {
+export const CONTROL_PLANE_ORIGIN: "https://naru.pub";
+export function createDatabase(options: { site: string }): Database & {
   /** Starts a redirect. Call completeOwnerSignIn() on the registered callback page. */
   signInAsOwner(options: {
     clientId: string;
     redirectUri?: string;
     collections: string[];
   }): Promise<void>;
-  /** Returns null when there is no authorization response; access token stays in memory. */
+  /** Completes approval or restores the token from this tab/page sessionStorage. Server revocation is checked on data requests. Returns null if missing or locally expired. */
   completeOwnerSignIn(): Promise<OwnerDatabase | null>;
 };

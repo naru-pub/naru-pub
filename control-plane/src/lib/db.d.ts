@@ -247,14 +247,15 @@ export interface SiteDataClients {
   collection_ids: number[];
   created_at: Generated<Timestamp>;
 }
-export interface SiteDataAccessTokens {
+export interface SiteDataGrant {
   hash: string;
   client_id: string;
   session_id: string;
   collection_ids: number[];
   expires_at: Timestamp;
 }
-export interface SiteDataAuthCodes extends SiteDataAccessTokens {
+export interface SiteDataAccessTokens extends SiteDataGrant {}
+export interface SiteDataAuthCodes extends SiteDataGrant {
   challenge: string;
 }
 export interface SiteDataRateLimits {
@@ -264,6 +265,7 @@ export interface SiteDataRateLimits {
   count: number;
 }
 export interface DB {
+  site_data_site_clients: { user_id: number; id: string };
   site_data_clients: SiteDataClients;
   site_data_access_tokens: SiteDataAccessTokens;
   site_data_auth_codes: SiteDataAuthCodes;
