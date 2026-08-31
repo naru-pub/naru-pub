@@ -241,6 +241,21 @@ fn resolve_path(raw_path: &str) -> String {
     }
 }
 
+// Use the original URL, not the decoded storage key, so reserved characters and
+// query parameters retain their meaning. Keep Location on the current origin.
+fn directory_redirect(uri: &hyper::Uri, decoded_path: &str) -> Option<String> {
+    if uri.path().ends_with('/') || resolve_path(decoded_path) == decoded_path {
+        return None;
+    }
+    let path = uri.path().trim_start_matches('/').replace('\\', "%5C");
+    let mut location = format!("/{}/", path);
+    if let Some(query) = uri.query() {
+        location.push('?');
+        location.push_str(query);
+    }
+    Some(location)
+}
+
 // Record a pageview in the database (fire-and-forget)
 fn record_pageview(db_pool: PgPool, user_id: i32, path: String, client_ip: IpAddr, referrer: Option<String>, user_agent: Option<String>) {
     tokio::spawn(async move {
@@ -394,6 +409,15 @@ async fn handle_request(
         .await
     {
         Ok(resp) => {
+            // Only canonicalize existing directories. Do not count the redirect
+            // as a pageview; the subsequent request records the HTML page once.
+            if let Some(location) = directory_redirect(req.uri(), &raw_path) {
+                return Ok(Response::builder()
+                    .status(308)
+                    .header("Location", location)
+                    .header("Cache-Control", "public, max-age=3600")
+                    .body(Full::new(Bytes::new()))?);
+            }
             let content_type = resp.content_type.clone().unwrap_or_default();
             let data = resp.body.collect().await?.into_bytes();
 
@@ -429,6 +453,46 @@ async fn handle_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_redirect_preserves_url_and_query() {
+        for (url, decoded, expected) in [
+            ("/blog", "blog", "/blog/"),
+            (
+                "/nested/blog?page=2&tag=a%2Fb",
+                "nested/blog",
+                "/nested/blog/?page=2&tag=a%2Fb",
+            ),
+            (
+                "/%EB%B8%94%EB%A1%9C%EA%B7%B8",
+                "블로그",
+                "/%EB%B8%94%EB%A1%9C%EA%B7%B8/",
+            ),
+            ("/a%3Fb%23c", "a?b#c", "/a%3Fb%23c/"),
+            ("/blog%2F", "blog/", "/blog%2F/"),
+            ("//example.com/blog", "example.com/blog", "/example.com/blog/"),
+            ("/blog?", "blog", "/blog/?"),
+        ] {
+            assert_eq!(
+                directory_redirect(&url.parse().unwrap(), decoded).as_deref(),
+                Some(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn directory_redirect_leaves_files_and_canonical_urls_alone() {
+        for (url, decoded) in [
+            ("/", ""),
+            ("/blog/", "blog/"),
+            ("/blog/?page=2", "blog/"),
+            ("/index.html", "index.html"),
+            ("/blog/index.html", "blog/index.html"),
+            ("/blog/app.js", "blog/app.js"),
+        ] {
+            assert_eq!(directory_redirect(&url.parse().unwrap(), decoded), None);
+        }
+    }
 
     #[test]
     fn test_resolve_path_root() {

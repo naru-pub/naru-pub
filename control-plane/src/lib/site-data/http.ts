@@ -1,6 +1,7 @@
 import { validateRequest } from "@/lib/auth";
 import { executeData } from "./service";
 import { DataError, jsonBody, sameOrigin } from "./validation";
+import { parseWhereQuery } from "./filters";
 import { isIP } from "node:net";
 
 const publicHeaders = {
@@ -62,6 +63,7 @@ export async function dataRequest(
       bearer,
       clientIp: forwardedIp && isIP(forwardedIp) ? forwardedIp : undefined,
       body,
+      where: parseWhereQuery(url.searchParams.get("where")),
       orderBy: url.searchParams.get("orderBy") ?? undefined,
       direction: url.searchParams.get("direction") ?? undefined,
       after: url.searchParams.get("after") ?? undefined,

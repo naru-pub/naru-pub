@@ -19,8 +19,10 @@ export interface Database {
     get(id: string): Promise<Document>;
     list(options?: {
       limit?: number;
-      /** Opaque cursor from the same collection and sort order. */
+      /** Opaque cursor from the same collection, sort order and filters. */
       after?: string;
+      /** Up to 5 top-level scalar equality filters, combined with AND. */
+      where?: Record<string, string | number | boolean | null>;
       orderBy?: "id" | "created_at" | "updated_at";
       direction?: "asc" | "desc";
     }): Promise<{ documents: Document[]; nextCursor: string | null }>;

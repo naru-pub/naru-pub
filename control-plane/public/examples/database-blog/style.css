@@ -170,3 +170,31 @@ footer {
     font-size: 15px;
   }
 }
+
+select {
+  font: inherit;
+  padding: 10px;
+  width: 100%;
+  background: white;
+  color: #292c26;
+  border: 1px solid #a9b0a2;
+  border-radius: 6px;
+}
+#manage-list {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.manage-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.manage-row button {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.danger {
+  background: #96372e;
+}

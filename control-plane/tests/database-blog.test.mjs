@@ -15,6 +15,7 @@ async function page(name, db, storage = new Map(), query = "") {
     runScripts: "outside-only",
   });
   const { window } = dom;
+  window.confirm = () => true;
   for (const [key, value] of storage) window.sessionStorage.setItem(key, value);
   const context = dom.getInternalVMContext(),
     events = new Map();
@@ -67,6 +68,9 @@ async function page(name, db, storage = new Map(), query = "") {
     .slice(2);
   await (await load(script)).evaluate();
   return {
+    setConfirm: (answer) => {
+      window.confirm = () => answer;
+    },
     $: (id) => window.document.getElementById(id),
     fire: (id, type) => events.get(`${id}:${type}`)({ preventDefault() {} }),
     storage: () =>
@@ -170,7 +174,7 @@ test("admin preserves draft across login, retries same ID, fails closed on expir
     requested.redirectUri,
     "https://example.naru.pub/blog/admin.html",
   );
-  assert.equal(requested.collections.join(), "posts");
+  assert.equal(requested.collections.join(), "posts,drafts");
   const writes = [];
   let failure = new Error("response lost");
   const owner = {
@@ -197,7 +201,8 @@ test("admin preserves draft across login, retries same ID, fails closed on expir
   await after.fire("post-form", "submit");
   assert.equal(writes[0].id, writes[1].id);
   assert.equal(after.$("view-post").hidden, false);
-  assert.equal(after.storage().size, 0);
+  assert.equal(after.storage().size, 1);
+  await after.fire("new-post", "click");
   after.$("title").value = "다음 글";
   after.$("body").value = "내용";
   failure = Object.assign(new Error("expired"), { status: 401 });
@@ -254,4 +259,154 @@ test("malformed draft does not prevent owner callback completion", async () => {
   assert.equal(completed, true);
   assert.equal(app.$("publish").disabled, false);
   assert.match(app.$("status").textContent, /초안을 읽을 수 없습니다/);
+});
+
+test("category changes reset the cursor and preserve filters on subsequent pages", async () => {
+  const calls = [];
+  const app = await page("index", {
+    collection: () => ({
+      list: async (options) => {
+        calls.push(options);
+        return {
+          documents: [
+            {
+              id: String(calls.length),
+              data: { title: "제목", category: "일상" },
+            },
+          ],
+          nextCursor: "v1.next",
+        };
+      },
+    }),
+  });
+  await app.fire("more", "click");
+  app.$("filter-category").value = "일상";
+  await app.fire("filter-form", "submit");
+  assert.equal(calls[2].after, undefined);
+  assert.equal(calls[2].where.category, "일상");
+  assert.equal(app.$("entries").children.length, 1);
+  await app.fire("more", "click");
+  assert.equal(calls[3].after, "v1.next");
+  assert.equal(calls[3].where.category, "일상");
+  app.$("filter-category").value = "";
+  await app.fire("filter-form", "submit");
+  assert.equal(calls[4].where, undefined);
+  assert.equal(calls[4].after, undefined);
+});
+function editorBackend() {
+  const rows = { posts: new Map(), drafts: new Map() },
+    calls = [];
+  let failure;
+  return {
+    rows,
+    calls,
+    setFailure(fn) {
+      failure = fn;
+    },
+    owner: {
+      expiresAt: Date.now() + 600000,
+      collection(kind) {
+        assert.ok(kind in rows);
+        return {
+          async set(id, data) {
+            calls.push(["set", kind, id]);
+            const error = failure?.("set", kind);
+            if (error) throw error;
+            rows[kind].set(id, structuredClone(data));
+            return { id };
+          },
+          async delete(id) {
+            calls.push(["delete", kind, id]);
+            const error = failure?.("delete", kind);
+            if (error) throw error;
+            rows[kind].delete(id);
+            return { success: true };
+          },
+          async get(id) {
+            return { id, data: structuredClone(rows[kind].get(id)) };
+          },
+          async list() {
+            return {
+              documents: [...rows[kind]].map(([id, data]) => ({
+                id,
+                data: structuredClone(data),
+              })),
+              nextCursor: null,
+            };
+          },
+        };
+      },
+    },
+  };
+}
+test("server drafts survive publication failure; retry publishes same ID before cleanup", async () => {
+  const db = editorBackend(),
+    app = await page("admin", { completeOwnerSignIn: async () => db.owner });
+  app.$("title").value = "초안";
+  app.$("body").value = "비공개 내용";
+  app.$("category").value = "일상";
+  await app.fire("save-draft", "click");
+  assert.equal(db.rows.drafts.size, 1);
+  assert.equal(db.rows.posts.size, 0);
+  const id = [...db.rows.drafts.keys()][0];
+  db.setFailure((op, kind) =>
+    op === "set" && kind === "posts" ? new Error("offline") : null,
+  );
+  await app.fire("post-form", "submit");
+  assert.equal(db.rows.drafts.size, 1);
+  assert.equal(db.rows.posts.size, 0);
+  db.setFailure(() => null);
+  await app.fire("post-form", "submit");
+  assert.equal(db.rows.posts.get(id).category, "일상");
+  assert.equal(db.rows.drafts.size, 0);
+  assert.deepEqual(db.calls.slice(-2), [
+    ["set", "posts", id],
+    ["delete", "drafts", id],
+  ]);
+  assert.match(app.$("editing").textContent, /공개 글 편집/);
+});
+test("cleanup failure is reported as already public and can be retried", async () => {
+  const db = editorBackend(),
+    app = await page("admin", { completeOwnerSignIn: async () => db.owner });
+  app.$("title").value = "제목";
+  app.$("body").value = "내용";
+  await app.fire("save-draft", "click");
+  db.setFailure((op, kind) =>
+    op === "delete" && kind === "drafts" ? new Error("offline") : null,
+  );
+  await app.fire("post-form", "submit");
+  assert.equal(db.rows.posts.size, 1);
+  assert.equal(db.rows.drafts.size, 1);
+  assert.match(app.$("status").textContent, /글은 공개되었지만/);
+  db.setFailure(() => null);
+  await app.fire("post-form", "submit");
+  assert.equal(db.rows.posts.size, 1);
+  assert.equal(db.rows.drafts.size, 0);
+});
+test("editing preserves extra fields and deletion confirms and affects only selected collection", async () => {
+  const db = editorBackend();
+  db.rows.posts.set("existing", {
+    title: "이전 글",
+    body: "본문",
+    category: "일상",
+    extra: 42,
+  });
+  db.rows.drafts.set("existing", { title: "다른 초안", body: "내용" });
+  const app = await page("admin", {
+    completeOwnerSignIn: async () => db.owner,
+  });
+  await app.fire("reload-list", "click");
+  await app.fire("edit-posts-existing", "click");
+  app.$("title").value = "수정된 글";
+  await app.fire("post-form", "submit");
+  assert.equal(db.rows.posts.get("existing").title, "수정된 글");
+  assert.equal(db.rows.posts.get("existing").extra, 42);
+  app.setConfirm(false);
+  await app.fire("delete-post", "click");
+  assert.equal(db.rows.posts.size, 1);
+  app.setConfirm(true);
+  await app.fire("delete-post", "click");
+  assert.equal(db.rows.posts.size, 0);
+  assert.equal(db.rows.drafts.size, 1);
+  assert.match(app.$("editing").textContent, /새 글/);
 });

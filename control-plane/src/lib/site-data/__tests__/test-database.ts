@@ -14,6 +14,11 @@ import {
   down as sortingDown,
 } from "@/migrations/1788180032055_add_site_data_created_at";
 
+import {
+  up as filterUp,
+  down as filterDown,
+} from "@/migrations/1788205003689_add_site_data_filter_index";
+
 export async function setupTestDatabase() {
   if (new URL(process.env.DATABASE_URL!).pathname !== "/naru_data_test")
     throw new Error("Use a disposable naru_data_test database.");
@@ -30,8 +35,10 @@ export async function setupTestDatabase() {
   await baseUp(db);
   await authUp(db);
   await sortingUp(db);
+  await filterUp(db);
 }
 export async function teardownTestDatabase() {
+  await filterDown(db);
   await sortingDown(db);
   await authDown(db);
   await baseDown(db);

@@ -73,8 +73,32 @@ export function createDatabase({
           async get(id) {
             return (await send(`${path}/${segment(id)}`)).document;
           },
-          list({ limit = 50, after, orderBy, direction } = {}) {
+          list({ limit = 50, after, orderBy, direction, where } = {}) {
             const query = new URLSearchParams({ limit: String(limit) });
+            if (where !== undefined) {
+              if (!where || typeof where !== "object" || Array.isArray(where))
+                throw new TypeError(
+                  "where must be an object of scalar equality filters.",
+                );
+              const entries = Object.entries(where);
+              if (
+                entries.length > 5 ||
+                entries.some(
+                  ([key, value]) =>
+                    !/^[a-zA-Z0-9_-]{1,64}$/.test(key) ||
+                    !(
+                      value === null ||
+                      typeof value === "string" ||
+                      typeof value === "boolean" ||
+                      (typeof value === "number" && Number.isFinite(value))
+                    ),
+                )
+              )
+                throw new TypeError(
+                  "Use up to 5 top-level scalar equality filters.",
+                );
+              query.set("where", JSON.stringify(where));
+            }
             if (orderBy !== undefined) query.set("orderBy", orderBy);
             if (direction !== undefined) query.set("direction", direction);
             if (after !== undefined) query.set("after", after);

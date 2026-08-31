@@ -19,6 +19,15 @@
       <p class="eyebrow">A SMALL JOURNAL</p>
       <h1>작은 기록</h1>
       <p class="lead">일상에서 발견한 생각과 이야기를 모읍니다.</p>
+      <form id="filter-form" class="card">
+        <label for="filter-category">분류로 찾기</label>
+        <input
+          id="filter-category"
+          maxlength="60"
+          placeholder="예: 일상 (비우면 전체)"
+        />
+        <button id="filter-submit">적용</button>
+      </form>
       <div id="entries"></div>
       <button id="more" hidden>더 읽기</button>
       <p class="hint">

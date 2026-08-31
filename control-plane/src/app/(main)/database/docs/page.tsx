@@ -139,6 +139,12 @@ export default function DatabaseDocs() {
                       <td className="p-3">공개 생성만 (create)</td>
                       <td className="p-3">누구나 남기는 인사</td>
                     </tr>
+                    <tr className="border-b">
+                      <td className="p-3">drafts</td>
+                      <td className="p-3">관리자 (admin)</td>
+                      <td className="p-3">관리자 (admin)</td>
+                      <td className="p-3">비공개 초안</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -209,7 +215,7 @@ export default function DatabaseDocs() {
                         "문서 한 개 → { id, data, created_at, updated_at }. 없으면 404",
                       ],
                       [
-                        "list({ limit, after, orderBy, direction })",
+                        "list({ limit, after, orderBy, direction, where })",
                         "{ documents, nextCursor }. 기본 50개, 최대 100개",
                       ],
                       ["add(data)", "서버 ID로 새 문서 생성 → { id }"],
@@ -229,6 +235,57 @@ export default function DatabaseDocs() {
                   </tbody>
                 </table>
               </div>
+              <h3 id="filters" className="font-bold">
+                필터와 자동 인덱스
+              </h3>
+              <p>
+                <code>where</code>로 JSON의 최상위 필드를 정확히 비교할 수
+                있습니다. 여러 조건은 모두 만족해야 합니다(AND). 예를 들어
+                분류별 글이나 특정 글에 달린 댓글을 찾을 수 있습니다.
+              </p>
+              <Code>{`const query = {
+  where: { category: "일상" },
+  orderBy: "created_at",
+  direction: "desc",
+  limit: 20,
+};
+const page = await db.collection("posts").list(query);
+if (page.nextCursor !== null) {
+  const next = await db.collection("posts").list({
+    ...query, after: page.nextCursor,
+  });
+}
+
+// comments 컬렉션을 따로 만든 경우:
+const comments = await db.collection("comments").list({
+  where: { postId: "hello", approved: true },
+});`}</Code>
+              <p>
+                필드 이름은 영문·숫자·밑줄·하이픈 1~64자이며, 값은
+                문자열·숫자·불리언·null만 가능합니다. 최대 5개 조건, 필터 JSON
+                전체 2,048바이트까지 지원합니다. <code>1</code>과{" "}
+                <code>"1"</code>은 다릅니다. 문자열은 대소문자를 포함해 정확히
+                비교하며 <code>null</code>은 실제 null 필드만 찾습니다. 필드가
+                없는 문서는 일치하지 않습니다.
+              </p>
+              <p>
+                중첩 경로·배열 검색·범위 비교·OR·부분 문자열 검색은 아직
+                지원하지 않습니다. 빈 <code>where: {"{}"}</code> 또는 where
+                생략은 전체 목록을 뜻합니다. 필터 값은 URL에 들어가므로 비밀번호
+                같은 비밀을 넣지 마세요.
+              </p>
+              <p>
+                나루가 JSON 필터용 GIN 인덱스와 생성·수정 시각 정렬용 인덱스를
+                자동으로 유지합니다. 필드별 인덱스를 직접 생성할 필요가 없으며,
+                문서 저장·수정·삭제 시 함께 갱신됩니다. 정렬은 서버 메타데이터만
+                지원합니다.
+              </p>
+              <p>
+                <strong>필터는 접근 권한이 아닙니다.</strong> 방문자는 where를
+                빼거나 바꿀 수 있습니다. <code>approved: true</code>로 화면에서
+                숨겨도 공개 컬렉션의 미승인 댓글은 읽을 수 있습니다. 비공개
+                데이터는 관리자 읽기 컬렉션에 분리하세요.
+              </p>
               <h3 className="font-bold">정렬과 페이지 이동</h3>
               <p>
                 기본 정렬은 ID 오름차순입니다. <code>orderBy</code>는{" "}
@@ -243,10 +300,10 @@ export default function DatabaseDocs() {
               <p>
                 동일한 시각의 문서는 같은 방향의 ID 순서로 정렬합니다. 다음
                 페이지에는 응답의 <code>nextCursor</code>를 그대로{" "}
-                <code>after</code>로 보내고, 같은 컬렉션·정렬 필드·방향을
-                유지하세요. 커서를 직접 해석하거나 만들지 마세요. 다른 정렬에
-                사용하면 400 오류가 발생합니다. 정렬을 바꾸려면 커서와 기존
-                목록을 비우고 첫 페이지부터 다시 불러오세요.
+                <code>after</code>로 보내고, 같은 컬렉션·정렬 필드·방향·필터를
+                유지하세요. 커서를 직접 해석하거나 만들지 마세요. 다른 정렬이나
+                필터에 사용하면 400 오류가 발생합니다. 정렬이나 필터를 바꾸려면
+                커서와 기존 목록을 비우고 첫 페이지부터 다시 불러오세요.
               </p>
               <p>
                 <code>nextCursor</code>가 <code>null</code>이면 마지막
@@ -264,7 +321,7 @@ export default function DatabaseDocs() {
                 필드를 넣어도 서버 시각을 변경할 수 없습니다.
               </p>
               <p>
-                조건 검색·실시간 구독·부분 필드 갱신은 제공하지 않습니다.{" "}
+                실시간 구독·부분 필드 갱신은 제공하지 않습니다.{" "}
                 <code>set()</code>은 기존 필드를 합치지 않고 전체 JSON을
                 교체합니다. 공개 생성 전용에서는 <code>set()</code>으로 새 ID를
                 만드는 것도 금지됩니다.
@@ -284,9 +341,9 @@ export default function DatabaseDocs() {
                   <code>https://내사이트.naru.pub/admin.html</code>.
                 </li>
                 <li>
-                  접근할 컬렉션을 선택합니다. 이 예제는 <code>posts</code>만
-                  선택합니다. 표시된 Client ID를 복사합니다. Client ID는
-                  공개해도 되는 식별자입니다.
+                  접근할 컬렉션을 선택합니다. 이 예제는 <code>posts</code>와{" "}
+                  <code>drafts</code>를 선택합니다. 표시된 Client ID를
+                  복사합니다. Client ID는 공개해도 되는 식별자입니다.
                 </li>
                 <li>
                   로그인 버튼에서 <code>signInAsOwner()</code>를 호출합니다.
@@ -297,7 +354,7 @@ export default function DatabaseDocs() {
                   호출하고, 반환받은 관리자 클라이언트로 문서를 저장합니다.
                 </li>
               </ol>
-              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  // 페이지 시작 시 처리. 승인 콜백이 아니면 null을 반환합니다.\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\n\n// 로그인 버튼의 클릭 핸들러에서 호출하세요.\nasync function login() {\n  await db.signInAsOwner({\n    clientId: "제어판의-Client-ID",\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts"],\n  });\n}\n\n// 저장 버튼 핸들러에서 호출하고 오류를 표시하세요.\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
+              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  // 페이지 시작 시 처리. 승인 콜백이 아니면 null을 반환합니다.\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\n\n// 로그인 버튼의 클릭 핸들러에서 호출하세요.\nasync function login() {\n  await db.signInAsOwner({\n    clientId: "제어판의-Client-ID",\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts", "drafts"],\n  });\n}\n\n// 저장 버튼 핸들러에서 호출하고 오류를 표시하세요.\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
               <p>
                 콜백은 본인 나루 사이트 또는 활성화된 인증 도메인의 HTTPS
                 주소여야 합니다. 쿼리·해시·와일드카드는 사용할 수 없습니다.
@@ -326,8 +383,9 @@ export default function DatabaseDocs() {
             </Section>
             <Section id="example" title="05 · 예제 블로그 설치">
               <p>
-                ‘작은 기록’은 글 목록·글 상세·방명록·관리자 글쓰기를 갖춘 정적
-                웹사이트입니다. 프레임워크나 빌드 과정 없이 사용할 수 있습니다.
+                ‘작은 기록’은 분류별 글 목록·글 상세·방명록·관리자 편집·비공개
+                초안을 갖춘 정적 웹사이트입니다. 프레임워크나 빌드 과정 없이
+                사용할 수 있습니다.
               </p>
               <p>
                 <a href="/database/docs/blog.zip">예제 ZIP 내려받기</a> ·{" "}
@@ -338,7 +396,7 @@ export default function DatabaseDocs() {
               <ol className="list-decimal space-y-3 pl-6">
                 <li>
                   ZIP을 풀고 제어판에서 위 표처럼 <code>posts</code>와{" "}
-                  <code>guestbook</code> 컬렉션을 만듭니다.
+                  <code>guestbook</code>, <code>drafts</code> 컬렉션을 만듭니다.
                 </li>
                 <li>
                   업로드할 주소를 정합니다. 루트라면 콜백은{" "}
@@ -347,8 +405,8 @@ export default function DatabaseDocs() {
                   <code>https://내사이트.naru.pub/blog/admin.html</code>입니다.
                 </li>
                 <li>
-                  ‘웹사이트 관리자 로그인’에 이 콜백과 <code>posts</code>{" "}
-                  컬렉션을 등록하고 Client ID를 복사합니다.
+                  ‘웹사이트 관리자 로그인’에 이 콜백과 <code>posts</code>·
+                  <code>drafts</code> 컬렉션을 등록하고 Client ID를 복사합니다.
                 </li>
                 <li>
                   <code>config.js</code>의 <code>site</code>와{" "}
@@ -372,10 +430,33 @@ export default function DatabaseDocs() {
                 사용자 데이터베이스가 연결되어 있지 않습니다.
               </p>
               <p>
-                이 예제의 본문은 일반 텍스트입니다. 글 수정·삭제와 방명록 관리는
-                제어판에서 합니다. 초안은 같은 탭의 sessionStorage에만 보관되고,
-                공개된 글은 누구나 읽을 수 있습니다. 방명록의 입력 길이 제한은
-                화면의 편의 기능이며 서버의 스키마 검증 규칙이 아닙니다.
+                이 예제의 본문은 일반 텍스트입니다. 글쓰기 화면에서 목록
+                불러오기를 누르고 공개 글이나 비공개 초안을 선택해 편집·삭제할
+                수 있습니다. 새 글 작성은 별도 ID로 시작합니다. 방명록 관리는
+                제어판에서 합니다. 입력 길이 제한은 화면의 편의 기능이며 서버
+                검증 규칙이 아닙니다.
+              </p>
+              <p>
+                기존 예제를 업그레이드한다면 관리자 읽기·쓰기의{" "}
+                <code>drafts</code> 컬렉션을 먼저 만드세요. 기존 웹사이트 등록의
+                범위는 수정할 수 없으므로 등록을 삭제한 뒤 같은 콜백에 posts와
+                drafts를 선택해 다시 등록하고, config.js의 Client ID를
+                갱신하세요. 이전 등록의 토큰도 폐기됩니다.
+              </p>
+              <p>
+                작성 중인 내용은 로그인 이동을 위해 이 탭의 sessionStorage에
+                임시 저장됩니다. ‘비공개 초안 저장’은 drafts에 서버 저장하며,
+                같은 ID의 공개 글은 바꾸지 않습니다. ‘글 공개하기’는 posts에
+                먼저 저장한 뒤 해당 초안을 삭제합니다. 두 요청은 하나의
+                트랜잭션이 아니므로, 공개는 성공했지만 초안 삭제가 실패하면
+                안내에 따라 재시도하거나 초안 목록에서 정리하세요.
+              </p>
+              <p>
+                분류를 입력해 공개하면 글 목록에서 같은 분류로 찾을 수 있습니다.
+                편집은 전체 문서를 덮어쓰므로 여러 탭의 동시 편집에서는 마지막
+                저장이 우선합니다. 삭제는 확인 후 선택한 컬렉션의 문서만 영구
+                삭제합니다. 공용 기기에서는 관리자 권한을 해제하고 탭을
+                닫으세요.
               </p>
             </Section>
             <Section id="limits" title="06 · 한도와 문제 해결">

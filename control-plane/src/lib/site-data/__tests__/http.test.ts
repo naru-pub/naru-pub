@@ -176,3 +176,29 @@ test("list sort and opaque cursor are passed through for both API surfaces", asy
     });
   }
 });
+
+test("where query JSON is decoded and bounded", async () => {
+  const where = { postId: "한글", approved: false };
+  const res = await dataRequest(
+    new Request(
+      `https://naru.pub/api/data/alice/posts?where=${encodeURIComponent(JSON.stringify(where))}`,
+    ),
+    ["posts"],
+    "alice",
+  );
+  expect(res.status).toBe(200);
+  expect(execute.mock.lastCall![0].where).toEqual(where);
+  for (const raw of ["{", " ".repeat(2049)]) {
+    expect(
+      (
+        await dataRequest(
+          new Request(
+            `https://naru.pub/api/data/alice/posts?where=${encodeURIComponent(raw)}`,
+          ),
+          ["posts"],
+          "alice",
+        )
+      ).status,
+    ).toBe(400);
+  }
+});

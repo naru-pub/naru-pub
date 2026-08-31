@@ -12,6 +12,7 @@ import {
   permission,
   writePermission,
 } from "./validation";
+import { filters } from "./filters";
 import { sorting, decodeCursor, encodeCursor } from "./pagination";
 import { tokenScope, limitPublicCreate } from "./owner-auth";
 
@@ -27,6 +28,7 @@ export type DataCommand = {
   limit?: number;
   orderBy?: string;
   direction?: string;
+  where?: unknown;
 };
 
 export async function executeData(command: DataCommand) {
@@ -143,11 +145,13 @@ export async function executeData(command: DataCommand) {
         command.orderBy,
         command.direction,
       );
+      const filter = filters(command.where);
       const cursor = decodeCursor(
         command.after,
         collection.id,
         orderBy,
         direction,
+        filter.fingerprint,
       );
       const comparison = direction === "asc" ? ">" : "<";
       let query = documents()
@@ -160,6 +164,16 @@ export async function executeData(command: DataCommand) {
         )
         .orderBy(orderBy, direction)
         .limit(limit + 1);
+      if (filter.entries.length) {
+        // GIN finds candidates; equality checks enforce exact scalar semantics,
+        // so arrays containing a scalar never count as a scalar field match.
+        query = query.where(sql<boolean>`data @> ${filter.json}::jsonb`);
+        for (const [field, value] of filter.entries) {
+          query = query.where(
+            sql<boolean>`data -> ${field} = ${JSON.stringify(value)}::jsonb`,
+          );
+        }
+      }
       if (orderBy !== "id") query = query.orderBy("id", direction);
       if (cursor) {
         if (orderBy === "id") query = query.where("id", comparison, cursor.id);
@@ -181,6 +195,7 @@ export async function executeData(command: DataCommand) {
                 direction,
                 last.id,
                 last.cursor_value,
+                filter.fingerprint,
               )
             : null,
       };

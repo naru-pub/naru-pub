@@ -49,7 +49,7 @@ export default function WebsiteAccess({
     <section className="border rounded-lg p-4 space-y-4">
       <h2 className="font-bold">웹사이트 관리자 로그인</h2>
       <p className="text-sm">
-        웹사이트의 편집 페이지를 등록하세요. 나루에서 소유자가 승인하면 선택한
+        웹사이트의 관리자 페이지를 등록하세요. 나루에서 소유자가 승인하면 선택한
         컬렉션의 문서를 읽고 변경할 수 있는 10분짜리 권한을 받습니다. 계정이나
         컬렉션 권한 설정은 변경할 수 없습니다.
       </p>

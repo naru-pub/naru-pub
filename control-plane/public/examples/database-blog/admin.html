@@ -23,18 +23,39 @@
       ><button id="logout" type="button" hidden>관리자 권한 해제</button>
       <p class="hint">
         승인 권한은 10분간 유지됩니다. 새로고침하면 다시 로그인하세요. 초안은 이
-        탭의 임시 저장소에 남으므로 공용 기기에서는 탭을 닫으세요.
+        탭의 임시 저장소에 남습니다. 비공개 초안 저장 버튼으로 서버에도 저장할
+        수 있습니다. 공용 기기에서는 관리자 권한을 해제하고 탭을 닫으세요.
       </p>
+      <section class="card" aria-labelledby="manage-heading">
+        <h2 id="manage-heading">글 관리</h2>
+        <label for="manage-kind">목록</label>
+        <select id="manage-kind">
+          <option value="posts">공개 글</option>
+          <option value="drafts">비공개 초안</option>
+        </select>
+        <button id="reload-list" type="button" disabled>목록 불러오기</button>
+        <fieldset id="manage-list" disabled></fieldset>
+        <button id="manage-more" type="button" hidden>더 보기</button>
+      </section>
+      <button id="new-post" type="button">새 글 작성</button>
+      <p id="editing" class="hint">새 글 작성</p>
       <form id="post-form" class="card">
         <label for="title">제목</label
         ><input id="title" required maxlength="160" /><label for="body"
           >본문</label
         ><textarea id="body" required maxlength="12000" rows="14"></textarea>
+        <label for="category">분류 (예: 일상)</label
+        ><input id="category" maxlength="60" />
         <p class="hint">
-          일반 텍스트로 공개됩니다. HTML은 실행하지 않습니다. 공개 후
-          수정·삭제는 제어판에서 할 수 있습니다.
+          일반 텍스트로 공개됩니다. HTML은 실행하지 않습니다. 비공개 초안을
+          저장해도 기존 공개 글은 바뀌지 않습니다. 공개 버튼은 즉시 누구나 읽을
+          수 있게 저장합니다.
         </p>
+        <button id="save-draft" type="button" disabled>비공개 초안 저장</button>
         <button id="publish" disabled>글 공개하기</button>
+        <button id="delete-post" type="button" class="danger" disabled>
+          이 공개 글 삭제
+        </button>
       </form>
       <a id="view-post" hidden>공개한 글 보기 →</a>
       <p id="status" role="status" aria-live="polite">불러오는 중…</p>

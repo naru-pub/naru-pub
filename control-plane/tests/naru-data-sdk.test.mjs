@@ -225,3 +225,41 @@ test("SDK carries sort options and opaque cursors unchanged", async () => {
     globalThis.fetch = original;
   }
 });
+
+test("SDK serializes equality filters and rejects values JSON would silently drop", async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(new URL(url));
+    return Response.json({ documents: [], nextCursor: null });
+  };
+  try {
+    const posts = createDatabase({
+      site: "alice",
+      baseUrl: "https://naru.pub",
+    }).collection("posts");
+    await posts.list({
+      where: { category: "일상", active: false, count: 0, optional: null },
+    });
+    assert.deepEqual(JSON.parse(calls[0].searchParams.get("where")), {
+      category: "일상",
+      active: false,
+      count: 0,
+      optional: null,
+    });
+    for (const where of [
+      null,
+      [],
+      { category: undefined },
+      { count: NaN },
+      { count: Infinity },
+      { nested: {} },
+      { tags: [] },
+      { value: () => 1 },
+    ])
+      assert.throws(() => posts.list({ where }), TypeError);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

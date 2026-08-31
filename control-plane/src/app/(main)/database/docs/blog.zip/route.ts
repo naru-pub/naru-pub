@@ -31,6 +31,7 @@ export async function GET() {
     "list.js",
     "post.js",
     "admin.js",
+    "editor.js",
   ]) {
     archive.file(path.join(directory, name), {
       name,

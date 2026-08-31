@@ -20,6 +20,7 @@ export function encodeCursor(
   direction: Direction,
   id: string,
   value: string | null,
+  fingerprint?: string,
 ) {
   return (
     "v1." +
@@ -30,6 +31,7 @@ export function encodeCursor(
         d: direction,
         i: id,
         t: value,
+        f: fingerprint,
       }),
     ).toString("base64url")
   );
@@ -39,10 +41,16 @@ export function decodeCursor(
   collection: number,
   orderBy: OrderBy,
   direction: Direction,
+  fingerprint?: string,
 ) {
   if (after === undefined) return null;
   // Retain compatibility with the original ID-ascending pagination API.
-  if (NAME.test(after) && orderBy === "id" && direction === "asc")
+  if (
+    !fingerprint &&
+    NAME.test(after) &&
+    orderBy === "id" &&
+    direction === "asc"
+  )
     return { id: after, value: null };
   try {
     if (after.length > 1024 || !/^v1\.[A-Za-z0-9_-]+$/.test(after))
@@ -53,7 +61,8 @@ export function decodeCursor(
     if (
       cursor.c !== collection ||
       cursor.s !== orderBy ||
-      cursor.d !== direction
+      cursor.d !== direction ||
+      cursor.f !== fingerprint
     )
       throw new Error();
     name(cursor.i);
@@ -72,7 +81,7 @@ export function decodeCursor(
   } catch {
     throw new DataError(
       400,
-      "Invalid cursor or cursor does not match this collection and sort order.",
+      "Invalid cursor or cursor does not match this collection, sort order and filters.",
     );
   }
 }

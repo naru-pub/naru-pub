@@ -177,7 +177,7 @@ There are at most 20 registrations per site, 20 pending codes and 50 live tokens
 - Pages: 1–100 documents (default 50), defaulting to ID ascending under the database collation. See sorting below; pagination is not a snapshot across concurrent changes.
 - PostgreSQL JSONB semantics apply, including JavaScript number precision and no significant object key order.
 - Owner-row locks serialize permission checks, writes, and quota checks across server processes. Deletes free quota; account deletion cascades through collections and documents.
-- Replacements are atomic and last-write-wins; creates are insert-only. No realtime subscriptions, offline persistence, custom indexes/queries, compare-and-set, SDK transactions, per-document rules or visitor accounts in v1.
+- Replacements are atomic and last-write-wins; creates are insert-only. No realtime subscriptions, offline persistence, custom indexes or arbitrary query expressions, compare-and-set, SDK transactions, per-document rules or visitor accounts in v1.
 
 Public access intentionally permits callers from any origin. Public creates use database-backed fixed-minute limits of 60 successful creates per site and 20 per caller/IP per site, shared across collections and server processes. Owner writes do not consume these limits. Failed writes roll back their counters.
 
@@ -214,10 +214,36 @@ if (page.nextCursor !== null) {
 }
 ```
 
-`orderBy`: `id` (default), `created_at`, or `updated_at`. `direction`: `asc` (default) or `desc`. These are server metadata, not JSON fields. Arbitrary JSON-field sorting and filters are not supported. Timestamp ties use document ID in the same direction. Both timestamp orders have composite collection/time/ID indexes.
+`orderBy`: `id` (default), `created_at`, or `updated_at`. `direction`: `asc` (default) or `desc`. These are server metadata, not JSON fields. Arbitrary JSON-field sorting is not supported; scalar equality filters are supported as described below. Timestamp ties use document ID in the same direction. Both timestamp orders have composite collection/time/ID indexes.
 
 `get` and `list` return `created_at` as well as `updated_at`. Creation time is assigned by the server, preserved on replacement, and cannot be changed by fields in `data`. The new migration backfills existing documents from their recorded `updated_at`; their original creation time is unknown.
 
-Pass `nextCursor` unchanged as `after` with the same collection, orderBy, and direction. Cursors preserve PostgreSQL timestamp precision and the last ID, and remain usable after that document is deleted. They are bound to the collection's internal ID (including across deletion/recreation), field, and direction; mismatches and malformed cursors return 400. They are not credentials: read permissions are checked on every request. Legacy raw ID cursors are accepted only for ID ascending, but all new responses return opaque cursors. Changing page size is allowed.
+Pass `nextCursor` unchanged as `after` with the same collection, orderBy, direction, and filters. Cursors preserve PostgreSQL timestamp precision and the last ID, and remain usable after that document is deleted. They are bound to the collection's internal ID (including across deletion/recreation), field, direction, and canonical filter fingerprint; mismatches and malformed cursors return 400. They are not credentials: read permissions are checked on every request. Legacy raw ID cursors are accepted only for unfiltered ID ascending, but all new responses return opaque cursors. Changing page size is allowed.
 
-A null cursor marks the end. Cache prior pages or their starting cursors for a Previous button. There are no page numbers, offsets or total counts. Reset the cursor and displayed results when switching sort order. Pagination is not a snapshot: newly inserted records before the cursor require a refresh; changing a sort value during traversal can skip or repeat a record. Prefer immutable `created_at` for feeds. The example uses newest-first server creation time for both posts and guestbook entries.
+A null cursor marks the end. Cache prior pages or their starting cursors for a Previous button. There are no page numbers, offsets or total counts. Reset the cursor and displayed results when switching sort order or filters. Pagination is not a snapshot: newly inserted records before the cursor require a refresh; changing a sort value during traversal can skip or repeat a record. Prefer immutable `created_at` for feeds. The example uses newest-first server creation time for both posts and guestbook entries.
+
+## Equality filters and automatic indexes
+
+```js
+const query = { where: { category: "일상", active: true }, orderBy: "created_at", direction: "desc", limit: 20 };
+const page = await db.collection("posts").list(query);
+if (page.nextCursor) {
+  const next = await db.collection("posts").list({ ...query, after: page.nextCursor });
+}
+```
+
+HTTP: `GET /api/data/:site/:collection?where=<URL-encoded JSON object>&orderBy=created_at&direction=desc`. The account API accepts the same parameters. `where` applies only to collection list requests. At most 5 top-level field equalities are ANDed. Field names use the same 1–64 ASCII alphanumeric/underscore/hyphen rules as document IDs. Values are JSON strings, finite numbers, booleans or null. The decoded filter JSON is limited to 2,048 UTF-8 bytes. Absent `where` and `{}` mean no filtering.
+
+Types match exactly: number 1 differs from string "1"; null matches an explicit null field, not an absent field. Strings match case-sensitively. Arrays/objects do not match scalars. No nested paths, array membership, ranges, OR, substring search, or arbitrary JSON-field sorting. Filters are carried in URLs; do not put secrets in them.
+
+A shared PostgreSQL GIN `jsonb_path_ops` index automatically supports containment candidate lookup; exact per-field JSONB comparisons enforce scalar equality semantics. Existing collection/ID and collection/time/ID indexes support tenant narrowing and ordering. PostgreSQL chooses its execution plan based on selectivity; an index does not guarantee every query avoids scanning. No user-managed index configuration is needed. The new index migration creates no new document data and its rollback only drops the index. Index creation can block writes while building; schedule production migration accordingly for large databases.
+
+Opaque cursors include a SHA-256 fingerprint of normalized filters. Reordering equivalent keys works; changing, adding or dropping a filter invalidates the cursor. Read permissions and owner scopes are checked on each page. Filters are not authorization: publicly readable collections remain readable without filters.
+
+## Extended blog example
+
+Create `posts` (world/admin), `guestbook` (world/create), and **`drafts` (admin/admin)**. Register the callback with `posts` and `drafts`. Existing registrations have immutable scopes: remove/recreate the registration and update `config.js` with its new Client ID when upgrading. This revokes old registration tokens.
+
+The public list filters by exact `category`. The editor loads paginated posts/drafts, edits documents while preserving other JSON fields, saves private drafts, publishes, and deletes the selected document after confirmation. Local tab storage preserves the editor through the login redirect; explicit server draft saving persists across sessions. Signing out clears the editor and local draft.
+
+Draft and public copies share an ID. Saving a private draft does not unpublish or change an existing public post. Publication writes the post first, then removes the draft; those two requests are not atomic. Failed publication preserves the draft; failed cleanup reports that the post is already public and can be retried with the same ID. Deletion affects only the selected collection. There is no conflict detection: concurrent editors use last-write-wins. Guestbook moderation remains in the control panel.
