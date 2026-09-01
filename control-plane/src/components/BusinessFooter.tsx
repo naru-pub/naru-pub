@@ -24,7 +24,7 @@ export function BusinessFooter() {
         </div>
         <div className="flex gap-2">
           <dt className="font-medium text-foreground">유선번호</dt>
-          <dd>000-0000-0000</dd>
+          <dd>010-5828-3026</dd>
         </div>
       </dl>
     </footer>
