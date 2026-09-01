@@ -8,6 +8,7 @@ import {
   chargeBillingKey,
   getPaymentByOrderId,
   issueBillingKey,
+  isDefinitiveTossFailure,
   newOrderId,
   PLAN_ORDER_NAMES,
   TossApiError,
@@ -176,21 +177,29 @@ export async function POST(request: NextRequest) {
         amount: sub.amount,
         orderId: attempt.order_id,
         orderName: PLAN_ORDER_NAMES[interval],
+        idempotencyKey: attempt.order_id,
       });
     } catch (err) {
-      await db
-        .updateTable("payments")
-        .set({
-          status: "failed",
-          raw: JSON.stringify({
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        })
-        .where("id", "=", attempt.id)
-        .execute();
+      // A transport error is ambiguous: Toss may have completed the charge.
+      // Keep the attempt pending so the next callback reconciles this orderId.
+      if (isDefinitiveTossFailure(err)) {
+        await db
+          .updateTable("payments")
+          .set({
+            status: "failed",
+            raw: JSON.stringify({ error: err.message }),
+          })
+          .where("id", "=", attempt.id)
+          .execute();
+      }
       const message =
-        err instanceof TossApiError ? err.message : "결제에 실패했습니다.";
-      return NextResponse.json({ success: false, message }, { status: 402 });
+        err instanceof TossApiError
+          ? err.message
+          : "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.";
+      return NextResponse.json(
+        { success: false, message },
+        { status: isDefinitiveTossFailure(err) ? 402 : 503 },
+      );
     }
 
     if (payment.status !== "DONE") {
@@ -217,6 +226,7 @@ export async function POST(request: NextRequest) {
       interval,
       amount: sub.amount,
       from: new Date(),
+      preserveExistingEntitlement: true,
       payment,
       paymentId: attempt.id,
     });

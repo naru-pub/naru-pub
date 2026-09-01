@@ -35,6 +35,18 @@ export class TossApiError extends Error {
   }
 }
 
+// A response-level 4xx (except an in-progress idempotency conflict) means Toss
+// definitively rejected the request. Network failures, 5xx and 409 are
+// ambiguous and must be reconciled with the same order/idempotency key.
+export function isDefinitiveTossFailure(error: unknown): error is TossApiError {
+  return (
+    error instanceof TossApiError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 409
+  );
+}
+
 function authHeader(): string {
   const secret = process.env.TOSS_SECRET_KEY;
   if (!secret) {
@@ -46,13 +58,20 @@ function authHeader(): string {
 
 async function tossRequest<T>(
   path: string,
-  init: { method?: "GET" | "POST"; body?: unknown } = {},
+  init: {
+    method?: "GET" | "POST";
+    body?: unknown;
+    idempotencyKey?: string;
+  } = {},
 ): Promise<T> {
   const res = await fetch(`${TOSS_API}${path}`, {
     method: init.method ?? "POST",
     headers: {
       Authorization: authHeader(),
       "Content-Type": "application/json",
+      ...(init.idempotencyKey
+        ? { "Idempotency-Key": init.idempotencyKey }
+        : {}),
     },
     body: init.body == null ? undefined : JSON.stringify(init.body),
   });
@@ -96,20 +115,24 @@ export function chargeBillingKey(params: {
   amount: number;
   orderId: string;
   orderName: string;
+  idempotencyKey: string;
 }) {
-  const { billingKey, ...body } = params;
-  return tossRequest<TossPaymentResult>(`/v1/billing/${billingKey}`, { body });
+  const { billingKey, idempotencyKey, ...body } = params;
+  return tossRequest<TossPaymentResult>(`/v1/billing/${billingKey}`, {
+    body,
+    idempotencyKey,
+  });
 }
 
 // Finalizes a one-time payment (non-billing). Toss validates that paymentKey,
 // orderId and amount match what was requested in requestPayment.
-export function confirmPayment(params: {
-  paymentKey: string;
-  orderId: string;
-  amount: number;
-}) {
+export function confirmPayment(
+  params: { paymentKey: string; orderId: string; amount: number },
+  idempotencyKey: string,
+) {
   return tossRequest<TossPaymentResult>("/v1/payments/confirm", {
     body: params,
+    idempotencyKey,
   });
 }
 

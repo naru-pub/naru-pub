@@ -13,7 +13,7 @@
 - **이메일 알림**: 후원 시작/한 번만 후원 성공 시 한국어 인디웹 후원 감사 메일을 보냅니다. cron의 `send-billing-notifications.ts`(매일 09:00)가 다음 결제일 3일 이내인 인증된 이메일 계정에 갱신 예정 안내를 보냅니다. `charge-subscriptions.ts`는 갱신 결제 첫 실패 시 결제 유예 기간 안내를 한 번 보냅니다.
 - **취소**: `subscription/cancel`은 `status='canceled'`로 두고 `supporter_until`은 유지 → 결제한 기간 동안은 계속 이용 가능.
 - **커스텀 도메인 회수**: cron의 `cleanup-expired-custom-domains.ts`(매일 04:30)가 `supporter_until + PAYMENT_GRACE_DAYS`가 지난 비-comp 계정의 Cloudflare for SaaS Custom Hostname을 삭제한 뒤 로컬 `custom_domains` 행을 제거합니다. 이미 Cloudflare에서 삭제된 404는 성공으로 처리합니다.
-- **웹훅**: `api/webhooks/toss`는 결제 원장 상태만 동기화하며 엔티틀먼트를 부여하지 않으므로(접근 부여는 항상 Toss를 직접 호출하는 confirm/cron만 수행) 별도 인증이 필요 없습니다.
+- **웹훅**: 일반 결제 웹훅에는 서명이 없으므로 payload를 신뢰하지 않습니다. `api/webhooks/toss`는 `orderId`로 Toss API를 다시 조회하고 금액과 상태를 확인한 뒤 원장을 동기화합니다. 성공 결제의 엔티틀먼트 부여는 confirm/cron의 원자적 처리에서만 수행합니다.
 
 ## 데이터 모델
 
@@ -25,7 +25,6 @@
 
 - `TOSS_CLIENT_KEY`: 서버에서 읽어 클라이언트로 전달하는 공개 키.
 - `TOSS_SECRET_KEY`: 서버 전용 시크릿 키.
-- `TOSS_WEBHOOK_SECRET`: 설정하면 Toss 웹훅의 `x-toss-timestamp`/`x-toss-signature` HMAC 서명을 검증합니다.
 - `RESEND_API_KEY` / `FROM_EMAIL` / `BASE_URL`: 결제 갱신/실패 안내 메일 발송에 사용합니다.
 
 개발/테스트에는 Toss 테스트 키를 사용하세요.

@@ -3,7 +3,12 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
 import { sendSupportThankYouEmail } from "@/lib/email";
-import { confirmPayment, ONE_TIME_YEAR_AMOUNT, TossApiError } from "@/lib/toss";
+import {
+  confirmPayment,
+  isDefinitiveTossFailure,
+  ONE_TIME_YEAR_AMOUNT,
+  TossApiError,
+} from "@/lib/toss";
 import { applyOneTimePayment } from "@/lib/subscriptions";
 
 // One-time donation step 2: confirms the payment with Toss and grants 1 year of
@@ -75,21 +80,28 @@ export async function POST(request: NextRequest) {
 
     let payment;
     try {
-      payment = await confirmPayment({ paymentKey, orderId, amount });
+      payment = await confirmPayment({ paymentKey, orderId, amount }, orderId);
     } catch (err) {
-      await db
-        .updateTable("payments")
-        .set({
-          status: "failed",
-          raw: JSON.stringify({
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        })
-        .where("id", "=", pendingPayment.id)
-        .execute();
+      // A transport failure may follow a successful approval. Keep the order
+      // pending and retry safely with the same idempotency key.
+      if (isDefinitiveTossFailure(err)) {
+        await db
+          .updateTable("payments")
+          .set({
+            status: "failed",
+            raw: JSON.stringify({ error: err.message }),
+          })
+          .where("id", "=", pendingPayment.id)
+          .execute();
+      }
       const message =
-        err instanceof TossApiError ? err.message : "결제에 실패했습니다.";
-      return NextResponse.json({ success: false, message }, { status: 402 });
+        err instanceof TossApiError
+          ? err.message
+          : "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.";
+      return NextResponse.json(
+        { success: false, message },
+        { status: isDefinitiveTossFailure(err) ? 402 : 503 },
+      );
     }
 
     // Grant based on the amount Toss actually confirmed.

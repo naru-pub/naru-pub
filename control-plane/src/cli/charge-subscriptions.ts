@@ -5,6 +5,7 @@ import {
   BillingInterval,
   chargeBillingKey,
   getPaymentByOrderId,
+  isDefinitiveTossFailure,
   newOrderId,
   PLAN_ORDER_NAMES,
   TossApiError,
@@ -242,6 +243,7 @@ async function main() {
         amount: sub.amount,
         orderId: attempt.order_id,
         orderName: PLAN_ORDER_NAMES[interval],
+        idempotencyKey: attempt.order_id,
       });
 
       if (payment.status !== "DONE") {
@@ -265,6 +267,19 @@ async function main() {
       });
       console.log(`[charge-subscriptions] user ${sub.user_id}: renewed`);
     } catch (err) {
+      if (!isDefinitiveTossFailure(err)) {
+        // Toss may have completed the request. Preserve the attempt so the
+        // next run reconciles the same order instead of charging a new one.
+        await db
+          .updateTable("subscriptions")
+          .set({ charging_started_at: null, updated_at: new Date() })
+          .where("id", "=", sub.id)
+          .execute();
+        console.error(
+          `[charge-subscriptions] user ${sub.user_id}: ambiguous charge result; will reconcile ${attempt.order_id}: ${err}`,
+        );
+        continue;
+      }
       const failures = sub.failed_charge_count + 1;
       const graceEndsAt = sub.current_period_end
         ? addPaymentGrace(new Date(sub.current_period_end))

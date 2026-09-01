@@ -23,19 +23,40 @@ export async function applyOneTimePayment(opts: {
   paymentId?: number;
 }): Promise<{ periodStart: Date; periodEnd: Date }> {
   const now = new Date();
-  const current = await db
-    .selectFrom("users")
-    .select("supporter_until")
-    .where("id", "=", opts.userId)
-    .executeTakeFirst();
-  const remaining =
-    current?.supporter_until && new Date(current.supporter_until) > now
-      ? new Date(current.supporter_until)
-      : now;
-  const periodStart = remaining;
-  const periodEnd = addInterval(remaining, opts.interval);
+  return db.transaction().execute(async (trx) => {
+    if (opts.paymentId) {
+      const ledger = await trx
+        .selectFrom("payments")
+        .select(["status", "period_start", "period_end"])
+        .where("id", "=", opts.paymentId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      if (
+        ledger.status === "done" &&
+        ledger.period_start &&
+        ledger.period_end
+      ) {
+        return {
+          periodStart: new Date(ledger.period_start),
+          periodEnd: new Date(ledger.period_end),
+        };
+      }
+    }
 
-  await db.transaction().execute(async (trx) => {
+    // Serialize entitlement extensions for this user. Two distinct donations
+    // confirmed together must each add their full period.
+    const current = await trx
+      .selectFrom("users")
+      .select("supporter_until")
+      .where("id", "=", opts.userId)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    const periodStart =
+      current.supporter_until && new Date(current.supporter_until) > now
+        ? new Date(current.supporter_until)
+        : now;
+    const periodEnd = addInterval(periodStart, opts.interval);
+
     if (opts.paymentId) {
       await trx
         .updateTable("payments")
@@ -74,9 +95,8 @@ export async function applyOneTimePayment(opts: {
       .set({ supporter_until: periodEnd })
       .where("id", "=", opts.userId)
       .execute();
+    return { periodStart, periodEnd };
   });
-
-  return { periodStart, periodEnd };
 }
 
 // Applies a successful Toss charge atomically: records the payment, extends the
@@ -89,14 +109,49 @@ export async function applySuccessfulCharge(opts: {
   interval: BillingInterval;
   amount: number;
   from: Date; // base for the new period (now for first charge, current_period_end for renewals)
+  preserveExistingEntitlement?: boolean;
   payment: TossPaymentResult;
   paymentId?: number;
 }): Promise<{ periodStart: Date; periodEnd: Date }> {
-  const periodStart = opts.from;
-  const periodEnd = addInterval(periodStart, opts.interval);
   const now = new Date();
 
-  await db.transaction().execute(async (trx) => {
+  return db.transaction().execute(async (trx) => {
+    if (opts.paymentId) {
+      const ledger = await trx
+        .selectFrom("payments")
+        .select(["status", "period_start", "period_end"])
+        .where("id", "=", opts.paymentId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      if (
+        ledger.status === "done" &&
+        ledger.period_start &&
+        ledger.period_end
+      ) {
+        return {
+          periodStart: new Date(ledger.period_start),
+          periodEnd: new Date(ledger.period_end),
+        };
+      }
+    }
+
+    let periodStart = opts.from;
+    if (opts.preserveExistingEntitlement) {
+      const current = await trx
+        .selectFrom("users")
+        .select("supporter_until")
+        .where("id", "=", opts.userId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      if (
+        current.supporter_until &&
+        new Date(current.supporter_until) > periodStart
+      ) {
+        periodStart = new Date(current.supporter_until);
+      }
+    }
+    const periodEnd = addInterval(periodStart, opts.interval);
+
     if (opts.paymentId) {
       await trx
         .updateTable("payments")
@@ -151,7 +206,6 @@ export async function applySuccessfulCharge(opts: {
       .set({ supporter_until: periodEnd })
       .where("id", "=", opts.userId)
       .execute();
+    return { periodStart, periodEnd };
   });
-
-  return { periodStart, periodEnd };
 }

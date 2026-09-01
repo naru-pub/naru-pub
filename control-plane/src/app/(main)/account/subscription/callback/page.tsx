@@ -25,20 +25,31 @@ function Callback() {
 
     (async () => {
       try {
-        const res = await fetch("/api/account/subscription/confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ authKey, customerKey }),
-        });
-        const data = await res.json();
-        if (res.ok && data.success) {
-          router.replace("/account?support=success");
-        } else {
-          setMessage(data.message ?? "후원 처리에 실패했습니다.");
-          router.replace("/account?support=failed");
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const res = await fetch("/api/account/subscription/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ authKey, customerKey }),
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            router.replace("/account?support=success");
+            return;
+          }
+          if (res.status !== 503) {
+            router.replace("/account?support=failed");
+            return;
+          }
+          setMessage(data.message);
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
+        setMessage(
+          "결제 확인이 지연되고 있습니다. 잠시 후 이 페이지를 새로고침해 주세요.",
+        );
       } catch {
-        router.replace("/account?support=failed");
+        setMessage(
+          "결제 확인이 지연되고 있습니다. 잠시 후 이 페이지를 새로고침해 주세요.",
+        );
       }
     })();
   }, [params, router]);
