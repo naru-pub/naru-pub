@@ -102,6 +102,7 @@ export default async function PaymentsPage() {
       "created_at",
     ])
     .where("user_id", "=", user.id)
+    .where("paid_at", "is not", null)
     .orderBy("created_at", "desc")
     .limit(100)
     .execute();
