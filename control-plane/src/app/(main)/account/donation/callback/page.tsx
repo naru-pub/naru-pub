@@ -37,7 +37,7 @@ function Callback() {
           });
           const data = await res.json();
           if (res.ok && data.success) {
-            router.replace("/account?support=success");
+            router.replace("/support?support=success");
             return;
           }
           if (res.status !== 503) {

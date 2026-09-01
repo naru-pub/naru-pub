@@ -41,7 +41,7 @@ export default function SupportCard({
     if (support === "success") toast.success("후원해 주셔서 감사합니다!");
     else if (support === "failed") toast.error("후원 처리에 실패했습니다.");
     else if (support === "canceled") toast("후원이 취소되었습니다.");
-    router.replace("/account");
+    router.replace("/support");
   }, [params, router]);
 
   async function subscribe(interval: "month" | "year") {
