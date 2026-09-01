@@ -80,7 +80,7 @@ export default function DatabaseManager({
         </div>
         <a
           href="/database/docs/"
-          className="rounded-md border px-4 py-2 text-sm hover:bg-muted"
+          className="border px-4 py-2 text-sm hover:bg-muted"
         >
           사용 안내 및 예제 블로그 →
         </a>
@@ -112,7 +112,7 @@ export default function DatabaseManager({
           aria-busy={busy}
           className="grid min-w-0 gap-6 disabled:opacity-60 lg:grid-cols-[240px_minmax(0,1fr)]"
         >
-          <aside className="min-w-0 space-y-4 rounded-xl border bg-muted/20 p-4 self-start">
+          <aside className="min-w-0 space-y-4 border bg-muted/20 p-4 self-start">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold">컬렉션</h2>
               <span className="text-sm text-muted-foreground">
@@ -122,20 +122,20 @@ export default function DatabaseManager({
             <form
               className="flex flex-col gap-2"
               onSubmit={(e) => {
-            e.preventDefault();
-            void run(async () => {
-              const created = newName;
-              await api("", "POST", { name: created });
-              setSelected(created);
-              setRead("admin");
-              setWrite("admin");
-              setId("");
-              setDocuments([]);
-              setCursor(null);
-              setNewName("");
-              await refresh();
-              await load(created);
-            });
+                e.preventDefault();
+                void run(async () => {
+                  const created = newName;
+                  await api("", "POST", { name: created });
+                  setSelected(created);
+                  setRead("admin");
+                  setWrite("admin");
+                  setId("");
+                  setDocuments([]);
+                  setCursor(null);
+                  setNewName("");
+                  await refresh();
+                  await load(created);
+                });
               }}
             >
               <Input
@@ -179,7 +179,7 @@ export default function DatabaseManager({
           </aside>
           <div className="min-w-0 space-y-5">
             {!selected && (
-              <section className="rounded-xl border border-dashed p-10 text-center space-y-2">
+              <section className="border border-dashed p-10 text-center space-y-2">
                 <h2 className="font-semibold">컬렉션을 선택하세요</h2>
                 <p className="text-sm text-muted-foreground">
                   컬렉션을 선택하면 문서를 조회하고 편집할 수 있습니다.
@@ -196,7 +196,7 @@ export default function DatabaseManager({
                     불러온 문서 {documents.length}개
                   </span>
                 </div>
-                <details className="border rounded-xl p-4 space-y-4">
+                <details className="border p-4 space-y-4">
                   <summary className="cursor-pointer font-medium">
                     접근 권한 및 컬렉션 설정
                   </summary>
@@ -209,7 +209,7 @@ export default function DatabaseManager({
                     <label>
                       읽기{" "}
                       <select
-                        className="bg-background border rounded p-2"
+                        className="bg-background border p-2"
                         value={read}
                         onChange={(e) => setRead(e.target.value)}
                       >
@@ -220,7 +220,7 @@ export default function DatabaseManager({
                     <label>
                       쓰기{" "}
                       <select
-                        className="bg-background border rounded p-2"
+                        className="bg-background border p-2"
                         value={write}
                         onChange={(e) => setWrite(e.target.value)}
                       >
@@ -267,7 +267,7 @@ export default function DatabaseManager({
                   </div>
                 </details>
                 <div className="grid xl:grid-cols-2 gap-5 min-w-0">
-                  <section className="min-w-0 rounded-xl border p-4 space-y-3">
+                  <section className="min-w-0 border p-4 space-y-3">
                     <h2 className="font-bold">문서</h2>
                     <Button
                       variant="outline"
@@ -279,7 +279,7 @@ export default function DatabaseManager({
                       <p className="text-muted-foreground">문서가 없습니다.</p>
                     )}
                     {documents.map((d) => (
-                      <div className="border rounded p-3 space-y-2" key={d.id}>
+                      <div className="border p-3 space-y-2" key={d.id}>
                         <button
                           className="underline break-all text-left"
                           onClick={() => {
@@ -317,7 +317,7 @@ export default function DatabaseManager({
                     )}
                   </section>
                   <form
-                    className="min-w-0 self-start rounded-xl border p-4 space-y-3"
+                    className="min-w-0 self-start border p-4 space-y-3"
                     onSubmit={(e) => {
                       e.preventDefault();
                       void run(async () => {
@@ -360,7 +360,7 @@ export default function DatabaseManager({
                     </p>
                     <textarea
                       aria-label="JSON 데이터"
-                      className="w-full h-80 rounded border bg-background p-3 font-mono text-sm"
+                      className="w-full h-80 border bg-background p-3 font-mono text-sm"
                       value={json}
                       onChange={(e) => setJson(e.target.value)}
                       spellCheck={false}
@@ -376,10 +376,7 @@ export default function DatabaseManager({
       <div hidden={view !== "access"}>
         <WebsiteAccess collections={collections} websiteUrl={websiteUrl} />
       </div>
-      <section
-        hidden={view !== "sdk"}
-        className="min-w-0 rounded-xl border p-5 space-y-4"
-      >
+      <section hidden={view !== "sdk"} className="min-w-0 border p-5 space-y-4">
         <h2 className="font-bold">웹 SDK</h2>
         <p className="text-sm">
           사이트의 &lt;script type="module"&gt;에서 사용하세요. 기본
@@ -387,9 +384,7 @@ export default function DatabaseManager({
           등록한 콜백 페이지에서 별도로 시작하세요. SDK는 관리자 쿠키를 전송하지
           않습니다.
         </p>
-        <pre className="p-4 bg-muted rounded overflow-auto text-sm">
-          {snippet}
-        </pre>
+        <pre className="p-4 bg-muted overflow-auto text-sm">{snippet}</pre>
       </section>
     </div>
   );

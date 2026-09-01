@@ -70,7 +70,7 @@ export default function WebsiteAccess({
         URL에는 쿼리나 #을 넣지 마세요. 외부 스크립트가 없는 신뢰할 수 있는
         관리자 페이지를 사용하세요.
       </p>
-      <p className="rounded-lg border bg-muted/30 p-4 text-sm break-all">
+      <p className="border bg-muted/30 p-4 text-sm break-all">
         Client ID: <code>{clientId || "불러오는 중…"}</code>
       </p>
       {error && (
@@ -84,7 +84,7 @@ export default function WebsiteAccess({
         className="grid min-w-0 items-start gap-6 lg:grid-cols-2"
       >
         <form
-          className="min-w-0 rounded-xl border p-5 space-y-4"
+          className="min-w-0 border p-5 space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
             void run(async () => {
@@ -150,7 +150,7 @@ export default function WebsiteAccess({
             <div className="flex gap-3 flex-wrap">
               {collections.map((c) => (
                 <label
-                  className="flex min-w-0 gap-2 items-center rounded-md border px-3 py-2 text-sm break-all"
+                  className="flex min-w-0 gap-2 items-center border px-3 py-2 text-sm break-all"
                   key={c.name}
                 >
                   <input
@@ -193,12 +193,12 @@ export default function WebsiteAccess({
             <span className="text-muted-foreground">{clients.length}</span>
           </h3>
           {!clients.length && (
-            <p className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
+            <p className="border border-dashed p-6 text-sm text-muted-foreground">
               등록된 관리자 페이지가 없습니다.
             </p>
           )}
           {clients.map((c) => (
-            <div className="rounded-xl border p-4 space-y-3" key={c.id}>
+            <div className="border p-4 space-y-3" key={c.id}>
               <p className="break-all">{c.redirectUri}</p>
               <p className="text-sm">
                 컬렉션: {c.collections.join(", ") || "(삭제됨)"}
