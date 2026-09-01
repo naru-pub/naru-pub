@@ -131,7 +131,7 @@ export default async function PaymentsPage() {
                 아직 결제 내역이 없습니다.
               </div>
             ) : (
-              <Table className="table-fixed">
+              <Table className="table-auto">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="px-2 sm:px-4">일시</TableHead>
@@ -175,7 +175,7 @@ export default async function PaymentsPage() {
                           ? formatKrw(payment.refunded_amount)
                           : "-"}
                       </TableCell>
-                      <TableCell className="hidden p-2 text-muted-foreground lg:table-cell sm:p-4">
+                      <TableCell className="hidden whitespace-nowrap p-2 text-muted-foreground lg:table-cell sm:p-4">
                         {payment.period_start && payment.period_end
                           ? `${formatDate(payment.period_start)} - ${formatDate(payment.period_end)}`
                           : "-"}
