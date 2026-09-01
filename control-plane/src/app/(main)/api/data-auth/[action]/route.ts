@@ -9,9 +9,9 @@ async function handle(
   // Client registrations are available only through the same-origin account route.
   return ownerAuthRequest(
     request,
-    ["authorize", "token", "revoke"].includes(action)
+    ["discover", "authorize", "token", "revoke"].includes(action)
       ? action
       : "missing",
   );
 }
-export { handle as POST, handle as OPTIONS };
+export { handle as GET, handle as POST, handle as OPTIONS };
