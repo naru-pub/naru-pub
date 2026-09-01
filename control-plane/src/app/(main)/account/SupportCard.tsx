@@ -38,6 +38,11 @@ export default function SupportCard({
     ? new Date(supporterUntil).toLocaleDateString("ko-KR")
     : null;
   const isActive = subscription?.status === "active";
+  const isScheduled = subscription?.status === "scheduled";
+  const showRecurringOptions = !isActive && !isScheduled;
+  const showOneTimeOptions =
+    !isScheduled &&
+    (!supportActive || isActive || subscription?.status === "canceled");
   const intervalLabel =
     subscription?.billingInterval === "year" ? "연간" : "월간";
 
@@ -52,6 +57,12 @@ export default function SupportCard({
         untilLabel
           ? `후원해 주셔서 감사합니다! ${untilLabel}까지 이용할 수 있습니다.`
           : "후원해 주셔서 감사합니다!",
+      );
+    } else if (support === "scheduled") {
+      toast.success(
+        untilLabel
+          ? `${untilLabel}부터 정기 후원이 시작됩니다.`
+          : "정기 후원이 예약되었습니다.",
       );
     } else if (support === "failed") toast.error("후원 처리에 실패했습니다.");
     else if (support === "canceled") toast("후원이 취소되었습니다.");
@@ -165,7 +176,7 @@ export default function SupportCard({
           <Heart size={20} />
           나루 후원
           {comp && <Badge variant="secondary">평생 후원</Badge>}
-          {!comp && (isActive || supportActive) && (
+          {!comp && (isActive || isScheduled || supportActive) && (
             <Badge variant="secondary">후원 중</Badge>
           )}
         </CardTitle>
@@ -204,7 +215,20 @@ export default function SupportCard({
                   후원 취소
                 </Button>
               </div>
-            ) : subscription && supportActive && untilLabel ? (
+            ) : isScheduled && untilLabel ? (
+              <div className="space-y-3">
+                <div className="bg-muted border border-border p-3 text-sm text-muted-foreground">
+                  현재 후원 기간은{" "}
+                  <strong className="text-foreground">{untilLabel}</strong>까지
+                  입니다. 이후 {intervalLabel} 정기 후원이 시작됩니다.
+                </div>
+                <Button variant="outline" onClick={cancel} disabled={pending}>
+                  정기 후원 예약 취소
+                </Button>
+              </div>
+            ) : subscription?.status === "canceled" &&
+              supportActive &&
+              untilLabel ? (
               <div className="bg-muted border border-border p-3 text-sm text-muted-foreground">
                 정기 후원이 종료되었습니다.{" "}
                 <strong className="text-foreground">{untilLabel}</strong>까지
@@ -218,57 +242,71 @@ export default function SupportCard({
               </div>
             ) : null}
 
-            {!isActive && !supportActive && (
+            {(showRecurringOptions || showOneTimeOptions) && (
               <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">정기 후원</p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Button
-                    onClick={() => subscribe("month")}
-                    disabled={pending}
-                    className="flex-1"
-                  >
-                    월 1,000원 후원
-                  </Button>
-                  <Button
-                    onClick={() => subscribe("year")}
-                    disabled={pending}
-                    className="flex-1"
-                  >
-                    연 10,000원 후원 (2개월 무료)
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground pt-1">
-                  한 번만 후원
-                </p>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <label className="flex items-center gap-2 border border-border bg-background px-3 py-2 text-sm sm:w-40">
-                    <span className="shrink-0 text-muted-foreground">기간</span>
-                    <select
-                      value={oneTimeYears}
-                      onChange={(event) =>
-                        setOneTimeYears(Number(event.target.value))
-                      }
-                      disabled={pending}
-                      className="min-w-0 flex-1 bg-transparent font-medium outline-none"
-                      aria-label="일회성 후원 기간"
-                    >
-                      {[1, 2, 3, 5].map((years) => (
-                        <option key={years} value={years}>
-                          {years}년
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <Button
-                    onClick={donateOnce}
-                    disabled={pending}
-                    variant="outline"
-                    className="flex-1"
-                  >
-                    {(oneTimeYears * 12000).toLocaleString("ko-KR")}원 결제
-                    (자동 갱신 없음)
-                  </Button>
-                </div>
+                {showRecurringOptions && (
+                  <>
+                    <p className="text-xs text-muted-foreground">정기 후원</p>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Button
+                        onClick={() => subscribe("month")}
+                        disabled={pending}
+                        className="flex-1"
+                      >
+                        {supportActive
+                          ? "기간 종료 후 월 1,000원"
+                          : "월 1,000원 후원"}
+                      </Button>
+                      <Button
+                        onClick={() => subscribe("year")}
+                        disabled={pending}
+                        className="flex-1"
+                      >
+                        {supportActive
+                          ? "기간 종료 후 연 10,000원"
+                          : "연 10,000원 후원 (2개월 무료)"}
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {showOneTimeOptions && (
+                  <>
+                    <p className="text-xs text-muted-foreground pt-1">
+                      {supportActive ? "일회성 후원으로 전환" : "한 번만 후원"}
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <label className="flex items-center gap-2 border border-border bg-background px-3 py-2 text-sm sm:w-40">
+                        <span className="shrink-0 text-muted-foreground">
+                          기간
+                        </span>
+                        <select
+                          value={oneTimeYears}
+                          onChange={(event) =>
+                            setOneTimeYears(Number(event.target.value))
+                          }
+                          disabled={pending}
+                          className="min-w-0 flex-1 bg-transparent font-medium outline-none"
+                          aria-label="일회성 후원 기간"
+                        >
+                          {[1, 2, 3, 5].map((years) => (
+                            <option key={years} value={years}>
+                              {years}년
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <Button
+                        onClick={donateOnce}
+                        disabled={pending}
+                        variant="outline"
+                        className="flex-1"
+                      >
+                        {(oneTimeYears * 12000).toLocaleString("ko-KR")}원 결제
+                        (자동 갱신 없음)
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>

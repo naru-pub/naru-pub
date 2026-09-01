@@ -4,7 +4,7 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
 import { isBillingInterval, PLAN_AMOUNTS } from "@/lib/toss";
-import { canStartSupportPurchase } from "@/lib/support-purchases";
+import { canStartRecurringPurchase } from "@/lib/support-purchases";
 
 // Step 1 of the subscribe flow: records the chosen plan as an incomplete
 // subscription and returns the stable Toss customerKey for requestBillingAuth.
@@ -49,16 +49,16 @@ export async function POST(request: NextRequest) {
       .executeTakeFirst();
 
     if (
-      !canStartSupportPurchase({
+      !canStartRecurringPurchase({
         supporterComp: !!userRow?.supporter_comp,
         supporterUntil: userRow?.supporter_until ?? null,
-        hasActiveSubscription: existing?.status === "active",
+        subscriptionStatus: existing?.status ?? null,
       })
     ) {
       return NextResponse.json(
         {
           success: false,
-          message: "현재 후원 기간이 끝난 뒤 새 후원을 시작할 수 있습니다.",
+          message: "이미 활성화되었거나 예약된 정기 후원이 있습니다.",
         },
         { status: 409 },
       );

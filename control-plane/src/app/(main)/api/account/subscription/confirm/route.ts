@@ -14,6 +14,7 @@ import {
   TossApiError,
 } from "@/lib/toss";
 import { applySuccessfulCharge } from "@/lib/subscriptions";
+import { scheduledRecurringStart } from "@/lib/support-purchases";
 
 async function getOrCreateInitialChargeAttempt(opts: {
   subscriptionId: number;
@@ -68,9 +69,9 @@ async function getOrCreateInitialChargeAttempt(opts: {
   }
 }
 
-// Step 2 of the subscribe flow: exchanges the authKey for a billing key and
-// charges the first period. Amount comes from the stored subscription (server
-// authoritative), never from the client.
+// Step 2 of the subscribe flow: exchanges the authKey for a billing key. When
+// prepaid access remains, the first charge is scheduled for its expiry;
+// otherwise the first period is charged immediately.
 export async function POST(request: NextRequest) {
   try {
     try {
@@ -101,7 +102,13 @@ export async function POST(request: NextRequest) {
     // The customerKey must belong to this user.
     const userRow = await db
       .selectFrom("users")
-      .select(["email", "email_verified_at", "login_name", "toss_customer_key"])
+      .select([
+        "email",
+        "email_verified_at",
+        "login_name",
+        "supporter_until",
+        "toss_customer_key",
+      ])
       .where("id", "=", user.id)
       .executeTakeFirst();
     if (
@@ -150,6 +157,35 @@ export async function POST(request: NextRequest) {
         .set({ toss_billing_key: billingKey, updated_at: new Date() })
         .where("id", "=", sub.id)
         .execute();
+    }
+
+    const now = new Date();
+    const scheduledStart = scheduledRecurringStart(
+      userRow.supporter_until ?? null,
+      now,
+    );
+    if (scheduledStart) {
+      await db
+        .updateTable("subscriptions")
+        .set({
+          status: "scheduled",
+          current_period_start: null,
+          current_period_end: scheduledStart,
+          next_billing_at: scheduledStart,
+          failed_charge_count: 0,
+          charging_started_at: null,
+          canceled_at: null,
+          updated_at: now,
+        })
+        .where("id", "=", sub.id)
+        .execute();
+
+      return NextResponse.json({
+        success: true,
+        scheduled: true,
+        startsAt: scheduledStart.toISOString(),
+        message: "현재 후원 기간이 끝난 뒤 정기 후원이 시작됩니다.",
+      });
     }
 
     // Charge the first period.
@@ -225,7 +261,7 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       interval,
       amount: sub.amount,
-      from: new Date(),
+      from: now,
       preserveExistingEntitlement: true,
       payment,
       paymentId: attempt.id,

@@ -37,8 +37,8 @@ type PaymentAttempt = {
   status: string;
 };
 
-// Renews active subscriptions whose next_billing_at has passed. On success the
-// period extends contiguously and supporter_until advances. On failure the
+// Charges active renewals and scheduled first periods whose next_billing_at has
+// passed. On success the period extends contiguously and supporter_until advances. On failure the
 // attempt is retried on subsequent runs (next_billing_at stays in the past)
 // until the retry limit or payment grace window ends, after which the
 // subscription is marked past_due and grace-based access ends.
@@ -62,7 +62,7 @@ async function claimDueSubscriptions(now: Date) {
     WHERE id IN (
       SELECT id
       FROM subscriptions
-      WHERE status = 'active'
+      WHERE status IN ('active', 'scheduled')
         AND toss_billing_key IS NOT NULL
         AND next_billing_at <= ${now}
         AND (

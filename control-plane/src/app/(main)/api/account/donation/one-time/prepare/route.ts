@@ -8,7 +8,7 @@ import {
   oneTimeAmount,
   oneTimeOrderName,
 } from "@/lib/toss";
-import { canStartSupportPurchase } from "@/lib/support-purchases";
+import { canStartOneTimePurchase } from "@/lib/support-purchases";
 
 // One-time donation step 1: returns a server-generated orderId + the
 // authoritative amount for requestPayment.
@@ -40,23 +40,23 @@ export async function POST(request: NextRequest) {
       .select(["supporter_comp", "supporter_until", "toss_customer_key"])
       .where("id", "=", user.id)
       .executeTakeFirst();
-    const activeSubscription = await db
+    const subscription = await db
       .selectFrom("subscriptions")
-      .select("id")
+      .select("status")
       .where("user_id", "=", user.id)
-      .where("status", "=", "active")
       .executeTakeFirst();
     if (
-      !canStartSupportPurchase({
+      !canStartOneTimePurchase({
         supporterComp: !!userRow?.supporter_comp,
         supporterUntil: userRow?.supporter_until ?? null,
-        hasActiveSubscription: !!activeSubscription,
+        subscriptionStatus: subscription?.status ?? null,
       })
     ) {
       return NextResponse.json(
         {
           success: false,
-          message: "현재 후원 기간이 끝난 뒤 새 후원을 시작할 수 있습니다.",
+          message:
+            "일회성 후원 기간 중에는 정기 후원으로만 전환할 수 있습니다.",
         },
         { status: 409 },
       );

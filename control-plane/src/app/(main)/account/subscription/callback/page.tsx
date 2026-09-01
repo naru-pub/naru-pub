@@ -33,7 +33,11 @@ function Callback() {
           });
           const data = await res.json();
           if (res.ok && data.success) {
-            router.replace("/support?support=success");
+            router.replace(
+              data.scheduled
+                ? "/support?support=scheduled"
+                : "/support?support=success",
+            );
             return;
           }
           if (res.status !== 503) {

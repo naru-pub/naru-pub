@@ -18,8 +18,9 @@ export function addPaymentGrace(until: Date): Date {
 }
 
 // Applies a one-time payment: records the ledger row and extends supporter_until,
-// stacking on top of any remaining time (so paying again before expiry adds on
-// rather than resetting). No subscription row — one-time donations don't renew.
+// stacking on top of any remaining time rather than resetting. If recurring
+// billing exists, the same transaction disables it so only prepaid access
+// remains.
 export async function applyOneTimePayment(opts: {
   userId: number;
   amount: number;
@@ -103,6 +104,23 @@ export async function applyOneTimePayment(opts: {
       .updateTable("users")
       .set({ supporter_until: periodEnd })
       .where("id", "=", opts.userId)
+      .execute();
+
+    // A confirmed one-time purchase switches an active recurring supporter to
+    // prepaid access atomically, so the old billing key can never renew at the
+    // boundary that now belongs to the prepaid period.
+    await trx
+      .updateTable("subscriptions")
+      .set({
+        status: "switched_to_one_time",
+        toss_billing_key: null,
+        next_billing_at: null,
+        canceled_at: now,
+        charging_started_at: null,
+        updated_at: now,
+      })
+      .where("user_id", "=", opts.userId)
+      .where("status", "in", ["active", "canceled"])
       .execute();
     return { periodStart, periodEnd };
   });

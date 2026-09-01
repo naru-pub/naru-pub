@@ -27,17 +27,18 @@ export async function POST(_request: NextRequest) {
         { status: 404 },
       );
     }
-    if (sub.status === "canceled") {
+    if (["canceled", "switched_to_one_time"].includes(sub.status)) {
       return NextResponse.json({
         success: true,
-        message: "이미 취소된 후원입니다.",
+        message: "활성화된 정기 후원이 없습니다.",
       });
     }
 
+    const cancelingSchedule = sub.status === "scheduled";
     await db
       .updateTable("subscriptions")
       .set({
-        status: "canceled",
+        status: cancelingSchedule ? "switched_to_one_time" : "canceled",
         toss_billing_key: null,
         canceled_at: new Date(),
         next_billing_at: null,
@@ -48,8 +49,9 @@ export async function POST(_request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message:
-        "후원이 취소되었습니다. 남은 기간 동안은 계속 이용하실 수 있습니다.",
+      message: cancelingSchedule
+        ? "정기 후원 예약이 취소되었습니다."
+        : "후원이 취소되었습니다. 남은 기간 동안은 계속 이용하실 수 있습니다.",
     });
   } catch (error) {
     console.error("Subscription cancel error:", error);

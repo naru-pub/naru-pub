@@ -21,7 +21,7 @@ async function main() {
       "users.email",
       "users.login_name",
     ])
-    .where("subscriptions.status", "=", "active")
+    .where("subscriptions.status", "in", ["active", "scheduled"])
     .where("subscriptions.toss_billing_key", "is not", null)
     .where("subscriptions.next_billing_at", ">", now)
     .where("subscriptions.next_billing_at", "<=", noticeUntil)
