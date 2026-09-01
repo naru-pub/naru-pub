@@ -284,6 +284,41 @@ test("schemas reject invalid writes and owner batch snapshots valid operations",
     await owner.batch([{ type: "set", collection: "posts", id: "one", data }]);
     data.title = "changed";
     assert.equal(JSON.parse(body).operations[0].data.title, "hello");
+    await owner.batch([
+      {
+        type: "update",
+        collection: "posts",
+        id: "one",
+        data: { body: "text" },
+        unset: ["legacy"],
+        ifVersion: 4,
+      },
+      { type: "delete", collection: "posts", id: "two", ifVersion: 1 },
+    ]);
+    assert.deepEqual(JSON.parse(body).operations, [
+      {
+        collection: "posts",
+        id: "one",
+        ifVersion: 4,
+        type: "update",
+        data: { body: "text" },
+        unset: ["legacy"],
+      },
+      { collection: "posts", id: "two", ifVersion: 1, type: "delete" },
+    ]);
+    for (const operation of [
+      { type: "update", collection: "posts", id: "one", data: "text" },
+      { type: "update", collection: "posts", id: "one", data: {}, unset: "a" },
+      { type: "set", collection: "posts", id: "one", data, ifVersion: -1 },
+      { type: "replace", collection: "posts", id: "one", data },
+    ])
+      assert.throws(() => owner.batch([operation]), TypeError);
+    // A patch is a fragment, so the whole-document schema must not judge it.
+    assert.doesNotThrow(() =>
+      owner.batch([
+        { type: "update", collection: "posts", id: "one", data: { body: "x" } },
+      ]),
+    );
   } finally {
     globalThis.window = oldWindow;
     globalThis.fetch = oldFetch;
@@ -509,6 +544,47 @@ test("all() stops instead of paging forever on a repeated cursor", async () => {
     for await (const document of posts.all()) ids.push(document.id);
     assert.deepEqual(ids, ["a", "a"]);
     assert.equal(requests, 2);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("merge patches and conditional writes travel as PATCH and ifVersion", async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: new URL(url), options });
+    return Response.json({ id: "one", version: 2 });
+  };
+  try {
+    const posts = createDatabase({
+      site: "alice",
+      // A schema judges whole documents, so a fragment must not be checked.
+      schemas: { posts: (data) => typeof data?.title === "string" },
+      baseUrl: "https://naru.pub",
+    }).collection("posts");
+    await posts.update("one", { body: "text" }, { unset: ["legacy"] });
+    assert.equal(calls[0].options.method, "PATCH");
+    assert.deepEqual(JSON.parse(calls[0].options.body), {
+      data: { body: "text" },
+      unset: ["legacy"],
+    });
+    assert.equal(calls[0].url.searchParams.has("ifVersion"), false);
+    await posts.set("one", { title: "x" }, { ifVersion: 3 });
+    assert.equal(calls[1].url.searchParams.get("ifVersion"), "3");
+    await posts.delete("one", { ifVersion: 0 });
+    assert.equal(calls[2].options.method, "DELETE");
+    assert.equal(calls[2].url.searchParams.get("ifVersion"), "0");
+    // A conditional delete carries no body: intermediaries may drop one.
+    assert.equal(calls[2].options.body, undefined);
+    for (const bad of [-1, 1.5, "2", null])
+      assert.throws(() => posts.set("one", { title: "x" }, { ifVersion: bad }), TypeError);
+    for (const patch of ["text", [1], null, undefined])
+      assert.throws(() => posts.update("one", patch), TypeError);
+    assert.throws(() => posts.update("one", { a: 1 }, { unset: "a" }), TypeError);
+    // The whole-document schema still guards set().
+    assert.throws(() => posts.set("one", { title: 1 }), TypeError);
+    assert.equal(calls.length, 3);
   } finally {
     globalThis.fetch = original;
   }

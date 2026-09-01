@@ -54,6 +54,25 @@ const segment = (value) => {
     throw new TypeError("Invalid collection or document ID.");
   return encodeURIComponent(value);
 };
+// Conditional writes travel in the URL: DELETE has no body, and intermediaries
+// are free to drop one.
+const condition = (ifVersion) =>
+  ifVersion === undefined ? "" : `?ifVersion=${checkVersion(ifVersion)}`;
+const checkVersion = (value) => {
+  if (!Number.isInteger(value) || value < 0)
+    throw new TypeError("ifVersion must be a non-negative integer.");
+  return value;
+};
+const checkPatch = (patch) => {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch))
+    throw new TypeError("A merge patch must be a plain object.");
+  return patch;
+};
+const checkUnset = (unset) => {
+  if (!Array.isArray(unset) || unset.some((key) => typeof key !== "string"))
+    throw new TypeError("unset must be an array of field names.");
+  return unset;
+};
 const FIELD = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMPARISONS = ["gt", "gte", "lt", "lte"];
 const isScalar = (value) =>
@@ -219,18 +238,31 @@ export function createDatabase({
           const collection = operation.collection;
           segment(collection);
           segment(operation.id);
-          if (operation.type === "set")
+          const base = { collection, id: operation.id };
+          if (operation.ifVersion !== undefined)
+            base.ifVersion = checkVersion(operation.ifVersion);
+          if (operation.type === "set") {
             validateDocument(collection, operation.data);
-          else if (operation.type !== "delete")
-            throw new TypeError("Batch operations must be set or delete.");
-          return operation.type === "set"
-            ? {
-                type: "set",
-                collection,
-                id: operation.id,
-                data: operation.data,
-              }
-            : { type: "delete", collection, id: operation.id };
+            return { ...base, type: "set", data: operation.data };
+          }
+          if (operation.type === "update") {
+            // A patch is a fragment, so whole-document schemas cannot judge it.
+            validateJson(operation.data);
+            checkPatch(operation.data);
+            return {
+              ...base,
+              type: "update",
+              data: operation.data,
+              ...(operation.unset === undefined
+                ? {}
+                : { unset: checkUnset(operation.unset) }),
+            };
+          }
+          if (operation.type !== "delete")
+            throw new TypeError(
+              "Batch operations must be set, update or delete.",
+            );
+          return { ...base, type: "delete" };
         });
         return send(`${root}/_batch`, "POST", { operations: snapshot });
       },
@@ -274,12 +306,32 @@ export function createDatabase({
             validateDocument(collectionName, data);
             return send(path, "POST", { data });
           },
-          set(id, data) {
+          set(id, data, { ifVersion } = {}) {
             validateDocument(collectionName, data);
-            return send(`${path}/${segment(id)}`, "PUT", { data });
+            return send(
+              `${path}/${segment(id)}${condition(ifVersion)}`,
+              "PUT",
+              { data },
+            );
           },
-          delete(id) {
-            return send(`${path}/${segment(id)}`, "DELETE");
+          update(id, patch, { ifVersion, unset } = {}) {
+            // A patch is a fragment, so whole-document schemas cannot judge it.
+            validateJson(patch);
+            checkPatch(patch);
+            return send(
+              `${path}/${segment(id)}${condition(ifVersion)}`,
+              "PATCH",
+              {
+                data: patch,
+                ...(unset === undefined ? {} : { unset: checkUnset(unset) }),
+              },
+            );
+          },
+          delete(id, { ifVersion } = {}) {
+            return send(
+              `${path}/${segment(id)}${condition(ifVersion)}`,
+              "DELETE",
+            );
           },
         };
       },

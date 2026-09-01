@@ -10,7 +10,18 @@ export interface Document<T = Json> {
   data: T;
   created_at: string;
   updated_at: string;
+  /** Increments on every accepted write. Quote it back as `ifVersion`. */
+  version: number;
   metadata: Json;
+}
+export interface Written {
+  id: string;
+  version: number;
+}
+export interface Conditional {
+  /** Reject with a `VERSION_CONFLICT` NaruDataError unless the stored version
+   * still matches. `0` requires that the document not exist yet. */
+  ifVersion?: number;
 }
 export class NaruDataError extends Error {
   /** HTTP status, or 0 when no HTTP response was received. */
@@ -54,17 +65,28 @@ export interface Collection<T = Json> {
   all(options?: Omit<ListOptions, "after">): AsyncIterableIterator<Document<T>>;
   /** Number of matching documents, counted by the server without paging. */
   count(options?: { where?: Filter }): Promise<number>;
-  add(data: T): Promise<{ id: string }>;
-  set(id: string, data: T): Promise<{ id: string }>;
-  delete(id: string): Promise<{ success: true }>;
+  add(data: T): Promise<Written>;
+  set(id: string, data: T, options?: Conditional): Promise<Written>;
+  /** Shallow merge: patch fields replace stored fields and `unset` names are
+   * removed. The document must already exist and hold a JSON object. Schema
+   * validators are not run, because a patch is a fragment. */
+  update(
+    id: string,
+    patch: Partial<T>,
+    options?: Conditional & { unset?: (keyof T & string)[] },
+  ): Promise<Written>;
+  delete(id: string, options?: Conditional): Promise<{ success: true }>;
 }
 export interface Database {
   /** Types describe your schema; reads are not runtime schema validation. */
   collection<T = Json>(name: string): Collection<T>;
 }
-export type BatchOperation =
-  | { type: "set"; collection: string; id: string; data: Json }
-  | { type: "delete"; collection: string; id: string };
+export type BatchOperation = { collection: string; id: string } & Conditional &
+  (
+    | { type: "set"; data: Json }
+    | { type: "update"; data: Json; unset?: string[] }
+    | { type: "delete" }
+  );
 export interface StoredFile {
   id: string;
   name: string;
@@ -108,7 +130,9 @@ export interface OwnerDatabase extends Database {
   /** Atomically applies all operations or none. */
   batch(
     operations: BatchOperation[],
-  ): Promise<{ results: Array<{ id?: string; success?: true }> }>;
+  ): Promise<{
+    results: Array<{ id?: string; version?: number; success?: true }>;
+  }>;
   /** Invalidates this client and attempts storage cleanup before server revocation. Offline revocation may fail. */
   signOut(): Promise<void>;
 }

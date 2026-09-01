@@ -32,6 +32,10 @@ import {
   up as filesUp,
   down as filesDown,
 } from "@/migrations/1788264228670_add_site_data_files";
+import {
+  up as versionUp,
+  down as versionDown,
+} from "@/migrations/1788299234629_add_site_data_document_version";
 
 export async function setupTestDatabase() {
   process.env.FEATURE_ACCESS_MODE = "preview";
@@ -55,8 +59,10 @@ export async function setupTestDatabase() {
   await sessionsUp(db);
   await lifetimeUp(db);
   await filesUp(db);
+  await versionUp(db);
 }
 export async function teardownTestDatabase() {
+  await versionDown(db);
   await filesDown(db);
   await lifetimeDown(db);
   await sessionsDown(db);

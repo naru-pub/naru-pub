@@ -11,7 +11,7 @@ const auth = jest.mocked(
 );
 beforeEach(() => {
   jest.resetAllMocks();
-  execute.mockResolvedValue({ id: "one" });
+  execute.mockResolvedValue({ id: "one", version: 1 });
 });
 
 test("public requests ignore even valid owner cookies", async () => {

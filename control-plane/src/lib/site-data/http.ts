@@ -7,7 +7,7 @@ import { executeMedia } from "./media";
 
 const publicHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "Access-Control-Max-Age": "600",
 };
@@ -56,6 +56,9 @@ export async function dataRequest(
     const body = ["POST", "PUT", "PATCH"].includes(request.method)
       ? await jsonBody(request)
       : undefined;
+    // A conditional write carries its expected version in the URL: DELETE has
+    // no body, and intermediaries are free to drop one.
+    const ifVersion = url.searchParams.get("ifVersion");
     const command = {
       site: site!,
       path: path[0] === "_files" ? path.slice(1) : path,
@@ -66,6 +69,12 @@ export async function dataRequest(
       body,
       where: parseWhereQuery(url.searchParams.get("where")),
       count: url.searchParams.get("count") === "1",
+      ifVersion:
+        ifVersion === null
+          ? undefined
+          : /^\d+$/.test(ifVersion)
+            ? Number(ifVersion)
+            : NaN,
       orderBy: url.searchParams.get("orderBy") ?? undefined,
       direction: url.searchParams.get("direction") ?? undefined,
       after: url.searchParams.get("after") ?? undefined,

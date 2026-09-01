@@ -2,7 +2,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "@jest/globals";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
-import { executeData } from "../service";
+import { executeBatch, executeData } from "../service";
 import { jsonBody, MAX_DOCUMENT_BYTES } from "../validation";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
 
@@ -147,6 +147,174 @@ integration("site database integration", () => {
     await expect(call("GET", ["pages", "a"])).rejects.toMatchObject({
       status: 404,
     });
+  });
+  test("merge patches change named fields only and leave the rest untouched", async () => {
+    await call("POST", [], { name: "notes", read: "world" }, true);
+    const created = await call(
+      "PUT",
+      ["notes", "one"],
+      { data: { title: "first", body: "text", legacy: "drop", keep: [1, 2] } },
+      true,
+    );
+    expect(created).toEqual({ id: "one", version: 1 });
+    const patched = await call(
+      "PATCH",
+      ["notes", "one"],
+      { data: { title: "second", added: null }, unset: ["legacy"] },
+      true,
+    );
+    expect(patched).toEqual({ id: "one", version: 2 });
+    const document = (await call("GET", ["notes", "one"])).document!;
+    // A null in the patch stores null; removal is only ever explicit.
+    expect(document.data).toEqual({
+      title: "second",
+      body: "text",
+      added: null,
+      keep: [1, 2],
+    });
+    expect(document.version).toBe(2);
+    // Size accounting follows the merged document, not the patch.
+    const stored = await sql<{
+      size_bytes: number;
+    }>`select d.size_bytes from site_data_documents d
+      join site_data_collections c on c.id = d.collection_id
+      where c.name = 'notes' and d.id = 'one'`.execute(db);
+    expect(stored.rows[0].size_bytes).toBe(
+      Buffer.byteLength(JSON.stringify(document.data)),
+    );
+    await expect(
+      call("PATCH", ["notes", "missing"], { data: { a: 1 } }, true),
+    ).rejects.toMatchObject({ status: 404 });
+    await call("PUT", ["notes", "scalar"], { data: "text" }, true);
+    await expect(
+      call("PATCH", ["notes", "scalar"], { data: { a: 1 } }, true),
+    ).rejects.toMatchObject({ status: 409, code: "NOT_MERGEABLE" });
+    for (const body of [
+      { data: "text" },
+      { data: [1] },
+      { data: null },
+      { data: { a: 1 }, unset: "legacy" },
+      { data: { a: 1 }, unset: [1] },
+    ])
+      await expect(
+        call("PATCH", ["notes", "one"], body, true),
+      ).rejects.toMatchObject({ status: 400 });
+    await expect(call("PATCH", ["notes", "one"], { data: { a: 1 } })).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+  test("conditional writes reject stale versions and guard creation", async () => {
+    await call("POST", [], { name: "guarded", read: "world" }, true);
+    const created = await call(
+      "PUT",
+      ["guarded", "one"],
+      { data: { round: 1 } },
+      true,
+      { ifVersion: 0 },
+    );
+    expect(created.version).toBe(1);
+    // ifVersion 0 asserts absence, so it cannot clobber an existing document.
+    await expect(
+      call("PUT", ["guarded", "one"], { data: { round: 2 } }, true, {
+        ifVersion: 0,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
+    expect(
+      (
+        await call("PUT", ["guarded", "one"], { data: { round: 2 } }, true, {
+          ifVersion: 1,
+        })
+      ).version,
+    ).toBe(2);
+    // The losing writer of a concurrent edit is told rather than overwriting.
+    await expect(
+      call("PATCH", ["guarded", "one"], { data: { round: 3 } }, true, {
+        ifVersion: 1,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
+    await expect(
+      call("DELETE", ["guarded", "one"], undefined, true, { ifVersion: 1 }),
+    ).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
+    expect((await call("GET", ["guarded", "one"])).document!.data).toEqual({
+      round: 2,
+    });
+    for (const ifVersion of [-1, 1.5, NaN, "2"])
+      await expect(
+        call("PUT", ["guarded", "one"], { data: {} }, true, { ifVersion }),
+      ).rejects.toMatchObject({ status: 400 });
+    await call("DELETE", ["guarded", "one"], undefined, true, { ifVersion: 2 });
+    await expect(call("GET", ["guarded", "one"])).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+  test("batch applies merges and conditional writes atomically", async () => {
+    const batch = (...operations: Record<string, unknown>[]) =>
+      executeBatch({
+        site: "alice",
+        path: [],
+        method: "POST",
+        adminUserId: owner,
+        body: { operations },
+      });
+    await call("POST", [], { name: "batched", read: "world" }, true);
+    await call(
+      "PUT",
+      ["batched", "one"],
+      { data: { title: "a", keep: true } },
+      true,
+    );
+    const applied = await batch(
+      {
+        type: "update",
+        collection: "batched",
+        id: "one",
+        data: { title: "b" },
+        unset: ["keep"],
+      },
+      { type: "set", collection: "batched", id: "two", data: { title: "c" } },
+    );
+    expect(applied.results).toEqual([
+      { id: "one", version: 2 },
+      { id: "two", version: 1 },
+    ]);
+    expect((await call("GET", ["batched", "one"])).document!.data).toEqual({
+      title: "b",
+    });
+    // One stale operation rolls the whole batch back, including earlier writes.
+    await expect(
+      batch(
+        {
+          type: "set",
+          collection: "batched",
+          id: "three",
+          data: { title: "d" },
+        },
+        {
+          type: "update",
+          collection: "batched",
+          id: "one",
+          data: { title: "e" },
+          ifVersion: 1,
+        },
+      ),
+    ).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
+    await expect(call("GET", ["batched", "three"])).rejects.toMatchObject({
+      status: 404,
+    });
+    expect((await call("GET", ["batched", "one"])).document!.data).toEqual({
+      title: "b",
+    });
+    await expect(
+      batch({
+        type: "update",
+        collection: "batched",
+        id: "missing",
+        data: { title: "f" },
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      batch({ type: "replace", collection: "batched", id: "one", data: {} }),
+    ).rejects.toMatchObject({ status: 400 });
   });
   test("rule revocation takes effect on the next request", async () => {
     await call(

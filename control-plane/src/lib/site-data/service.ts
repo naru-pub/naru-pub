@@ -31,7 +31,49 @@ export type DataCommand = {
   direction?: string;
   where?: unknown;
   count?: boolean;
+  ifVersion?: number;
 };
+
+/** `0` asserts the document does not exist yet, so a create cannot clobber. */
+function expectedVersion(value: unknown) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
+    throw new DataError(400, "ifVersion must be a non-negative integer.");
+  return value;
+}
+function matchVersion(expected: number, actual: number | undefined) {
+  if (expected !== (actual ?? 0))
+    throw new DataError(
+      409,
+      "Document version does not match ifVersion.",
+      "VERSION_CONFLICT",
+    );
+}
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+/** Shallow merge: patch fields replace stored fields, `unset` names removed. */
+function merge(
+  existing: { data: unknown } | undefined,
+  body: Record<string, unknown>,
+) {
+  if (!existing) throw new DataError(404, "Document not found.");
+  if (!isObject(body.data))
+    throw new DataError(400, "A merge patch must be a JSON object.");
+  if (!isObject(existing.data))
+    throw new DataError(
+      409,
+      "Only object documents can be merged.",
+      "NOT_MERGEABLE",
+    );
+  const unset = body.unset ?? [];
+  if (!Array.isArray(unset) || unset.some((key) => typeof key !== "string"))
+    throw new DataError(400, "unset must be an array of field names.");
+  const merged: Record<string, unknown> = { ...existing.data, ...body.data };
+  // Removal is explicit: a null in the patch stores null rather than deleting.
+  for (const key of unset) delete merged[key as string];
+  return merged;
+}
 
 function filterConditions(filter: ReturnType<typeof filters>) {
   const conditions = [];
@@ -165,7 +207,7 @@ export async function executeData(command: DataCommand) {
       if (path.length === 2) {
         const document = await documents()
           .where("id", "=", path[1])
-          .select(["id", "data", "created_at", "updated_at"])
+          .select(["id", "data", "created_at", "updated_at", "version"])
           .executeTakeFirst();
         if (!document) throw new DataError(404, "Document not found.");
         return { document };
@@ -196,7 +238,7 @@ export async function executeData(command: DataCommand) {
         ? sql`coalesce(data -> ${sort.field}, 'null'::jsonb)`
         : sql.ref(sort.orderBy);
       let query = documents()
-        .select(["id", "data", "created_at", "updated_at"])
+        .select(["id", "data", "created_at", "updated_at", "version"])
         .select(
           (sort.orderBy === "id"
             ? sql<string | null>`null`
@@ -241,7 +283,16 @@ export async function executeData(command: DataCommand) {
     const creating = method === "POST" && path.length === 1;
     if (!(creating && collection.write_access === "create"))
       authorize(collection.write_access, admin);
+    const expected = expectedVersion(command.ifVersion);
+    const current = (id: string) =>
+      documents()
+        .where("id", "=", id)
+        .select(["size_bytes", "data", "version"])
+        .executeTakeFirst();
     if (method === "DELETE" && path.length === 2) {
+      if (expected !== undefined)
+        // The owner row is locked, so nothing can write between check and delete.
+        matchVersion(expected, (await current(path[1]))?.version);
       await tx
         .deleteFrom("site_data_documents")
         .where("collection_id", "=", collection.id)
@@ -249,26 +300,21 @@ export async function executeData(command: DataCommand) {
         .execute();
       return { success: true };
     }
-    if (
-      !(
-        (method === "POST" && path.length === 1) ||
-        (method === "PUT" && path.length === 2)
-      )
-    )
+    const patching = method === "PATCH" && path.length === 2;
+    if (!(creating || (method === "PUT" && path.length === 2) || patching))
       throw new DataError(405, "Method not allowed.");
     if (!Object.hasOwn(body, "data"))
       throw new DataError(400, "data is required.");
     if (creating && !admin)
       await limitPublicCreate(tx, owner.id, command.clientIp);
     const id = path[1] ?? randomUUID();
-    const encoded = JSON.stringify(body.data);
+    const existing = await current(id);
+    if (expected !== undefined) matchVersion(expected, existing?.version);
+    const data = patching ? merge(existing, body) : body.data;
+    const encoded = JSON.stringify(data);
     const size = Buffer.byteLength(encoded);
     if (size > MAX_DOCUMENT_BYTES)
       throw new DataError(413, "Document exceeds 64 KiB.");
-    const existing = await documents()
-      .where("id", "=", id)
-      .select("size_bytes")
-      .executeTakeFirst();
     const usage = await tx
       .selectFrom("site_data_documents as d")
       .innerJoin("site_data_collections as c", "c.id", "d.collection_id")
@@ -291,27 +337,35 @@ export async function executeData(command: DataCommand) {
       data: sql`${encoded}::jsonb`,
       size_bytes: size,
     });
+    let version = 1;
     if (creating) {
       // Never overwrite a document, even in the event of an ID collision.
       const inserted = await insert
         .onConflict((oc) => oc.columns(["collection_id", "id"]).doNothing())
-        .returning("id")
+        .returning("version")
         .executeTakeFirst();
       if (!inserted)
         throw new DataError(409, "Document ID collision. Retry creation.");
+      version = inserted.version;
     } else {
-      await insert
-        .onConflict((oc) =>
-          oc.columns(["collection_id", "id"]).doUpdateSet({
-            data: sql`${encoded}::jsonb`,
-            size_bytes: size,
-            updated_at: new Date(),
-          }),
-        )
-        .execute();
+      version = (
+        await insert
+          .onConflict((oc) =>
+            oc.columns(["collection_id", "id"]).doUpdateSet({
+              data: sql`${encoded}::jsonb`,
+              size_bytes: size,
+              updated_at: new Date(),
+              // Every accepted write advances the version conditional writes quote.
+              version: sql`site_data_documents.version + 1`,
+            }),
+          )
+          .returning("version")
+          .executeTakeFirstOrThrow()
+      ).version;
     }
     // Do not read/return stored data: write-only callers may not read it.
-    return { id };
+    // The version is write metadata, not content, and conditional writes need it.
+    return { id, version };
   });
 }
 
@@ -351,7 +405,7 @@ export async function executeBatch(command: DataCommand) {
       .selectAll()
       .where("user_id", "=", owner.id)
       .execute();
-    const results: { id?: string; success?: true }[] = [];
+    const results: { id?: string; version?: number; success?: true }[] = [];
     for (const raw of operations) {
       if (!raw || typeof raw !== "object" || Array.isArray(raw))
         throw new DataError(400, "Invalid batch operation.");
@@ -370,6 +424,20 @@ export async function executeBatch(command: DataCommand) {
           "COLLECTION_NOT_AUTHORIZED",
         );
       authorize(collection.write_access, true);
+      const expected = expectedVersion(operation.ifVersion);
+      const merging = operation.type === "update";
+      // The batch holds the owner lock, so a read here cannot go stale before
+      // the write that follows it.
+      const existing =
+        expected !== undefined || merging
+          ? await tx
+              .selectFrom("site_data_documents")
+              .where("collection_id", "=", collection.id)
+              .where("id", "=", id)
+              .select(["data", "version"])
+              .executeTakeFirst()
+          : undefined;
+      if (expected !== undefined) matchVersion(expected, existing?.version);
       if (operation.type === "delete") {
         await tx
           .deleteFrom("site_data_documents")
@@ -379,13 +447,21 @@ export async function executeBatch(command: DataCommand) {
         results.push({ success: true });
         continue;
       }
-      if (operation.type !== "set" || !Object.hasOwn(operation, "data"))
-        throw new DataError(400, "Batch operations must be set or delete.");
-      const encoded = JSON.stringify(operation.data);
+      if (
+        !(operation.type === "set" || merging) ||
+        !Object.hasOwn(operation, "data")
+      )
+        throw new DataError(
+          400,
+          "Batch operations must be set, update or delete.",
+        );
+      const encoded = JSON.stringify(
+        merging ? merge(existing, operation) : operation.data,
+      );
       const size = Buffer.byteLength(encoded);
       if (size > MAX_DOCUMENT_BYTES)
         throw new DataError(413, "Document exceeds 64 KiB.");
-      await tx
+      const written = await tx
         .insertInto("site_data_documents")
         .values({
           collection_id: collection.id,
@@ -398,10 +474,12 @@ export async function executeBatch(command: DataCommand) {
             data: sql`${encoded}::jsonb`,
             size_bytes: size,
             updated_at: new Date(),
+            version: sql`site_data_documents.version + 1`,
           }),
         )
-        .execute();
-      results.push({ id });
+        .returning("version")
+        .executeTakeFirstOrThrow();
+      results.push({ id, version: written.version });
     }
     const usage = await tx
       .selectFrom("site_data_documents as d")

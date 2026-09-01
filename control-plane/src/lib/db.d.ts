@@ -243,6 +243,7 @@ export interface SiteDataDocuments {
   data: unknown;
   size_bytes: number;
   updated_at: Generated<Timestamp>;
+  version: Generated<number>;
 }
 
 export interface SiteDataClients {
