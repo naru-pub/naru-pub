@@ -1,27 +1,61 @@
-services:
-  proxy:
-    build: ./proxy
-    container_name: naru-pub-proxy
-    restart: always
-    ports:
-      - "40001:5000"
-    env_file: .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+x-control-plane: &control-plane
+  image: naru-pub-control-plane:latest
+  build: ./control-plane
+  restart: always
+  env_file: .env
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  healthcheck:
+    test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+    start_period: 5s
 
-  control-plane:
-    build: ./control-plane
-    container_name: naru-pub-control-plane
+x-proxy: &proxy
+  image: naru-pub-proxy:latest
+  build: ./proxy
+  restart: always
+  env_file: .env
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  healthcheck:
+    test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/5000'"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+    start_period: 5s
+
+services:
+  gateway:
+    image: nginx:1.30.4-alpine
+    container_name: naru-pub-gateway
     restart: always
     ports:
       - "40000:3000"
-    env_file: .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "40001:5000"
+    volumes:
+      - ./.deploy-state/nginx:/etc/nginx/conf.d:ro
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  control-plane-blue:
+    <<: *control-plane
+
+  control-plane-green:
+    <<: *control-plane
+
+  proxy-blue:
+    <<: *proxy
+
+  proxy-green:
+    <<: *proxy
 
   cron:
-    build: ./control-plane
-    container_name: naru-pub-cron
+    image: naru-pub-control-plane:latest
     restart: always
     command: ["pnpm", "run", "cron"]
     env_file: .env
@@ -29,8 +63,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   worker:
-    build: ./control-plane
-    container_name: naru-pub-worker
+    image: naru-pub-control-plane:latest
     restart: always
     command: ["pnpm", "run", "worker"]
     env_file: .env
