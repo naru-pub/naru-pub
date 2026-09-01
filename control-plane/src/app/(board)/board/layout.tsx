@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BusinessFooter } from "@/components/BusinessFooter";
 
 export const metadata: Metadata = {
   title: "나루",
@@ -14,6 +15,7 @@ export default async function RootLayout({
     <html lang="ko">
       <body className="font-mono">
         <main>{children}</main>
+        <BusinessFooter />
       </body>
     </html>
   );
