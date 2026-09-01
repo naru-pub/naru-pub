@@ -42,10 +42,7 @@ export default async function SupportPage() {
         <SupportCard
           clientKey={process.env.TOSS_CLIENT_KEY ?? ""}
           comp={entitlement.comp}
-          supportActive={
-            entitlement.supporterUntil != null &&
-            entitlement.supporterUntil.getTime() > Date.now()
-          }
+          supportActive={entitlement.paid}
           supporterUntil={
             entitlement.supporterUntil
               ? entitlement.supporterUntil.toISOString()

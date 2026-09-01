@@ -5,20 +5,17 @@ import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { CheckCircle, XCircle, Loader } from "lucide-react";
 
+type Outcome = { status: "success" | "error"; message: string };
+
 export default function VerifyEmailPage() {
   const searchParams = useSearchParams();
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
-  const [message, setMessage] = useState("");
+  const token = searchParams.get("token");
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
 
   useEffect(() => {
-    const token = searchParams.get("token");
-    if (!token) {
-      setStatus("error");
-      setMessage("유효하지 않은 인증 링크입니다.");
-      return;
-    }
-
-    // Call the verify email API
+    if (!token) return;
+    // A late response must not land on an unmounted page or a newer token.
+    let current = true;
     fetch("/api/account/verify-email", {
       method: "POST",
       headers: {
@@ -28,19 +25,31 @@ export default function VerifyEmailPage() {
     })
       .then((response) => response.json())
       .then((result) => {
-        if (result.success) {
-          setStatus("success");
-          setMessage(result.message);
-        } else {
-          setStatus("error");
-          setMessage(result.message);
-        }
+        if (current)
+          setOutcome({
+            status: result.success ? "success" : "error",
+            message: result.message,
+          });
       })
       .catch(() => {
-        setStatus("error");
-        setMessage("이메일 인증 중 오류가 발생했습니다.");
+        if (current)
+          setOutcome({
+            status: "error",
+            message: "이메일 인증 중 오류가 발생했습니다.",
+          });
       });
-  }, [searchParams]);
+    return () => {
+      current = false;
+    };
+  }, [token]);
+
+  // A missing token is knowable from the URL, so it is derived rather than
+  // pushed into state by an effect.
+  const resolved: Outcome | null = token
+    ? outcome
+    : { status: "error", message: "유효하지 않은 인증 링크입니다." };
+  const status = resolved?.status ?? "loading";
+  const message = resolved?.message ?? "";
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
@@ -65,11 +74,11 @@ export default function VerifyEmailPage() {
               <h2 className="text-xl font-semibold text-green-700 dark:text-green-400 mb-2">
                 인증 완료
               </h2>
-              <p className="text-green-600 dark:text-green-500 mb-6">{message}</p>
+              <p className="text-green-600 dark:text-green-500 mb-6">
+                {message}
+              </p>
               <Button asChild className="w-full">
-                <a href="/account">
-                  계정 관리로 이동
-                </a>
+                <a href="/account">계정 관리로 이동</a>
               </Button>
             </div>
           )}
@@ -82,9 +91,7 @@ export default function VerifyEmailPage() {
               </h2>
               <p className="text-red-600 dark:text-red-500 mb-6">{message}</p>
               <Button variant="outline" asChild className="w-full">
-                <a href="/account">
-                  계정 관리로 이동
-                </a>
+                <a href="/account">계정 관리로 이동</a>
               </Button>
             </div>
           )}

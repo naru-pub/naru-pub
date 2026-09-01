@@ -14,11 +14,7 @@ export const PLAN_FEATURES: Record<string, Feature[]> = {
   // To add a richer tier later, add another plan key with its feature list.
 };
 
-const PREVIEW_FEATURES: Feature[] = [
-  "custom_domains",
-  "analytics",
-  "database",
-];
+const PREVIEW_FEATURES: Feature[] = ["custom_domains", "analytics", "database"];
 
 // null means the rollout gate is inactive and supporter entitlements apply.
 export function previewFeatureAccess(
@@ -36,6 +32,8 @@ export function previewFeatureAccess(
 export type UserEntitlement = {
   isSupporter: boolean;
   comp: boolean;
+  /** Paid through a date still in the future, before any grace window. */
+  paid: boolean;
   plan: string | null;
   supporterUntil: Date | null;
   graceEndsAt: Date | null;
@@ -62,6 +60,7 @@ export async function getUserEntitlement(
     return {
       isSupporter: false,
       comp: false,
+      paid: false,
       plan: null,
       supporterUntil: null,
       graceEndsAt: null,
@@ -84,6 +83,7 @@ export async function getUserEntitlement(
   return {
     isSupporter,
     comp,
+    paid,
     plan,
     supporterUntil,
     graceEndsAt,

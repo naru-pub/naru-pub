@@ -77,7 +77,7 @@ export default function LoginPage() {
             }
           } catch {}
         }
-        location.href = destination;
+        window.location.assign(destination);
       } else {
         toast.error(res.message);
       }
