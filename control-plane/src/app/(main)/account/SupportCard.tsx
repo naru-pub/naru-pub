@@ -218,59 +218,59 @@ export default function SupportCard({
               </div>
             ) : null}
 
-            <div className="space-y-2">
-              {!isActive && (
-                <>
-                  <p className="text-xs text-muted-foreground">정기 후원</p>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <Button
-                      onClick={() => subscribe("month")}
-                      disabled={pending}
-                      className="flex-1"
-                    >
-                      월 1,000원 후원
-                    </Button>
-                    <Button
-                      onClick={() => subscribe("year")}
-                      disabled={pending}
-                      className="flex-1"
-                    >
-                      연 10,000원 후원 (2개월 무료)
-                    </Button>
-                  </div>
-                </>
-              )}
-              <p className="text-xs text-muted-foreground pt-1">한 번만 후원</p>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <label className="flex items-center gap-2 border border-border bg-background px-3 py-2 text-sm sm:w-40">
-                  <span className="shrink-0 text-muted-foreground">기간</span>
-                  <select
-                    value={oneTimeYears}
-                    onChange={(event) =>
-                      setOneTimeYears(Number(event.target.value))
-                    }
+            {!isActive && !supportActive && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">정기 후원</p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Button
+                    onClick={() => subscribe("month")}
                     disabled={pending}
-                    className="min-w-0 flex-1 bg-transparent font-medium outline-none"
-                    aria-label="일회성 후원 기간"
+                    className="flex-1"
                   >
-                    {[1, 2, 3, 5].map((years) => (
-                      <option key={years} value={years}>
-                        {years}년
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <Button
-                  onClick={donateOnce}
-                  disabled={pending}
-                  variant="outline"
-                  className="flex-1"
-                >
-                  {(oneTimeYears * 12000).toLocaleString("ko-KR")}원 결제 (자동
-                  갱신 없음)
-                </Button>
+                    월 1,000원 후원
+                  </Button>
+                  <Button
+                    onClick={() => subscribe("year")}
+                    disabled={pending}
+                    className="flex-1"
+                  >
+                    연 10,000원 후원 (2개월 무료)
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground pt-1">
+                  한 번만 후원
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <label className="flex items-center gap-2 border border-border bg-background px-3 py-2 text-sm sm:w-40">
+                    <span className="shrink-0 text-muted-foreground">기간</span>
+                    <select
+                      value={oneTimeYears}
+                      onChange={(event) =>
+                        setOneTimeYears(Number(event.target.value))
+                      }
+                      disabled={pending}
+                      className="min-w-0 flex-1 bg-transparent font-medium outline-none"
+                      aria-label="일회성 후원 기간"
+                    >
+                      {[1, 2, 3, 5].map((years) => (
+                        <option key={years} value={years}>
+                          {years}년
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <Button
+                    onClick={donateOnce}
+                    disabled={pending}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    {(oneTimeYears * 12000).toLocaleString("ko-KR")}원 결제
+                    (자동 갱신 없음)
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </CardContent>

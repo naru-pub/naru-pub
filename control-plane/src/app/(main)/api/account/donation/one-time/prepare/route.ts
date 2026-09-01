@@ -8,6 +8,7 @@ import {
   oneTimeAmount,
   oneTimeOrderName,
 } from "@/lib/toss";
+import { canStartSupportPurchase } from "@/lib/support-purchases";
 
 // One-time donation step 1: returns a server-generated orderId + the
 // authoritative amount for requestPayment.
@@ -36,9 +37,30 @@ export async function POST(request: NextRequest) {
     // Ensure a stable customerKey for dashboard linkage (optional for one-time).
     const userRow = await db
       .selectFrom("users")
-      .select("toss_customer_key")
+      .select(["supporter_comp", "supporter_until", "toss_customer_key"])
       .where("id", "=", user.id)
       .executeTakeFirst();
+    const activeSubscription = await db
+      .selectFrom("subscriptions")
+      .select("id")
+      .where("user_id", "=", user.id)
+      .where("status", "=", "active")
+      .executeTakeFirst();
+    if (
+      !canStartSupportPurchase({
+        supporterComp: !!userRow?.supporter_comp,
+        supporterUntil: userRow?.supporter_until ?? null,
+        hasActiveSubscription: !!activeSubscription,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "현재 후원 기간이 끝난 뒤 새 후원을 시작할 수 있습니다.",
+        },
+        { status: 409 },
+      );
+    }
     let customerKey = userRow?.toss_customer_key ?? null;
     if (!customerKey) {
       customerKey = randomUUID();
