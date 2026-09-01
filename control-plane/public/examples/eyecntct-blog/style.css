@@ -155,6 +155,29 @@ main {
   font-size: 31px;
   margin: 0;
 }
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.category-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.category-filter select {
+  min-width: 150px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  padding: 9px 34px 9px 14px;
+}
+.category-filter select:disabled {
+  opacity: 0.6;
+}
 .featured-section {
   padding: 28px 0 76px;
 }
@@ -475,6 +498,21 @@ main {
   }
   .featured-track {
     grid-auto-columns: 82vw;
+  }
+  .section-heading {
+    align-items: flex-start;
+    gap: 18px;
+  }
+  .section-actions {
+    align-items: flex-end;
+    flex-direction: column-reverse;
+  }
+  .category-filter span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
   }
   .calendar-day {
     min-height: 82px;

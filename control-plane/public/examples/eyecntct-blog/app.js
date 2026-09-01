@@ -6,6 +6,7 @@ const state = {
   owner: null,
   posts: [],
   categories: [],
+  categoryFilter: "",
   guests: [],
   month: new Date(),
   busy: false,
@@ -181,6 +182,24 @@ async function listAll(collection, options = {}) {
   } while (after && documents.length < 1000);
   return documents;
 }
+function postsFromDocuments(documents) {
+  return documents.map((doc) => {
+    const data =
+      doc.data && typeof doc.data === "object" && !Array.isArray(doc.data)
+        ? doc.data
+        : {};
+    return { id: doc.id, createdAt: doc.created_at, ...data };
+  });
+}
+async function loadPosts(categoryId = "") {
+  const documents = await listAll(state.db.collection("posts"), {
+    orderBy: "created_at",
+    direction: "desc",
+    ...(categoryId ? { where: { categoryId } } : {}),
+  });
+  state.categoryFilter = categoryId;
+  state.posts = postsFromDocuments(documents);
+}
 async function load() {
   try {
     state.db = await connect();
@@ -204,17 +223,7 @@ async function load() {
       .map((doc) => normalizeCategory({ id: doc.id, ...doc.data }))
       .filter((category) => category.name)
       .sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    state.posts = posts.map((doc) => {
-      const data =
-        doc.data && typeof doc.data === "object" && !Array.isArray(doc.data)
-          ? doc.data
-          : {};
-      return {
-        id: doc.id,
-        createdAt: doc.created_at,
-        ...data,
-      };
-    });
+    state.posts = postsFromDocuments(posts);
     state.guests = guests.map((doc) => ({
       id: doc.id,
       createdAt: doc.created_at,
@@ -277,6 +286,7 @@ async function load() {
       }
     }
     populateCategoryOptions();
+    populateCategoryFilter();
     renderProfile(profile?.data || fallbackProfile);
     render();
     setOwnerUI();
@@ -320,7 +330,7 @@ function renderFeatured() {
   const root = $("featuredPosts");
   root.replaceChildren();
   if (!state.posts.length) {
-    root.innerHTML = '<div class="empty-card">아직 둥지에 기록이 없어요.</div>';
+    root.innerHTML = `<div class="empty-card">${state.categoryFilter ? "이 카테고리에는 아직 기록이 없어요." : "아직 둥지에 기록이 없어요."}</div>`;
     return;
   }
   state.posts.slice(0, 8).forEach((post) => {
@@ -418,6 +428,25 @@ function populateCategoryOptions() {
   custom.textContent = "새 카테고리…";
   $("categoryInput").append(custom);
 }
+function populateCategoryFilter() {
+  const select = $("categoryFilter");
+  select.replaceChildren();
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "전체 기록";
+  select.append(all);
+  for (const category of state.categories) {
+    const option = document.createElement("option");
+    option.value = category.id;
+    option.textContent = category.name;
+    select.append(option);
+  }
+  select.value = state.categories.some(
+    (category) => category.id === state.categoryFilter,
+  )
+    ? state.categoryFilter
+    : "";
+}
 function syncCategoryEditor() {
   const custom = $("categoryInput").value === "__new";
   $("newCategoryInput").disabled = !custom;
@@ -493,6 +522,27 @@ $("todayButton").onclick = () => {
 $("categoryInput").onchange = () => {
   syncCategoryEditor();
   if (!$("newCategoryInput").disabled) $("newCategoryInput").focus();
+};
+$("categoryFilter").onchange = async (event) => {
+  if (state.busy) return;
+  state.busy = true;
+  const select = event.currentTarget;
+  select.disabled = true;
+  notice("카테고리 기록을 불러오고 있습니다…");
+  try {
+    await loadPosts(select.value);
+    renderFeatured();
+    renderCalendar();
+    notice(
+      `${select.selectedOptions[0].textContent} · ${state.posts.length}개 기록`,
+    );
+  } catch (error) {
+    select.value = state.categoryFilter;
+    notice(`카테고리를 불러오지 못했습니다. ${error.message || error}`);
+  } finally {
+    select.disabled = false;
+    state.busy = false;
+  }
 };
 function insertEditorText(before, after = "", placeholder = "텍스트") {
   const editor = $("bodyInput");
@@ -588,11 +638,15 @@ $("editorForm").onsubmit = (event) => {
       state.categories.push(category);
       state.categories.sort((a, b) => a.name.localeCompare(b.name, "ko"));
       populateCategoryOptions();
+      populateCategoryFilter();
     } else await state.owner.collection("posts").set(id, post);
     const existing = state.posts.findIndex((p) => p.id === id);
-    if (existing >= 0)
+    const visible =
+      !state.categoryFilter || post.categoryId === state.categoryFilter;
+    if (!visible && existing >= 0) state.posts.splice(existing, 1);
+    else if (existing >= 0)
       state.posts[existing] = { ...state.posts[existing], ...post };
-    else
+    else if (visible)
       state.posts.unshift({ id, createdAt: new Date().toISOString(), ...post });
     $("editorDialog").close();
     render();

@@ -46,14 +46,22 @@
             <p class="eyebrow">Recently nested</p>
             <h2 id="featuredTitle">최근 기록</h2>
           </div>
-          <button
-            class="text-button owner-only"
-            id="newPostButton"
-            type="button"
-            hidden
-          >
-            새 글 쓰기
-          </button>
+          <div class="section-actions">
+            <label class="category-filter">
+              <span>카테고리</span>
+              <select id="categoryFilter" aria-label="카테고리별 글 필터">
+                <option value="">전체 기록</option>
+              </select>
+            </label>
+            <button
+              class="text-button owner-only"
+              id="newPostButton"
+              type="button"
+              hidden
+            >
+              새 글 쓰기
+            </button>
+          </div>
         </div>
         <div
           class="featured-track"
