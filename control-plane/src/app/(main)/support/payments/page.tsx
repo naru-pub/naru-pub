@@ -118,7 +118,7 @@ export default async function PaymentsPage() {
           </Button>
           {PAYMENT_OPERATOR_USERS.has(user.loginName) ? (
             <Button asChild variant="outline" size="sm">
-              <Link href="/support/payments/operator">결제 운영</Link>
+              <Link href="/admin">결제 운영</Link>
             </Button>
           ) : null}
         </div>
