@@ -159,7 +159,8 @@ export default function SupportCard({
         <div className="text-sm text-muted-foreground space-y-2">
           <p>
             나루는 후원으로 굴러가는 작은 인디웹 서비스입니다. 후원해 주시면
-            커스텀 도메인 같은 후원자 기능을 쓰실 수 있습니다 🌱
+            커스텀 도메인, 데이터베이스, 방문자 현황 기능을 쓰실 수 있습니다
+            🌱
           </p>
         </div>
 
