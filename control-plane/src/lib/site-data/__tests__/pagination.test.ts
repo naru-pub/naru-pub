@@ -132,7 +132,10 @@ integration("sorted database pagination", () => {
   });
   test("sort inputs are allowlisted and legacy ID cursors remain supported", async () => {
     for (const extra of [
-      { orderBy: "data.title" },
+      { orderBy: "data." },
+      { orderBy: "data.nested.title" },
+      { orderBy: "data.title; drop table users" },
+      { orderBy: "data title" },
       { orderBy: "id; drop table users" },
       { direction: "sideways" },
       { orderBy: "" },
@@ -179,6 +182,74 @@ integration("sorted database pagination", () => {
         adminUserId: undefined,
       }),
     ).rejects.toMatchObject({ status: 403 });
+  });
+  test("document field ordering stays total across missing fields, ties and value types", async () => {
+    await call("POST", [], { body: { name: "notes", read: "world" } });
+    for (const [id, data] of [
+      ["missing", { title: "z" }],
+      ["null", { date: null }],
+      ["early", { date: "2026-01-01" }],
+      ["tieA", { date: "2026-06-01" }],
+      ["tieB", { date: "2026-06-01" }],
+      ["late", { date: "2026-12-31" }],
+      ["numeric", { date: 20260101 }],
+    ] as const)
+      await call("PUT", ["notes", id], { body: { data } });
+    // JSONB sorts null below strings below numbers; an absent field sorts with
+    // null and IDs break ties, so every document has one stable position.
+    const ascending = [
+      "missing",
+      "null",
+      "early",
+      "tieA",
+      "tieB",
+      "late",
+      "numeric",
+    ];
+    for (const direction of ["asc", "desc"]) {
+      const ids: string[] = [];
+      let after: string | undefined;
+      do {
+        const page = await call("GET", ["notes"], {
+          orderBy: "data.date",
+          direction,
+          limit: 2,
+          after,
+          adminUserId: undefined,
+        });
+        ids.push(...page.documents!.map((d) => d.id));
+        expect(page.documents![0]).not.toHaveProperty("cursor_value");
+        after = page.nextCursor ?? undefined;
+        expect(ids.length).toBeLessThanOrEqual(ascending.length);
+      } while (after);
+      expect(ids).toEqual(
+        direction === "asc" ? ascending : [...ascending].reverse(),
+      );
+    }
+  });
+  test("field cursors are bound to the ordering field", async () => {
+    await call("POST", [], { body: { name: "notes", read: "world" } });
+    for (const id of ["one", "two"])
+      await call("PUT", ["notes", id], {
+        body: { data: { date: id, title: id } },
+      });
+    const first = await call("GET", ["notes"], {
+      orderBy: "data.date",
+      limit: 1,
+    });
+    expect(first.nextCursor).toEqual(expect.any(String));
+    for (const orderBy of ["data.title", "created_at", "id"])
+      await expect(
+        call("GET", ["notes"], { orderBy, after: first.nextCursor }),
+      ).rejects.toMatchObject({ status: 400 });
+    expect(
+      (
+        await call("GET", ["notes"], {
+          orderBy: "data.date",
+          after: first.nextCursor,
+        })
+      ).documents!.map((d) => d.id),
+    ).toEqual(["two"]);
   });
   test("migration backfills creation time without changing data and supports rollback", async () => {
     await down(db);

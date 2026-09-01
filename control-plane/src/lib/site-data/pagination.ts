@@ -1,23 +1,32 @@
 import { DataError, name, NAME } from "./validation";
 
-export type OrderBy = "id" | "created_at" | "updated_at";
+export type Column = "id" | "created_at" | "updated_at";
 export type Direction = "asc" | "desc";
-export function sorting(orderBy = "id", direction = "asc") {
-  if (
-    !["id", "created_at", "updated_at"].includes(orderBy) ||
-    !["asc", "desc"].includes(direction)
-  )
+export type Sort = {
+  /** Cursor identity: the caller's orderBy verbatim. */
+  orderBy: string;
+  direction: Direction;
+  /** Set when ordering by a document field rather than a column. */
+  field?: string;
+};
+const COLUMNS: Column[] = ["id", "created_at", "updated_at"];
+const DATA_ORDER = /^data\.([a-zA-Z0-9_-]{1,64})$/;
+
+export function sorting(orderBy = "id", direction = "asc"): Sort {
+  if (!["asc", "desc"].includes(direction))
+    throw new DataError(400, "Use direction=asc or desc.");
+  const field = DATA_ORDER.exec(orderBy)?.[1];
+  if (!field && !COLUMNS.includes(orderBy as Column))
     throw new DataError(
       400,
-      "Use orderBy=id, created_at or updated_at and direction=asc or desc.",
+      "Use orderBy=id, created_at, updated_at or data.<field>.",
     );
-  return { orderBy: orderBy as OrderBy, direction: direction as Direction };
+  return { orderBy, direction: direction as Direction, field };
 }
 
 export function encodeCursor(
   collection: number,
-  orderBy: OrderBy,
-  direction: Direction,
+  sort: Sort,
   id: string,
   value: string | null,
   fingerprint?: string,
@@ -27,8 +36,8 @@ export function encodeCursor(
     Buffer.from(
       JSON.stringify({
         c: collection,
-        s: orderBy,
-        d: direction,
+        s: sort.orderBy,
+        d: sort.direction,
         i: id,
         t: value,
         f: fingerprint,
@@ -39,8 +48,7 @@ export function encodeCursor(
 export function decodeCursor(
   after: string | undefined,
   collection: number,
-  orderBy: OrderBy,
-  direction: Direction,
+  sort: Sort,
   fingerprint?: string,
 ) {
   if (after === undefined) return null;
@@ -48,8 +56,8 @@ export function decodeCursor(
   if (
     !fingerprint &&
     NAME.test(after) &&
-    orderBy === "id" &&
-    direction === "asc"
+    sort.orderBy === "id" &&
+    sort.direction === "asc"
   )
     return { id: after, value: null };
   try {
@@ -60,13 +68,18 @@ export function decodeCursor(
     );
     if (
       cursor.c !== collection ||
-      cursor.s !== orderBy ||
-      cursor.d !== direction ||
+      cursor.s !== sort.orderBy ||
+      cursor.d !== sort.direction ||
       cursor.f !== fingerprint
     )
       throw new Error();
     name(cursor.i);
-    if (orderBy === "id") {
+    if (sort.field) {
+      // The anchor is the field's JSONB text, compared as JSONB again on the
+      // way in, so PostgreSQL's own rendering round-trips exactly.
+      if (typeof cursor.t !== "string") throw new Error();
+      JSON.parse(cursor.t);
+    } else if (sort.orderBy === "id") {
       if (cursor.t !== null) throw new Error();
     } else {
       // Preserve PostgreSQL microseconds; Date alone would lose cursor precision.

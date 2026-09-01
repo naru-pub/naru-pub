@@ -20,17 +20,40 @@ export class NaruDataError extends Error {
   cause?: unknown;
   constructor(status: number, message: string, code?: string);
 }
+/** Range bounds compare within one JSONB type: a string bound never matches a
+ * numeric field, and documents missing the field are excluded. */
+export interface RangeFilter {
+  gt?: string | number;
+  gte?: string | number;
+  lt?: string | number;
+  lte?: string | number;
+}
+/** Up to 5 predicates on top-level fields, combined with AND. A scalar is an
+ * exact equality match; a comparison object is a range. Both bounds of one
+ * range must share a type. */
+export type Filter = Record<string, string | number | boolean | null | RangeFilter>;
+/** `data.<field>` sorts on a top-level document field. Absent fields sort with
+ * JSON null, below strings, which sort below numbers. */
+export type OrderBy = "id" | "created_at" | "updated_at" | `data.${string}`;
+export interface QueryOptions {
+  where?: Filter;
+  orderBy?: OrderBy;
+  direction?: "asc" | "desc";
+}
+export interface ListOptions extends QueryOptions {
+  limit?: number;
+  /** Opaque cursor from the same collection, sort order and filters. */
+  after?: string;
+}
 export interface Collection<T = Json> {
   get(id: string): Promise<Document<T>>;
-  list(options?: {
-    limit?: number;
-    /** Opaque cursor from the same collection, sort order and filters. */
-    after?: string;
-    /** Up to 5 top-level scalar equality filters, combined with AND. */
-    where?: Record<string, string | number | boolean | null>;
-    orderBy?: "id" | "created_at" | "updated_at";
-    direction?: "asc" | "desc";
-  }): Promise<{ documents: Document<T>[]; nextCursor: string | null }>;
+  list(
+    options?: ListOptions,
+  ): Promise<{ documents: Document<T>[]; nextCursor: string | null }>;
+  /** Every matching document, paging on demand. `limit` is the page size. */
+  all(options?: Omit<ListOptions, "after">): AsyncIterableIterator<Document<T>>;
+  /** Number of matching documents, counted by the server without paging. */
+  count(options?: { where?: Filter }): Promise<number>;
   add(data: T): Promise<{ id: string }>;
   set(id: string, data: T): Promise<{ id: string }>;
   delete(id: string): Promise<{ success: true }>;
@@ -49,12 +72,24 @@ export interface StoredFile {
   size: number;
   status: "ready";
   url: string;
+  /** Application metadata supplied at upload, such as alt text and the
+   * documents that reference this file. */
+  metadata: Json;
   created_at: string;
   updated_at: string;
+}
+export interface MediaUsage {
+  bytes: number;
+  count: number;
+  pending: number;
+  maxBytes: number;
+  maxFiles: number;
 }
 export interface FileStore {
   get(id: string): Promise<StoredFile>;
   list(): Promise<StoredFile[]>;
+  /** Storage consumed against this site's media quota. */
+  usage(): Promise<MediaUsage>;
   upload(
     file: File | Blob,
     options?: {

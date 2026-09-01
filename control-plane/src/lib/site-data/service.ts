@@ -12,7 +12,7 @@ import {
   permission,
   writePermission,
 } from "./validation";
-import { filters } from "./filters";
+import { COMPARISONS, filters } from "./filters";
 import { sorting, decodeCursor, encodeCursor } from "./pagination";
 import { tokenScope, limitPublicCreate } from "./owner-auth";
 import { previewFeatureAccess, userHasFeature } from "@/lib/entitlements";
@@ -30,7 +30,31 @@ export type DataCommand = {
   orderBy?: string;
   direction?: string;
   where?: unknown;
+  count?: boolean;
 };
+
+function filterConditions(filter: ReturnType<typeof filters>) {
+  const conditions = [];
+  if (filter.entries.length) {
+    // GIN finds candidates; equality checks enforce exact scalar semantics,
+    // so arrays containing a scalar never count as a scalar field match.
+    conditions.push(sql<boolean>`data @> ${filter.json}::jsonb`);
+    for (const [field, value] of filter.entries)
+      conditions.push(
+        sql<boolean>`data -> ${field} = ${JSON.stringify(value)}::jsonb`,
+      );
+  }
+  for (const [field, operator, bound] of filter.ranges) {
+    // JSONB orders numbers above strings, so ranges compare within one type
+    // only. Comparing JSONB rather than a cast never raises on other types.
+    conditions.push(
+      sql<boolean>`jsonb_typeof(data -> ${field}) = ${typeof bound} and data -> ${field} ${sql.raw(
+        COMPARISONS[operator],
+      )} ${JSON.stringify(bound)}::jsonb`,
+    );
+  }
+  return conditions;
+}
 
 export async function executeData(command: DataCommand) {
   const { site, path, method, adminUserId, body = {} } = command;
@@ -146,48 +170,55 @@ export async function executeData(command: DataCommand) {
         if (!document) throw new DataError(404, "Document not found.");
         return { document };
       }
+      const filter = filters(command.where);
+      const conditions = filterConditions(filter);
+      if (command.count) {
+        let counter = documents().select(
+          tx.fn.countAll<string>().as("matched"),
+        );
+        for (const condition of conditions) counter = counter.where(condition);
+        return { count: Number((await counter.executeTakeFirstOrThrow()).matched) };
+      }
       const limit = command.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 100)
         throw new DataError(400, "Limit must be 1–100.");
-      const { orderBy, direction } = sorting(
-        command.orderBy,
-        command.direction,
-      );
-      const filter = filters(command.where);
+      const sort = sorting(command.orderBy, command.direction);
       const cursor = decodeCursor(
         command.after,
         collection.id,
-        orderBy,
-        direction,
+        sort,
         filter.fingerprint,
       );
-      const comparison = direction === "asc" ? ">" : "<";
+      const comparison = sort.direction === "asc" ? ">" : "<";
+      // A missing field collapses to JSON null, the lowest JSONB value, so the
+      // sort key is never SQL NULL and the tuple comparison stays a total order.
+      const sortValue = sort.field
+        ? sql`coalesce(data -> ${sort.field}, 'null'::jsonb)`
+        : sql.ref(sort.orderBy);
       let query = documents()
         .select(["id", "data", "created_at", "updated_at"])
         .select(
-          (orderBy === "id"
+          (sort.orderBy === "id"
             ? sql<string | null>`null`
-            : sql<string>`to_char(${sql.ref(orderBy)} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+            : sort.field
+              ? sql<string>`(${sortValue})::text`
+              : sql<string>`to_char(${sortValue} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
           ).as("cursor_value"),
         )
-        .orderBy(orderBy, direction)
+        .orderBy(sortValue, sort.direction)
         .limit(limit + 1);
-      if (filter.entries.length) {
-        // GIN finds candidates; equality checks enforce exact scalar semantics,
-        // so arrays containing a scalar never count as a scalar field match.
-        query = query.where(sql<boolean>`data @> ${filter.json}::jsonb`);
-        for (const [field, value] of filter.entries) {
-          query = query.where(
-            sql<boolean>`data -> ${field} = ${JSON.stringify(value)}::jsonb`,
-          );
-        }
-      }
-      if (orderBy !== "id") query = query.orderBy("id", direction);
+      for (const condition of conditions) query = query.where(condition);
+      if (sort.orderBy !== "id") query = query.orderBy("id", sort.direction);
       if (cursor) {
-        if (orderBy === "id") query = query.where("id", comparison, cursor.id);
+        if (sort.orderBy === "id")
+          query = query.where("id", comparison, cursor.id);
         else
           query = query.where(
-            sql<boolean>`(${sql.ref(orderBy)}, id) ${sql.raw(comparison)} (${cursor.value}::timestamptz, ${cursor.id})`,
+            sql<boolean>`(${sortValue}, id) ${sql.raw(comparison)} (${
+              sort.field
+                ? sql`${cursor.value}::jsonb`
+                : sql`${cursor.value}::timestamptz`
+            }, ${cursor.id})`,
           );
       }
       const rows = await query.execute();
@@ -199,8 +230,7 @@ export async function executeData(command: DataCommand) {
           rows.length > limit && last
             ? encodeCursor(
                 collection.id,
-                orderBy,
-                direction,
+                sort,
                 last.id,
                 last.cursor_value,
                 filter.fingerprint,

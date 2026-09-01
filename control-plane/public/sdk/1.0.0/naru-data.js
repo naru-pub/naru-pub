@@ -54,6 +54,51 @@ const segment = (value) => {
     throw new TypeError("Invalid collection or document ID.");
   return encodeURIComponent(value);
 };
+const FIELD = /^[a-zA-Z0-9_-]{1,64}$/;
+const COMPARISONS = ["gt", "gte", "lt", "lte"];
+const isScalar = (value) =>
+  value === null ||
+  typeof value === "string" ||
+  typeof value === "boolean" ||
+  (typeof value === "number" && Number.isFinite(value));
+// Mirrors the server's rules so mistakes surface before a round trip. The
+// server revalidates; this never widens what the server will accept.
+function filterJson(where) {
+  if (!where || typeof where !== "object" || Array.isArray(where))
+    throw new TypeError("where must be an object of filters.");
+  let predicates = 0;
+  for (const [field, value] of Object.entries(where)) {
+    if (!FIELD.test(field))
+      throw new TypeError(`Invalid filter field ${field}.`);
+    if (isScalar(value)) {
+      predicates += 1;
+      continue;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new TypeError(
+        "Filter values must be scalars or a comparison object.",
+      );
+    const bounds = Object.entries(value);
+    if (!bounds.length)
+      throw new TypeError("Comparison objects need at least one operator.");
+    for (const [operator, bound] of bounds) {
+      if (!COMPARISONS.includes(operator))
+        throw new TypeError("Use gt, gte, lt or lte for range comparisons.");
+      if (
+        !(
+          typeof bound === "string" ||
+          (typeof bound === "number" && Number.isFinite(bound))
+        )
+      )
+        throw new TypeError("Range bounds must be strings or finite numbers.");
+      if (typeof bound !== typeof bounds[0][1])
+        throw new TypeError("Range bounds on one field must share a type.");
+      predicates += 1;
+    }
+  }
+  if (predicates > 5) throw new TypeError("Use at most 5 filter predicates.");
+  return JSON.stringify(where);
+}
 const base64url = (bytes) =>
   btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, "-")
@@ -191,40 +236,39 @@ export function createDatabase({
       },
       collection(collectionName) {
         const path = `${root}/${segment(collectionName)}`;
+        const query = ({ where, orderBy, direction }) => {
+          const parameters = new URLSearchParams();
+          if (where !== undefined) parameters.set("where", filterJson(where));
+          if (orderBy !== undefined) parameters.set("orderBy", orderBy);
+          if (direction !== undefined) parameters.set("direction", direction);
+          return parameters;
+        };
+        const list = (options = {}) => {
+          const parameters = query(options);
+          parameters.set("limit", String(options.limit ?? 50));
+          if (options.after !== undefined)
+            parameters.set("after", options.after);
+          return send(`${path}?${parameters}`);
+        };
         return {
           async get(id) {
             return (await send(`${path}/${segment(id)}`)).document;
           },
-          list({ limit = 50, after, orderBy, direction, where } = {}) {
-            const query = new URLSearchParams({ limit: String(limit) });
-            if (where !== undefined) {
-              if (!where || typeof where !== "object" || Array.isArray(where))
-                throw new TypeError(
-                  "where must be an object of scalar equality filters.",
-                );
-              const entries = Object.entries(where);
-              if (
-                entries.length > 5 ||
-                entries.some(
-                  ([key, value]) =>
-                    !/^[a-zA-Z0-9_-]{1,64}$/.test(key) ||
-                    !(
-                      value === null ||
-                      typeof value === "string" ||
-                      typeof value === "boolean" ||
-                      (typeof value === "number" && Number.isFinite(value))
-                    ),
-                )
-              )
-                throw new TypeError(
-                  "Use up to 5 top-level scalar equality filters.",
-                );
-              query.set("where", JSON.stringify(where));
-            }
-            if (orderBy !== undefined) query.set("orderBy", orderBy);
-            if (direction !== undefined) query.set("direction", direction);
-            if (after !== undefined) query.set("after", after);
-            return send(`${path}?${query}`);
+          list,
+          async count(options = {}) {
+            const parameters = query(options);
+            parameters.set("count", "1");
+            return (await send(`${path}?${parameters}`)).count;
+          },
+          async *all(options = {}) {
+            let after;
+            do {
+              const page = await list({ limit: 100, ...options, after });
+              yield* page.documents;
+              // A repeated cursor would page forever; stop instead.
+              if (page.nextCursor === after) return;
+              after = page.nextCursor ?? undefined;
+            } while (after);
           },
           add(data) {
             validateDocument(collectionName, data);
@@ -245,6 +289,9 @@ export function createDatabase({
         },
         async list() {
           return (await send(`${root}/_files`)).files;
+        },
+        async usage() {
+          return (await send(`${root}/_files`)).usage;
         },
         async upload(file, { onProgress, signal, metadata = {} } = {}) {
           if (!(file instanceof Blob))

@@ -65,6 +65,7 @@ export async function dataRequest(
       clientIp: forwardedIp && isIP(forwardedIp) ? forwardedIp : undefined,
       body,
       where: parseWhereQuery(url.searchParams.get("where")),
+      count: url.searchParams.get("count") === "1",
       orderBy: url.searchParams.get("orderBy") ?? undefined,
       direction: url.searchParams.get("direction") ?? undefined,
       after: url.searchParams.get("after") ?? undefined,

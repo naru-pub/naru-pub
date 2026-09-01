@@ -415,6 +415,105 @@ test("SDK serializes equality filters and rejects values JSON would silently dro
   }
 });
 
+test("SDK serializes range filters and rejects unsupported comparisons", async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(new URL(url));
+    return Response.json({ documents: [], nextCursor: null });
+  };
+  try {
+    const posts = createDatabase({
+      site: "alice",
+      baseUrl: "https://naru.pub",
+    }).collection("posts");
+    const month = { gte: "2026-09-01", lt: "2026-10-01" };
+    await posts.list({ where: { categoryId: "a", date: month } });
+    assert.deepEqual(JSON.parse(calls[0].searchParams.get("where")), {
+      categoryId: "a",
+      date: month,
+    });
+    for (const where of [
+      { date: {} },
+      { date: { between: "x" } },
+      { date: { gte: null } },
+      { date: { gte: true } },
+      { date: { gte: NaN } },
+      { date: { gte: ["a"] } },
+      // Bounds of one range must share a type; JSONB orders numbers above strings.
+      { date: { gte: "2026-01-01", lte: 3 } },
+      // Six predicates: two bounds on each of three fields.
+      { a: { gte: 1, lte: 2 }, b: { gte: 1, lte: 2 }, c: { gte: 1, lte: 2 } },
+    ])
+      assert.throws(() => posts.list({ where }), TypeError);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("count queries the server without paging and all() follows cursors", async () => {
+  const original = globalThis.fetch;
+  const urls = [];
+  const pages = [
+    { documents: [{ id: "a" }, { id: "b" }], nextCursor: "v1.one" },
+    { documents: [{ id: "c" }], nextCursor: null },
+  ];
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(url);
+    urls.push(parsed);
+    return Response.json(
+      parsed.searchParams.get("count") === "1"
+        ? { count: 3 }
+        : pages[urls.filter((u) => !u.searchParams.has("count")).length - 1],
+    );
+  };
+  try {
+    const posts = createDatabase({
+      site: "alice",
+      baseUrl: "https://naru.pub",
+    }).collection("posts");
+    const where = { categoryId: "a" };
+    assert.equal(await posts.count({ where }), 3);
+    assert.equal(urls[0].searchParams.get("count"), "1");
+    assert.deepEqual(JSON.parse(urls[0].searchParams.get("where")), where);
+    // Counting never sends paging inputs the server would have to ignore.
+    assert.equal(urls[0].searchParams.has("limit"), false);
+    assert.equal(urls[0].searchParams.has("after"), false);
+    const ids = [];
+    for await (const document of posts.all({ where, orderBy: "data.date" }))
+      ids.push(document.id);
+    assert.deepEqual(ids, ["a", "b", "c"]);
+    assert.equal(urls[1].searchParams.get("limit"), "100");
+    assert.equal(urls[1].searchParams.has("after"), false);
+    assert.equal(urls[2].searchParams.get("after"), "v1.one");
+    assert.equal(urls[2].searchParams.get("orderBy"), "data.date");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("all() stops instead of paging forever on a repeated cursor", async () => {
+  const original = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    return Response.json({ documents: [{ id: "a" }], nextCursor: "v1.stuck" });
+  };
+  try {
+    const posts = createDatabase({
+      site: "alice",
+      baseUrl: "https://naru.pub",
+    }).collection("posts");
+    const ids = [];
+    for await (const document of posts.all()) ids.push(document.id);
+    assert.deepEqual(ids, ["a", "a"]);
+    assert.equal(requests, 2);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("SDK pins the control plane even when copied or given an old baseUrl option", async () => {
   const original = globalThis.fetch;
   const urls = [];
