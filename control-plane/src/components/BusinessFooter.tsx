@@ -11,6 +11,10 @@ export function BusinessFooter() {
           <dd>101-28-99756</dd>
         </div>
         <div className="flex gap-2">
+          <dt className="font-medium text-foreground">통신판매업신고번호</dt>
+          <dd>2026-서울성동-1013</dd>
+        </div>
+        <div className="flex gap-2">
           <dt className="font-medium text-foreground">대표자명</dt>
           <dd>서지혁</dd>
         </div>
