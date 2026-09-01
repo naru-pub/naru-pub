@@ -118,57 +118,69 @@ export default async function PaymentsPage() {
           </Button>
         </div>
 
-        <Card className="bg-card border-2 border-border shadow-lg">
+        <Card className="min-w-0 max-w-full overflow-hidden rounded-none bg-card border-2 border-border shadow-lg">
           <CardHeader className="bg-secondary border-b-2 border-border">
             <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
               <ReceiptText size={20} />
               결제 내역
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-0">
+          <CardContent className="min-w-0 max-w-full p-0">
             {payments.length === 0 ? (
               <div className="p-6 text-sm text-muted-foreground">
                 아직 결제 내역이 없습니다.
               </div>
             ) : (
-              <Table>
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>일시</TableHead>
-                    <TableHead>종류</TableHead>
-                    <TableHead>상태</TableHead>
-                    <TableHead className="text-right">금액</TableHead>
-                    <TableHead className="text-right">환불</TableHead>
-                    <TableHead>이용 기간</TableHead>
-                    <TableHead>주문번호</TableHead>
+                    <TableHead className="px-2 sm:px-4">일시</TableHead>
+                    <TableHead className="hidden px-2 sm:table-cell sm:px-4">
+                      종류
+                    </TableHead>
+                    <TableHead className="px-2 sm:px-4">상태</TableHead>
+                    <TableHead className="px-2 text-right sm:px-4">
+                      금액
+                    </TableHead>
+                    <TableHead className="hidden px-2 text-right md:table-cell sm:px-4">
+                      환불
+                    </TableHead>
+                    <TableHead className="hidden px-2 lg:table-cell sm:px-4">
+                      이용 기간
+                    </TableHead>
+                    <TableHead className="hidden px-2 xl:table-cell sm:px-4">
+                      주문번호
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {payments.map((payment) => (
                     <TableRow key={payment.id}>
-                      <TableCell className="whitespace-nowrap">
+                      <TableCell className="p-2 text-xs sm:p-4 sm:text-sm sm:whitespace-nowrap">
                         {formatDate(payment.paid_at ?? payment.created_at)}
                       </TableCell>
-                      <TableCell>{paymentKind(payment)}</TableCell>
-                      <TableCell>
+                      <TableCell className="hidden p-2 sm:table-cell sm:p-4">
+                        {paymentKind(payment)}
+                      </TableCell>
+                      <TableCell className="p-2 sm:p-4">
                         <Badge variant={statusVariant(payment.status)}>
                           {statusLabel(payment.status, payment.refunded_amount)}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right whitespace-nowrap">
+                      <TableCell className="p-2 text-right whitespace-nowrap sm:p-4">
                         {formatKrw(payment.amount)}
                       </TableCell>
-                      <TableCell className="text-right whitespace-nowrap">
+                      <TableCell className="hidden p-2 text-right whitespace-nowrap md:table-cell sm:p-4">
                         {payment.refunded_amount > 0
                           ? formatKrw(payment.refunded_amount)
                           : "-"}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                      <TableCell className="hidden p-2 text-muted-foreground lg:table-cell sm:p-4">
                         {payment.period_start && payment.period_end
                           ? `${formatDate(payment.period_start)} - ${formatDate(payment.period_end)}`
                           : "-"}
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
+                      <TableCell className="hidden break-all p-2 font-mono text-xs text-muted-foreground xl:table-cell sm:p-4">
                         {payment.order_id}
                       </TableCell>
                     </TableRow>
