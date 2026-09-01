@@ -413,7 +413,10 @@ export async function executeBatch(command: DataCommand) {
         throw new DataError(400, "Invalid batch operation.");
       const operation = raw as Record<string, unknown>;
       const collectionName = name(operation.collection);
-      const id = name(operation.id);
+      const adding = operation.type === "add";
+      if (adding && Object.hasOwn(operation, "id"))
+        throw new DataError(400, "add assigns the document ID itself.");
+      const id = adding ? randomUUID() : name(operation.id);
       const collection = collectionRows.find(
         (row) => row.name === collectionName,
       );
@@ -427,6 +430,9 @@ export async function executeBatch(command: DataCommand) {
         );
       authorize(collection.write_access, true);
       const expected = expectedVersion(operation.ifVersion);
+      // A fresh ID has no version to quote, so the two cannot be combined.
+      if (adding && expected !== undefined)
+        throw new DataError(400, "add cannot take ifVersion.");
       const merging = operation.type === "update";
       // The batch holds the owner lock, so a read here cannot go stale before
       // the write that follows it.
@@ -450,12 +456,12 @@ export async function executeBatch(command: DataCommand) {
         continue;
       }
       if (
-        !(operation.type === "set" || merging) ||
+        !(operation.type === "set" || merging || adding) ||
         !Object.hasOwn(operation, "data")
       )
         throw new DataError(
           400,
-          "Batch operations must be set, update or delete.",
+          "Batch operations must be add, set, update or delete.",
         );
       const encoded = JSON.stringify(
         merging ? merge(existing, operation) : operation.data,
@@ -463,14 +469,24 @@ export async function executeBatch(command: DataCommand) {
       const size = Buffer.byteLength(encoded);
       if (size > MAX_DOCUMENT_BYTES)
         throw new DataError(413, "Document exceeds 64 KiB.");
-      const written = await tx
-        .insertInto("site_data_documents")
-        .values({
-          collection_id: collection.id,
-          id,
-          data: sql`${encoded}::jsonb`,
-          size_bytes: size,
-        })
+      const insert = tx.insertInto("site_data_documents").values({
+        collection_id: collection.id,
+        id,
+        data: sql`${encoded}::jsonb`,
+        size_bytes: size,
+      });
+      if (adding) {
+        // Never overwrite a document, even in the event of an ID collision.
+        const inserted = await insert
+          .onConflict((oc) => oc.columns(["collection_id", "id"]).doNothing())
+          .returning("version")
+          .executeTakeFirst();
+        if (!inserted)
+          throw new DataError(409, "Document ID collision. Retry creation.");
+        results.push({ id, version: inserted.version });
+        continue;
+      }
+      const written = await insert
         .onConflict((oc) =>
           oc.columns(["collection_id", "id"]).doUpdateSet({
             data: sql`${encoded}::jsonb`,

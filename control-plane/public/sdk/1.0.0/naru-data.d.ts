@@ -84,12 +84,15 @@ export interface Database {
   /** Types describe your schema; reads are not runtime schema validation. */
   collection<T = Json>(name: string): Collection<T>;
 }
-export type BatchOperation = { collection: string; id: string } & Conditional &
-  (
-    | { type: "set"; data: Json }
-    | { type: "update"; data: Json; unset?: string[] }
-    | { type: "delete" }
-  );
+export type BatchOperation =
+  /** The server assigns the ID, so this one takes neither id nor ifVersion. */
+  | { type: "add"; collection: string; data: Json }
+  | ({ collection: string; id: string } & Conditional &
+      (
+        | { type: "set"; data: Json }
+        | { type: "update"; data: Json; unset?: string[] }
+        | { type: "delete" }
+      ));
 export interface StoredFile {
   id: string;
   name: string;

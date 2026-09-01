@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { streamUpload, uploadFiles } from "../src/lib/upload-progress";
+// Node's ESM resolver does not guess extensions, and this suite runs under
+// `node --test` rather than Jest.
+import { streamUpload, uploadFiles } from "../src/lib/upload-progress.ts";
 
 const files = [
   new File(["first"], "first.html"),

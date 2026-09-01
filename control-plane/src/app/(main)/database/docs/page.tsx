@@ -280,9 +280,9 @@ const comments = await db.collection("comments").list({
                 필드 이름은 영문·숫자·밑줄·하이픈 1~64자이며, 값은
                 문자열·숫자·불리언·null만 가능합니다. 최대 5개 조건, 필터 JSON
                 전체 2,048바이트까지 지원합니다. <code>1</code>과{" "}
-                <code>"1"</code>은 다릅니다. 문자열은 대소문자를 포함해 정확히
-                비교하며 <code>null</code>은 실제 null 필드만 찾습니다. 필드가
-                없는 문서는 일치하지 않습니다.
+                <code>&quot;1&quot;</code>은 다릅니다. 문자열은 대소문자를
+                포함해 정확히 비교하며 <code>null</code>은 실제 null 필드만
+                찾습니다. 필드가 없는 문서는 일치하지 않습니다.
               </p>
               <p>
                 값 대신 <code>{"{ gte, gt, lte, lt }"}</code> 형태의 비교 객체를
@@ -337,8 +337,8 @@ const mine = await db.collection("posts").list({
                 <code>direction</code>은 <code>asc</code>(기본값) 또는{" "}
                 <code>desc</code>입니다. 방명록은 <code>created_at</code>{" "}
                 내림차순으로 최신 글부터 표시합니다. 글쓴이가 날짜를 직접 정하는
-                블로그라면 <code>orderBy: "data.date"</code>로 정렬해야 나중에
-                쓴 지난 날짜 글이 맨 위로 올라오지 않습니다.
+                블로그라면 <code>orderBy: &quot;data.date&quot;</code>로
+                정렬해야 나중에 쓴 지난 날짜 글이 맨 위로 올라오지 않습니다.
               </p>
               <p>
                 <code>data.필드이름</code>으로 정렬하면 값이 없는 문서는 JSON
@@ -543,9 +543,16 @@ const { bytes, maxBytes, count, maxFiles } = await owner.files.usage();`}</Code>
 
 await owner.batch([
   { type: "set", collection: "posts", id, data: post, ifVersion: 0 },
+  { type: "add", collection: "logs", data: { published: id } },
   { type: "update", collection: "stats", id: "totals", data: { posts: 12 } },
   { type: "delete", collection: "drafts", id },
 ]);`}</Code>
+              <p>
+                <code>add</code>는 서버가 ID를 정하므로 <code>id</code>나{" "}
+                <code>ifVersion</code>을 함께 보낼 수 없습니다. 정해진 ID가
+                필요하면 <code>set</code>을 쓰세요. 결과 배열은 보낸 순서대로 각
+                항목의 <code>id</code>와 <code>version</code>을 돌려줍니다.
+              </p>
               <p>
                 SDK 오류의 <code>code</code>에는
                 <code>UNREGISTERED_REDIRECT_URI</code>,
@@ -662,9 +669,9 @@ await owner.batch([
                 getter, Symbol 키, 열거할 수 없는 속성도 허용하지 않습니다.
               </p>
               <p>
-                TypeScript에서는 collection&lt;Post&gt;("posts")로 읽기와 쓰기
-                타입을 지정할 수 있습니다. 이 타입은 서버 데이터의 런타임 검증을
-                대신하지 않습니다.
+                TypeScript에서는 collection&lt;Post&gt;(&quot;posts&quot;)로
+                읽기와 쓰기 타입을 지정할 수 있습니다. 이 타입은 서버 데이터의
+                런타임 검증을 대신하지 않습니다.
               </p>
               <dl className="space-y-4">
                 {[

@@ -391,7 +391,7 @@ export default function DatabaseManager({
       <section hidden={view !== "sdk"} className="min-w-0 border p-5 space-y-4">
         <h2 className="font-bold">웹 SDK</h2>
         <p className="text-sm">
-          사이트의 &lt;script type="module"&gt;에서 사용하세요. 기본
+          사이트의 &lt;script type=&quot;module&quot;&gt;에서 사용하세요. 기본
           클라이언트는 공개 권한만 사용합니다. 웹사이트 관리자 로그인은 위에서
           등록한 콜백 페이지에서 별도로 시작하세요. SDK는 관리자 쿠키를 전송하지
           않습니다.

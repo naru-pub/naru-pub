@@ -319,6 +319,25 @@ integration("site database integration", () => {
     await expect(
       batch({ type: "replace", collection: "batched", id: "one", data: {} }),
     ).rejects.toMatchObject({ status: 400 });
+    // add assigns server IDs, so a batch no longer has to mint its own.
+    const created = await batch(
+      { type: "add", collection: "batched", data: { title: "g" } },
+      { type: "add", collection: "batched", data: { title: "h" } },
+    );
+    expect(created.results).toEqual([
+      { id: expect.stringMatching(/^[0-9a-f-]{36}$/), version: 1 },
+      { id: expect.stringMatching(/^[0-9a-f-]{36}$/), version: 1 },
+    ]);
+    expect(created.results[0].id).not.toBe(created.results[1].id);
+    expect(
+      (await call("GET", ["batched", created.results[0].id!])).document!.data,
+    ).toEqual({ title: "g" });
+    for (const operation of [
+      { type: "add", collection: "batched", id: "one", data: {} },
+      { type: "add", collection: "batched", data: {}, ifVersion: 1 },
+      { type: "add", collection: "batched" },
+    ])
+      await expect(batch(operation)).rejects.toMatchObject({ status: 400 });
   });
   test("rule revocation takes effect on the next request", async () => {
     await call(

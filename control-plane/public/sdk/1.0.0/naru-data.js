@@ -237,6 +237,14 @@ export function createDatabase({
             throw new TypeError("Invalid batch operation.");
           const collection = operation.collection;
           segment(collection);
+          if (operation.type === "add") {
+            if (operation.id !== undefined)
+              throw new TypeError("add assigns the document ID itself.");
+            if (operation.ifVersion !== undefined)
+              throw new TypeError("add cannot take ifVersion.");
+            validateDocument(collection, operation.data);
+            return { type: "add", collection, data: operation.data };
+          }
           segment(operation.id);
           const base = { collection, id: operation.id };
           if (operation.ifVersion !== undefined)
@@ -260,7 +268,7 @@ export function createDatabase({
           }
           if (operation.type !== "delete")
             throw new TypeError(
-              "Batch operations must be set, update or delete.",
+              "Batch operations must be add, set, update or delete.",
             );
           return { ...base, type: "delete" };
         });

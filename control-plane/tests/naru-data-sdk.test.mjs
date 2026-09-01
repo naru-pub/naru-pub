@@ -306,7 +306,16 @@ test("schemas reject invalid writes and owner batch snapshots valid operations",
       },
       { collection: "posts", id: "two", ifVersion: 1, type: "delete" },
     ]);
+    await owner.batch([
+      { type: "add", collection: "posts", data: { title: "fresh" } },
+    ]);
+    // add carries no ID: the server assigns one.
+    assert.deepEqual(JSON.parse(body).operations, [
+      { type: "add", collection: "posts", data: { title: "fresh" } },
+    ]);
     for (const operation of [
+      { type: "add", collection: "posts", id: "one", data },
+      { type: "add", collection: "posts", data, ifVersion: 0 },
       { type: "update", collection: "posts", id: "one", data: "text" },
       { type: "update", collection: "posts", id: "one", data: {}, unset: "a" },
       { type: "set", collection: "posts", id: "one", data, ifVersion: -1 },
