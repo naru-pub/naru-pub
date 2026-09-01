@@ -58,8 +58,8 @@ export default function WebsiteAccess({
     void run(reload);
   }, []);
   return (
-    <section className="border rounded-lg p-4 space-y-4">
-      <h2 className="font-bold">웹사이트 관리자 로그인</h2>
+    <section className="space-y-5">
+      <h2 className="text-xl font-semibold">웹사이트 관리자 로그인</h2>
       <p className="text-sm">
         웹사이트의 관리자 페이지를 등록하세요. 나루에서 소유자가 승인하면 선택한
         컬렉션의 문서를 읽고 변경할 수 있는 최대 24시간 동안 유지되는 권한을
@@ -70,7 +70,7 @@ export default function WebsiteAccess({
         URL에는 쿼리나 #을 넣지 마세요. 외부 스크립트가 없는 신뢰할 수 있는
         관리자 페이지를 사용하세요.
       </p>
-      <p className="text-sm break-all">
+      <p className="rounded-lg border bg-muted/30 p-4 text-sm break-all">
         Client ID: <code>{clientId || "불러오는 중…"}</code>
       </p>
       {error && (
@@ -79,9 +79,12 @@ export default function WebsiteAccess({
         </p>
       )}
       {notice && <p role="status">{notice}</p>}
-      <fieldset disabled={busy} className="space-y-4">
+      <fieldset
+        disabled={busy}
+        className="grid min-w-0 items-start gap-6 lg:grid-cols-2"
+      >
         <form
-          className="space-y-3"
+          className="min-w-0 rounded-xl border p-5 space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
             void run(async () => {
@@ -101,7 +104,17 @@ export default function WebsiteAccess({
             });
           }}
         >
+          <h3 className="font-semibold">
+            {editing ? "관리자 페이지 수정" : "관리자 페이지 등록"}
+          </h3>
+          <label
+            htmlFor="admin-callback-url"
+            className="block text-sm font-medium"
+          >
+            관리자 페이지 URL
+          </label>
           <Input
+            id="admin-callback-url"
             aria-label="관리자 로그인 콜백 URL"
             type="url"
             required
@@ -125,24 +138,37 @@ export default function WebsiteAccess({
               종료됩니다.
             </span>
           </label>
-          <div className="flex gap-3 flex-wrap">
-            {collections.map((c) => (
-              <label className="flex gap-2 items-center" key={c.name}>
-                <input
-                  type="checkbox"
-                  checked={selected.includes(c.name)}
-                  onChange={(e) =>
-                    setSelected((current) =>
-                      e.target.checked
-                        ? [...current, c.name]
-                        : current.filter((n) => n !== c.name),
-                    )
-                  }
-                />
-                {c.name}
-              </label>
-            ))}
-          </div>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">
+              접근을 허용할 컬렉션
+            </legend>
+            {!collections.length && (
+              <p className="text-sm text-muted-foreground">
+                먼저 컬렉션을 만들어 주세요.
+              </p>
+            )}
+            <div className="flex gap-3 flex-wrap">
+              {collections.map((c) => (
+                <label
+                  className="flex min-w-0 gap-2 items-center rounded-md border px-3 py-2 text-sm break-all"
+                  key={c.name}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(c.name)}
+                    onChange={(e) =>
+                      setSelected((current) =>
+                        e.target.checked
+                          ? [...current, c.name]
+                          : current.filter((n) => n !== c.name),
+                      )
+                    }
+                  />
+                  {c.name}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <Button type="submit" disabled={!selected.length}>
             {editing ? "관리자 페이지 수정" : "관리자 페이지 등록"}
           </Button>
@@ -161,63 +187,74 @@ export default function WebsiteAccess({
             </Button>
           )}
         </form>
-        {clients.map((c) => (
-          <div className="border rounded p-3 space-y-2" key={c.id}>
-            <p className="break-all">{c.redirectUri}</p>
-            <p className="text-sm">
-              컬렉션: {c.collections.join(", ") || "(삭제됨)"}
+        <section className="min-w-0 space-y-3">
+          <h3 className="font-semibold">
+            등록된 관리자 페이지{" "}
+            <span className="text-muted-foreground">{clients.length}</span>
+          </h3>
+          {!clients.length && (
+            <p className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
+              등록된 관리자 페이지가 없습니다.
             </p>
-            <p className="text-sm">
-              토큰 유효 시간: {c.tokenLifetimeSeconds / 60}분
-            </p>
-            <div className="flex gap-2 flex-wrap">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setEditing(c.id);
-                  setCallback(c.redirectUri);
-                  setSelected(c.collections);
-                  setLifetimeMinutes(String(c.tokenLifetimeSeconds / 60));
-                }}
-              >
-                수정
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  void run(async () => {
-                    await api("PATCH", { id: c.id });
-                    setNotice("발급된 로그인 권한을 모두 취소했습니다.");
-                  })
-                }
-              >
-                모든 로그인 권한 취소
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "이 웹사이트 등록을 제거하고 발급된 권한을 모두 취소할까요?",
-                    )
-                  )
+          )}
+          {clients.map((c) => (
+            <div className="rounded-xl border p-4 space-y-3" key={c.id}>
+              <p className="break-all">{c.redirectUri}</p>
+              <p className="text-sm">
+                컬렉션: {c.collections.join(", ") || "(삭제됨)"}
+              </p>
+              <p className="text-sm">
+                토큰 유효 시간: {c.tokenLifetimeSeconds / 60}분
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEditing(c.id);
+                    setCallback(c.redirectUri);
+                    setSelected(c.collections);
+                    setLifetimeMinutes(String(c.tokenLifetimeSeconds / 60));
+                  }}
+                >
+                  수정
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() =>
                     void run(async () => {
-                      await api("DELETE", { id: c.id });
-                      if (editing === c.id) {
-                        setEditing(null);
-                        setCallback(websiteUrl);
-                        setSelected([]);
-                        setLifetimeMinutes("1440");
-                      }
-                      await reload();
-                    });
-                }}
-              >
-                등록 제거
-              </Button>
+                      await api("PATCH", { id: c.id });
+                      setNotice("발급된 로그인 권한을 모두 취소했습니다.");
+                    })
+                  }
+                >
+                  모든 로그인 권한 취소
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "이 웹사이트 등록을 제거하고 발급된 권한을 모두 취소할까요?",
+                      )
+                    )
+                      void run(async () => {
+                        await api("DELETE", { id: c.id });
+                        if (editing === c.id) {
+                          setEditing(null);
+                          setCallback(websiteUrl);
+                          setSelected([]);
+                          setLifetimeMinutes("1440");
+                        }
+                        await reload();
+                      });
+                  }}
+                >
+                  등록 제거
+                </Button>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </section>
       </fieldset>
     </section>
   );
