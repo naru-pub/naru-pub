@@ -177,13 +177,16 @@ if [[ "${1:-deploy}" != deploy ]]; then
   exit 2
 fi
 
+if [[ "${NARU_DEPLOY_AFTER_PULL:-0}" != 1 ]]; then
+  echo "Pulling latest changes..."
+  git pull --ff-only
+  exec env NARU_DEPLOY_AFTER_PULL=1 "$0" "$@"
+fi
+
 current=$(active_slot)
 target=$(other_slot "$current")
 control_plane_service="control-plane-$target"
 proxy_service="proxy-$target"
-
-echo "Pulling latest changes..."
-git pull --ff-only
 
 echo "Building the $target slot while $current continues serving traffic..."
 docker compose build "$control_plane_service" "$proxy_service"

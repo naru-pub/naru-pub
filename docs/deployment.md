@@ -14,6 +14,10 @@ For each deployment, the script:
 5. reloads nginx to atomically direct new requests to the healthy slot; and
 6. recreates the cron and worker processes from the new image.
 
+After pulling, the deploy command re-executes the checked-in script once before
+it reads the Compose topology. This keeps a deployment safe when the deployment
+script or Compose file itself changes in the pulled commit.
+
 The previous HTTP slot stays running after the switch. Existing nginx workers
 can finish in-flight requests against it, and it remains available for an
 immediate traffic rollback:
