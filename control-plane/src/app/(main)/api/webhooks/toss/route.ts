@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/database";
 import { getPaymentByOrderId, TossApiError } from "@/lib/toss";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
+import { parseTossWebhook } from "@/lib/toss-webhooks";
 
 const ALLOWED_PAYMENT_STATUSES = new Set([
   "ready",
@@ -19,13 +20,40 @@ const ALLOWED_PAYMENT_STATUSES = new Set([
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.text();
-    const body =
-      (JSON.parse(rawBody || "null") as Record<string, unknown> | null) ?? null;
-    const data = (body?.data as Record<string, unknown>) ?? body ?? {};
-    const orderId = data.orderId;
-    if (typeof orderId !== "string") {
+    const body = JSON.parse(rawBody || "null") as unknown;
+    const event = parseTossWebhook(body);
+
+    if (event.type === "billing-deleted") {
+      const subscription = await db
+        .selectFrom("subscriptions")
+        .select(["id", "canceled_at"])
+        .where("toss_billing_key", "=", event.billingKey)
+        .executeTakeFirst();
+
+      if (subscription) {
+        const now = new Date();
+        await db
+          .updateTable("subscriptions")
+          .set({
+            status: "canceled",
+            toss_billing_key: null,
+            next_billing_at: null,
+            canceled_at: subscription.canceled_at ?? now,
+            updated_at: now,
+          })
+          .where("id", "=", subscription.id)
+          .where("toss_billing_key", "=", event.billingKey)
+          .execute();
+      }
+
       return NextResponse.json({ received: true });
     }
+
+    if (event.type === "ignored") {
+      return NextResponse.json({ received: true });
+    }
+
+    const orderId = event.orderId;
 
     const ledger = await db
       .selectFrom("payments")
