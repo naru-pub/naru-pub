@@ -31,6 +31,7 @@ export default function SupportCard({
   const params = useSearchParams();
   const toasted = useRef(false);
   const [pending, setPending] = useState(false);
+  const [oneTimeYears, setOneTimeYears] = useState(1);
 
   // Surface the result of the Toss redirect once, then clean the URL.
   useEffect(() => {
@@ -84,6 +85,8 @@ export default function SupportCard({
     try {
       const res = await fetch("/api/account/donation/one-time/prepare", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ years: oneTimeYears }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -116,7 +119,11 @@ export default function SupportCard({
   }
 
   async function cancel() {
-    if (!confirm("후원을 취소하시겠어요? 남은 기간 동안은 계속 이용하실 수 있습니다.")) {
+    if (
+      !confirm(
+        "후원을 취소하시겠어요? 남은 기간 동안은 계속 이용하실 수 있습니다.",
+      )
+    ) {
       return;
     }
     setPending(true);
@@ -159,8 +166,7 @@ export default function SupportCard({
         <div className="text-sm text-muted-foreground space-y-2">
           <p>
             나루는 후원으로 굴러가는 작은 인디웹 서비스입니다. 후원해 주시면
-            커스텀 도메인, 데이터베이스, 방문자 현황 기능을 쓰실 수 있습니다
-            🌱
+            커스텀 도메인, 데이터베이스, 방문자 현황 기능을 쓰실 수 있습니다 🌱
           </p>
         </div>
 
@@ -178,7 +184,7 @@ export default function SupportCard({
                   다음 결제일:{" "}
                   <strong className="text-foreground">
                     {new Date(subscription.nextBillingAt).toLocaleDateString(
-                      "ko-KR"
+                      "ko-KR",
                     )}
                   </strong>
                 </>
@@ -216,14 +222,35 @@ export default function SupportCard({
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground pt-1">한 번만 후원</p>
-              <Button
-                onClick={donateOnce}
-                disabled={pending}
-                variant="outline"
-                className="w-full"
-              >
-                1년 12,000원 (한 번만 결제, 자동 갱신 없음)
-              </Button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <label className="flex items-center gap-2 border border-border bg-background px-3 py-2 text-sm sm:w-40">
+                  <span className="shrink-0 text-muted-foreground">기간</span>
+                  <select
+                    value={oneTimeYears}
+                    onChange={(event) =>
+                      setOneTimeYears(Number(event.target.value))
+                    }
+                    disabled={pending}
+                    className="min-w-0 flex-1 bg-transparent font-medium outline-none"
+                    aria-label="일회성 후원 기간"
+                  >
+                    {[1, 2, 3, 5].map((years) => (
+                      <option key={years} value={years}>
+                        {years}년
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Button
+                  onClick={donateOnce}
+                  disabled={pending}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  {(oneTimeYears * 12000).toLocaleString("ko-KR")}원 결제 (자동
+                  갱신 없음)
+                </Button>
+              </div>
             </div>
           </div>
         )}

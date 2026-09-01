@@ -1,5 +1,10 @@
 import { db } from "@/lib/database";
-import { addInterval, BillingInterval, TossPaymentResult } from "@/lib/toss";
+import {
+  addInterval,
+  BillingInterval,
+  isOneTimeYears,
+  TossPaymentResult,
+} from "@/lib/toss";
 
 // Subscription renewals run daily. This value is the payment grace window before
 // a subscription becomes past_due and related paid-only resources are reclaimed.
@@ -18,10 +23,13 @@ export function addPaymentGrace(until: Date): Date {
 export async function applyOneTimePayment(opts: {
   userId: number;
   amount: number;
-  interval: BillingInterval;
+  years: number;
   payment: TossPaymentResult;
   paymentId?: number;
 }): Promise<{ periodStart: Date; periodEnd: Date }> {
+  if (!isOneTimeYears(opts.years)) {
+    throw new Error("Invalid one-time support years");
+  }
   const now = new Date();
   return db.transaction().execute(async (trx) => {
     if (opts.paymentId) {
@@ -55,7 +63,8 @@ export async function applyOneTimePayment(opts: {
       current.supporter_until && new Date(current.supporter_until) > now
         ? new Date(current.supporter_until)
         : now;
-    const periodEnd = addInterval(periodStart, opts.interval);
+    const periodEnd = new Date(periodStart);
+    periodEnd.setFullYear(periodEnd.getFullYear() + opts.years);
 
     if (opts.paymentId) {
       await trx

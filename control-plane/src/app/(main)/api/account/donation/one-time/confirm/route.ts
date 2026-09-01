@@ -6,14 +6,14 @@ import { sendSupportThankYouEmail } from "@/lib/email";
 import {
   confirmPayment,
   isDefinitiveTossFailure,
-  ONE_TIME_YEAR_AMOUNT,
+  oneTimeYearsForAmount,
   TossApiError,
 } from "@/lib/toss";
 import { applyOneTimePayment } from "@/lib/subscriptions";
 
-// One-time donation step 2: confirms the payment with Toss and grants 1 year of
-// supporter access. Entitlement is granted based on the amount Toss reports, not
-// the client.
+// One-time donation step 2: confirms the payment with Toss and grants the
+// purchased years of supporter access. Entitlement is derived from the
+// server-recorded order amount and verified against what Toss reports.
 export async function POST(request: NextRequest) {
   try {
     try {
@@ -67,10 +67,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const years = oneTimeYearsForAmount(pendingPayment.amount);
     if (
       pendingPayment.status !== "pending" ||
-      pendingPayment.amount !== ONE_TIME_YEAR_AMOUNT ||
-      amount !== ONE_TIME_YEAR_AMOUNT
+      years === null ||
+      amount !== pendingPayment.amount
     ) {
       return NextResponse.json(
         { success: false, message: "후원 주문 정보가 올바르지 않습니다." },
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest) {
     // Grant based on the amount Toss actually confirmed.
     if (
       payment.status !== "DONE" ||
-      payment.totalAmount !== ONE_TIME_YEAR_AMOUNT
+      payment.totalAmount !== pendingPayment.amount
     ) {
       await db
         .updateTable("payments")
@@ -128,8 +129,8 @@ export async function POST(request: NextRequest) {
 
     const period = await applyOneTimePayment({
       userId: user.id,
-      amount: ONE_TIME_YEAR_AMOUNT,
-      interval: "year",
+      amount: pendingPayment.amount,
+      years,
       payment,
       paymentId: pendingPayment.id,
     });
@@ -140,7 +141,7 @@ export async function POST(request: NextRequest) {
           email: user.email,
           loginName: user.loginName,
           kind: "one_time",
-          amount: ONE_TIME_YEAR_AMOUNT,
+          amount: pendingPayment.amount,
           supporterUntil: period.periodEnd,
         });
       } catch (error) {
@@ -150,8 +151,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message:
-        "후원해 주셔서 감사합니다! 1년간 후원자 기능을 이용하실 수 있습니다.",
+      message: `후원해 주셔서 감사합니다! ${years}년간 후원자 기능을 이용하실 수 있습니다.`,
     });
   } catch (error) {
     console.error("One-time confirm error:", error);

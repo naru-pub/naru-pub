@@ -3,14 +3,15 @@ import { randomUUID } from "crypto";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import {
+  isOneTimeYears,
   newOrderId,
-  ONE_TIME_YEAR_AMOUNT,
-  ONE_TIME_YEAR_ORDER_NAME,
+  oneTimeAmount,
+  oneTimeOrderName,
 } from "@/lib/toss";
 
 // One-time donation step 1: returns a server-generated orderId + the
 // authoritative amount for requestPayment.
-export async function POST(_request: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     const { user } = await validateRequest();
     if (!user) {
@@ -19,6 +20,18 @@ export async function POST(_request: NextRequest) {
         { status: 401 },
       );
     }
+
+    // Empty bodies from the previous web client continue to mean one year
+    // during a blue-green rollout.
+    const body = await request.json().catch(() => ({ years: 1 }));
+    const years = body?.years;
+    if (!isOneTimeYears(years)) {
+      return NextResponse.json(
+        { success: false, message: "후원 기간이 올바르지 않습니다." },
+        { status: 400 },
+      );
+    }
+    const amount = oneTimeAmount(years);
 
     // Ensure a stable customerKey for dashboard linkage (optional for one-time).
     const userRow = await db
@@ -41,11 +54,11 @@ export async function POST(_request: NextRequest) {
     await db
       .insertInto("payments")
       .values({
-        attempt_key: `one_time:${orderId}`,
+        attempt_key: `one_time:${years}:${orderId}`,
         user_id: user.id,
         subscription_id: null,
         order_id: orderId,
-        amount: ONE_TIME_YEAR_AMOUNT,
+        amount,
         status: "pending",
       })
       .execute();
@@ -54,8 +67,8 @@ export async function POST(_request: NextRequest) {
       success: true,
       customerKey,
       orderId,
-      amount: ONE_TIME_YEAR_AMOUNT,
-      orderName: ONE_TIME_YEAR_ORDER_NAME,
+      amount,
+      orderName: oneTimeOrderName(years),
     });
   } catch (error) {
     console.error("One-time prepare error:", error);

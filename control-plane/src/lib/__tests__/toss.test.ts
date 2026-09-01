@@ -10,6 +10,10 @@ import {
   chargeBillingKey,
   confirmPayment,
   isDefinitiveTossFailure,
+  isOneTimeYears,
+  oneTimeAmount,
+  oneTimeOrderName,
+  oneTimeYearsForAmount,
   TossApiError,
 } from "@/lib/toss";
 
@@ -65,6 +69,18 @@ describe("Toss payment requests", () => {
         headers: expect.objectContaining({ "Idempotency-Key": "order" }),
       }),
     );
+  });
+
+  test("validates and prices multi-year one-time support", () => {
+    expect(isOneTimeYears(1)).toBe(true);
+    expect(isOneTimeYears(10)).toBe(true);
+    expect(isOneTimeYears(0)).toBe(false);
+    expect(isOneTimeYears(1.5)).toBe(false);
+    expect(isOneTimeYears(11)).toBe(false);
+    expect(oneTimeAmount(3)).toBe(36000);
+    expect(oneTimeYearsForAmount(60000)).toBe(5);
+    expect(oneTimeYearsForAmount(13000)).toBeNull();
+    expect(oneTimeOrderName(2)).toBe("나루 후원 (2년, 한 번만 결제)");
   });
 
   test.each([

@@ -2,6 +2,7 @@ import { db } from "@/lib/database";
 import {
   BillingInterval,
   getPaymentByOrderId,
+  oneTimeYearsForAmount,
   TossApiError,
   TossPaymentResult,
 } from "@/lib/toss";
@@ -137,10 +138,14 @@ async function reconcilePaymentCore(
   if (payment.status !== "pending") return { state: "done" };
 
   if (payment.attempt_key?.startsWith("one_time:")) {
+    const years = oneTimeYearsForAmount(payment.amount);
+    if (years === null) {
+      throw new Error(`Payment ${payment.id} has an invalid one-time amount`);
+    }
     await applyOneTimePayment({
       userId: payment.user_id,
       amount: payment.amount,
-      interval: "year",
+      years,
       payment: tossPayment,
       paymentId: payment.id,
     });

@@ -19,6 +19,31 @@ export const PLAN_ORDER_NAMES: Record<BillingInterval, string> = {
 // recurring annual plan since there's no retention commitment.
 export const ONE_TIME_YEAR_AMOUNT = 12000;
 export const ONE_TIME_YEAR_ORDER_NAME = "나루 후원 (1년, 한 번만 결제)";
+export const MAX_ONE_TIME_YEARS = 10;
+
+export function isOneTimeYears(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= MAX_ONE_TIME_YEARS
+  );
+}
+
+export function oneTimeAmount(years: number): number {
+  if (!isOneTimeYears(years)) throw new Error("Invalid one-time support years");
+  return ONE_TIME_YEAR_AMOUNT * years;
+}
+
+export function oneTimeYearsForAmount(amount: number): number | null {
+  const years = amount / ONE_TIME_YEAR_AMOUNT;
+  return isOneTimeYears(years) ? years : null;
+}
+
+export function oneTimeOrderName(years: number): string {
+  if (!isOneTimeYears(years)) throw new Error("Invalid one-time support years");
+  return `나루 후원 (${years}년, 한 번만 결제)`;
+}
 
 export function isBillingInterval(value: unknown): value is BillingInterval {
   return value === "month" || value === "year";
