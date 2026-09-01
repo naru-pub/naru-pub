@@ -37,7 +37,7 @@ export type ReconciliationResult =
   | { state: "refunded"; amount: number; full: boolean }
   | { state: "expired" };
 
-export async function reconcilePayment(
+async function reconcilePaymentCore(
   paymentId: number,
 ): Promise<ReconciliationResult> {
   const payment = await db
@@ -176,4 +176,38 @@ export async function reconcilePayment(
     paymentId: payment.id,
   });
   return { state: "done" };
+}
+
+export async function reconcilePayment(
+  paymentId: number,
+): Promise<ReconciliationResult> {
+  try {
+    const result = await reconcilePaymentCore(paymentId);
+    await db
+      .updateTable("payments")
+      .set({ last_reconciled_at: new Date(), reconciliation_error: null })
+      .where("id", "=", paymentId)
+      .execute();
+    return result;
+  } catch (error) {
+    const message = (
+      error instanceof Error ? error.message : String(error)
+    ).slice(0, 2000);
+    try {
+      await db
+        .updateTable("payments")
+        .set({
+          last_reconciled_at: new Date(),
+          reconciliation_error: message,
+        })
+        .where("id", "=", paymentId)
+        .execute();
+    } catch (diagnosticError) {
+      console.error(
+        `Failed to record reconciliation error for payment ${paymentId}`,
+        diagnosticError,
+      );
+    }
+    throw error;
+  }
 }

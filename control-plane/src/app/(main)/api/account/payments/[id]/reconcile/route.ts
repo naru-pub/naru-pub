@@ -3,6 +3,7 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { assertJsonContentType } from "@/lib/utils";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
 
 export async function POST(
   request: NextRequest,
@@ -26,13 +27,16 @@ export async function POST(
         { status: 400 },
       );
     }
-    const owned = await db
+    const payment = await db
       .selectFrom("payments")
-      .select("id")
+      .select(["id", "user_id"])
       .where("id", "=", paymentId)
-      .where("user_id", "=", user.id)
       .executeTakeFirst();
-    if (!owned) {
+    if (
+      !payment ||
+      (payment.user_id !== user.id &&
+        !PAYMENT_OPERATOR_USERS.has(user.loginName))
+    ) {
       return NextResponse.json(
         { success: false, message: "결제 내역을 찾을 수 없습니다." },
         { status: 404 },

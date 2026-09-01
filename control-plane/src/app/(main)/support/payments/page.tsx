@@ -4,7 +4,7 @@ import { ArrowLeft, ReceiptText } from "lucide-react";
 
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { SUPPORT_VISIBLE_USERS } from "@/lib/support";
+import { PAYMENT_OPERATOR_USERS, SUPPORT_VISIBLE_USERS } from "@/lib/support";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,13 +109,18 @@ export default async function PaymentsPage() {
   return (
     <div className="bg-background min-h-screen">
       <div className="max-w-5xl mx-auto p-6 space-y-6">
-        <div>
+        <div className="flex items-center justify-between">
           <Button asChild variant="ghost" size="sm">
             <Link href="/support">
               <ArrowLeft size={16} />
               후원으로 돌아가기
             </Link>
           </Button>
+          {PAYMENT_OPERATOR_USERS.has(user.loginName) ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href="/support/payments/operator">결제 운영</Link>
+            </Button>
+          ) : null}
         </div>
 
         <Card className="bg-card border-2 border-border shadow-lg">

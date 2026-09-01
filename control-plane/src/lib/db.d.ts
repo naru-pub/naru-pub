@@ -185,6 +185,8 @@ export interface Payments {
   period_end: Timestamp | null;
   refunded_amount: Generated<number>;
   refunded_at: Timestamp | null;
+  last_reconciled_at: Timestamp | null;
+  reconciliation_error: string | null;
   raw: unknown | null;
   created_at: Generated<Timestamp>;
 }
