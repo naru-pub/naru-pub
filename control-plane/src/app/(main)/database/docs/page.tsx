@@ -213,18 +213,33 @@ export default function DatabaseDocs() {
                     {[
                       [
                         "get(id)",
-                        "문서 한 개 → { id, data, created_at, updated_at }. 없으면 404",
+                        "문서 한 개 → { id, data, created_at, updated_at, version }. 없으면 404",
                       ],
                       [
                         "list({ limit, after, orderBy, direction, where })",
                         "{ documents, nextCursor }. 기본 50개, 최대 100개",
                       ],
-                      ["add(data)", "서버 ID로 새 문서 생성 → { id }"],
                       [
-                        "set(id, data)",
-                        "지정 ID로 생성 또는 전체 교체 → { id }",
+                        "all({ limit, orderBy, direction, where })",
+                        "조건에 맞는 모든 문서를 필요할 때마다 한 페이지씩 가져오는 async iterator",
                       ],
-                      ["delete(id)", "문서 삭제 → { success: true }"],
+                      [
+                        "count({ where })",
+                        "조건에 맞는 문서 개수를 서버에서 계산 → 숫자",
+                      ],
+                      ["add(data)", "서버 ID로 새 문서 생성 → { id, version }"],
+                      [
+                        "set(id, data, { ifVersion })",
+                        "지정 ID로 생성 또는 전체 교체 → { id, version }",
+                      ],
+                      [
+                        "update(id, patch, { unset, ifVersion })",
+                        "지정한 필드만 병합하고 unset에 적은 필드는 삭제 → { id, version }. 문서가 없으면 404",
+                      ],
+                      [
+                        "delete(id, { ifVersion })",
+                        "문서 삭제 → { success: true }",
+                      ],
                     ].map(([call, result]) => (
                       <tr className="border-b" key={call}>
                         <td className="p-3">
@@ -270,16 +285,42 @@ const comments = await db.collection("comments").list({
                 없는 문서는 일치하지 않습니다.
               </p>
               <p>
-                중첩 경로·배열 검색·범위 비교·OR·부분 문자열 검색은 아직
-                지원하지 않습니다. 빈 <code>where: {"{}"}</code> 또는 where
-                생략은 전체 목록을 뜻합니다. 필터 값은 URL에 들어가므로 비밀번호
-                같은 비밀을 넣지 마세요.
+                값 대신 <code>{"{ gte, gt, lte, lt }"}</code> 형태의 비교 객체를
+                넘기면 범위로 찾습니다. 달력처럼 기간을 보여주는 화면은 전체
+                문서를 받아 걸러내는 대신 필요한 구간만 요청할 수 있습니다.
+              </p>
+              <Code>{`// 2026년 9월에 쓴 글만 가져옵니다.
+const page = await db.collection("posts").list({
+  where: { date: { gte: "2026-09-01", lte: "2026-09-30" } },
+  orderBy: "data.date",
+});
+
+// 등호 조건과 범위 조건을 함께 쓸 수 있습니다.
+const mine = await db.collection("posts").list({
+  where: { categoryId: "diary", score: { gte: 10, lt: 100 } },
+});`}</Code>
+              <p>
+                비교 대상은 문자열 또는 숫자이며, 한 필드의 두 경계는 같은
+                종류여야 합니다. 비교는 같은 종류끼리만 이루어지므로 문자열
+                조건이 숫자 필드를 찾아내는 일은 없고, 해당 필드가 없는 문서는
+                결과에 포함되지 않습니다. 날짜는 <code>2026-09-01</code>처럼
+                자리를 채운 문자열로 저장해야 사전순 비교가 날짜순과 일치합니다.
+                등호 하나와 범위 경계 하나가 각각 조건 한 개로 세어지며, 합쳐서
+                최대 5개입니다.
+              </p>
+              <p>
+                중첩 경로·배열 검색·OR·부분 문자열 검색은 아직 지원하지
+                않습니다. 빈 <code>where: {"{}"}</code> 또는 where 생략은 전체
+                목록을 뜻합니다. 필터 값은 URL에 들어가므로 비밀번호 같은 비밀을
+                넣지 마세요.
               </p>
               <p>
                 나루가 JSON 필터용 GIN 인덱스와 생성·수정 시각 정렬용 인덱스를
                 자동으로 유지합니다. 필드별 인덱스를 직접 생성할 필요가 없으며,
-                문서 저장·수정·삭제 시 함께 갱신됩니다. 정렬은 서버 메타데이터만
-                지원합니다.
+                문서 저장·수정·삭제 시 함께 갱신됩니다. 등호 조건은 이 인덱스를
+                사용하고, 범위 비교와 JSON 필드 정렬은 컬렉션 안을 훑습니다.
+                사이트당 문서 한도(10,000개) 안에서는 충분히 빠르지만, 자주 쓰는
+                조건은 등호로 좁힌 뒤 범위를 더하는 편이 좋습니다.
               </p>
               <p>
                 <strong>필터는 접근 권한이 아닙니다.</strong> 방문자는 where를
@@ -291,15 +332,18 @@ const comments = await db.collection("comments").list({
               <p>
                 기본 정렬은 ID 오름차순입니다. <code>orderBy</code>는{" "}
                 <code>id</code>, <code>created_at</code>(서버 생성 시각),{" "}
-                <code>updated_at</code>(서버 수정 시각) 중 하나이며,{" "}
+                <code>updated_at</code>(서버 수정 시각), 그리고 문서의 최상위
+                필드를 뜻하는 <code>data.필드이름</code> 중 하나이며,{" "}
                 <code>direction</code>은 <code>asc</code>(기본값) 또는{" "}
-                <code>desc</code>입니다. 블로그와 방명록은{" "}
-                <code>created_at</code> 내림차순으로 최신 글부터 표시합니다.
-                JSON 내부 필드(예: <code>data.createdAt</code>) 정렬은 지원하지
-                않습니다.
+                <code>desc</code>입니다. 방명록은 <code>created_at</code>{" "}
+                내림차순으로 최신 글부터 표시합니다. 글쓴이가 날짜를 직접 정하는
+                블로그라면 <code>orderBy: "data.date"</code>로 정렬해야 나중에
+                쓴 지난 날짜 글이 맨 위로 올라오지 않습니다.
               </p>
               <p>
-                동일한 시각의 문서는 같은 방향의 ID 순서로 정렬합니다. 다음
+                <code>data.필드이름</code>으로 정렬하면 값이 없는 문서는 JSON
+                null과 같은 자리에 놓이고, null·문자열·숫자 순으로 정렬합니다.
+                값이 같은 문서는 같은 방향의 ID 순서로 정렬합니다. 다음
                 페이지에는 응답의 <code>nextCursor</code>를 그대로{" "}
                 <code>after</code>로 보내고, 같은 컬렉션·정렬 필드·방향·필터를
                 유지하세요. 커서를 직접 해석하거나 만들지 마세요. 다른 정렬이나
@@ -309,8 +353,10 @@ const comments = await db.collection("comments").list({
               <p>
                 <code>nextCursor</code>가 <code>null</code>이면 마지막
                 페이지입니다. 이전 페이지는 페이지 내용이나 시작 커서를 저장해
-                구현할 수 있습니다. 페이지 번호·offset·전체 개수는 제공하지
-                않습니다. 페이지 이동은 하나의 스냅샷이 아니므로, 새 문서는
+                구현할 수 있습니다. 페이지 번호와 offset은 제공하지 않지만, 전체
+                개수는 <code>count()</code>로 서버에서 셀 수 있습니다. 모든
+                문서를 훑어야 한다면 <code>all()</code>이 커서를 대신
+                관리합니다. 페이지 이동은 하나의 스냅샷이 아니므로, 새 문서는
                 새로고침해야 보일 수 있고 정렬 기준 값이 바뀐 문서는 이동 중
                 빠지거나 다시 나타날 수 있습니다.
               </p>
@@ -321,11 +367,53 @@ const comments = await db.collection("comments").list({
                 마이그레이션 당시의 수정 시각으로 채워집니다. JSON에 같은 이름의
                 필드를 넣어도 서버 시각을 변경할 수 없습니다.
               </p>
+              <Code>{`// 커서를 직접 다루지 않고 전부 순회합니다.
+for await (const document of db.collection("posts").all({
+  where: { categoryId: "diary" },
+  orderBy: "data.date",
+  direction: "desc",
+})) {
+  console.log(document.id, document.data);
+}
+
+// 개수는 서버가 셉니다.
+const total = await db.collection("posts").count({
+  where: { categoryId: "diary" },
+});`}</Code>
+              <h3 id="versions" className="font-bold">
+                부분 갱신과 덮어쓰기 방지
+              </h3>
               <p>
-                실시간 구독·부분 필드 갱신은 제공하지 않습니다.{" "}
                 <code>set()</code>은 기존 필드를 합치지 않고 전체 JSON을
-                교체합니다. 공개 생성 전용에서는 <code>set()</code>으로 새 ID를
-                만드는 것도 금지됩니다.
+                교체합니다. 일부 필드만 바꾸려면 <code>update()</code>를
+                사용하세요. 최상위 필드를 병합하고, <code>unset</code>에 적은
+                필드는 지웁니다. 값으로 넘긴 <code>null</code>은 필드를 지우지
+                않고 null을 저장하므로, 삭제는 항상 <code>unset</code>으로만
+                일어납니다. 대상 문서가 없거나 JSON 객체가 아니면 실패합니다.
+              </p>
+              <p>
+                모든 문서에는 저장할 때마다 1씩 오르는 <code>version</code>이
+                있습니다. 읽어 온 <code>version</code>을 <code>ifVersion</code>
+                으로 함께 보내면, 그 사이 다른 곳에서 저장된 문서는 덮어쓰지
+                않고 <code>VERSION_CONFLICT</code> 코드와 함께 409로 거절합니다.
+                <code>ifVersion: 0</code>은 &ldquo;아직 없는 문서&rdquo;를
+                뜻하므로 새 글을 만들 때 같은 ID를 덮어쓰는 사고를 막습니다.
+              </p>
+              <Code>{`const post = await db.collection("posts").get("hello");
+try {
+  await owner.collection("posts").update(
+    "hello",
+    { title: "새 제목" },
+    { unset: ["legacy"], ifVersion: post.version },
+  );
+} catch (error) {
+  if (error.code === "VERSION_CONFLICT")
+    alert("다른 곳에서 먼저 저장했습니다. 새로고침 후 다시 시도하세요.");
+  else throw error;
+}`}</Code>
+              <p>
+                실시간 구독은 제공하지 않습니다. 공개 생성 전용 컬렉션에서는{" "}
+                <code>set()</code>으로 새 ID를 만드는 것도 금지됩니다.
               </p>
             </Section>
             <Section id="owner" title="04 · 웹사이트에서 관리자 로그인">
@@ -420,12 +508,28 @@ await owner.collection("posts").set("hello", {
   coverImage: image.url,
 });
 
+// metadata는 목록에도 함께 돌아오므로, 어떤 글의 이미지인지 되짚어
+// 글을 지울 때 남은 파일을 함께 정리할 수 있습니다.
 const files = await owner.files.list();
-await owner.files.delete(image.id);`}</Code>
+const mine = files.filter((file) =>
+  file.metadata?.references?.some((reference) => reference.id === "hello"),
+);
+for (const file of mine) await owner.files.delete(file.id);
+
+const { bytes, maxBytes, count, maxFiles } = await owner.files.usage();`}</Code>
+              <p>
+                <code>metadata</code>에 넣은 값은 <code>files.list()</code>와{" "}
+                <code>files.get()</code>에 그대로 돌아옵니다. 어떤 문서가 그
+                파일을 쓰는지 적어 두면, 문서를 삭제할 때 딸린 파일도 함께 지워
+                저장 용량이 새는 것을 막을 수 있습니다.{" "}
+                <code>files.usage()</code>는 현재 사용량과 한도를 알려줍니다.
+              </p>
               <h3 className="text-lg font-semibold">원자적 batch와 검증</h3>
               <p>
-                <code>owner.batch()</code>는 최대 100개의 문서 저장·삭제를 한
-                트랜잭션으로 처리합니다. 하나라도 실패하면 모두 취소됩니다.
+                <code>owner.batch()</code>는 최대 100개의 문서 저장·병합·삭제를
+                한 트랜잭션으로 처리합니다. 하나라도 실패하면 모두 취소되므로,
+                <code>ifVersion</code>이 어긋난 항목 하나가 앞선 저장까지 함께
+                되돌립니다.
                 <code>createDatabase()</code>의 <code>schemas</code>에는 요청 전
                 실행할 동기 검증 함수를 지정할 수 있습니다. 클라이언트 검증은
                 개발 편의 기능이며 보안 경계가 아닙니다.
@@ -438,16 +542,18 @@ await owner.files.delete(image.id);`}</Code>
 });
 
 await owner.batch([
-  { type: "set", collection: "posts", id, data: post },
+  { type: "set", collection: "posts", id, data: post, ifVersion: 0 },
+  { type: "update", collection: "stats", id: "totals", data: { posts: 12 } },
   { type: "delete", collection: "drafts", id },
 ]);`}</Code>
               <p>
                 SDK 오류의 <code>code</code>에는
                 <code>UNREGISTERED_REDIRECT_URI</code>,
                 <code>COLLECTION_NOT_AUTHORIZED</code>,
-                <code>OWNER_SESSION_EXPIRED</code>처럼 처리 가능한 안정적인 값이
-                들어갑니다. 로컬 개발에서는 <code>controlPlaneOrigin</code>에
-                HTTP localhost 또는 loopback 주소만 지정할 수 있습니다.
+                <code>VERSION_CONFLICT</code>,<code>OWNER_SESSION_EXPIRED</code>
+                처럼 처리 가능한 안정적인 값이 들어갑니다. 로컬 개발에서는{" "}
+                <code>controlPlaneOrigin</code>에 HTTP localhost 또는 loopback
+                주소만 지정할 수 있습니다.
               </p>
             </Section>
             <Section id="example" title="05 · 예제 블로그 설치">

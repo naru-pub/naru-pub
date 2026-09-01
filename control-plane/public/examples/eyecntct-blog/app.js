@@ -5,10 +5,13 @@ const state = {
   db: null,
   owner: null,
   posts: [],
+  monthPosts: [],
+  total: 0,
   categories: [],
   categoryFilter: "",
   guests: [],
   month: new Date(),
+  editingVersion: undefined,
   busy: false,
 };
 const fallbackProfile = {
@@ -165,21 +168,13 @@ async function connect() {
   if (!config.site)
     throw new Error("config.js에 나루 로그인 이름을 입력하세요.");
   const { createDatabase } =
-    await import("https://naru.pub/sdk/1.0.0/naru-data.js?media=1");
+    await import("https://naru.pub/sdk/1.0.0/naru-data.js");
   return createDatabase({ site: config.site });
 }
-async function listAll(collection, options = {}) {
+async function collect(collection, options) {
   const documents = [];
-  let after;
-  do {
-    const page = await collection.list({
-      limit: 100,
-      ...options,
-      ...(after ? { after } : {}),
-    });
-    documents.push(...page.documents);
-    after = page.nextCursor;
-  } while (after && documents.length < 1000);
+  for await (const document of collection.all(options))
+    documents.push(document);
   return documents;
 }
 function postsFromDocuments(documents) {
@@ -188,29 +183,110 @@ function postsFromDocuments(documents) {
       doc.data && typeof doc.data === "object" && !Array.isArray(doc.data)
         ? doc.data
         : {};
-    return { id: doc.id, createdAt: doc.created_at, ...data };
+    return {
+      id: doc.id,
+      createdAt: doc.created_at,
+      version: doc.version,
+      ...data,
+    };
   });
 }
-async function loadPosts(categoryId = "") {
-  const documents = await listAll(state.db.collection("posts"), {
-    orderBy: "created_at",
-    direction: "desc",
-    ...(categoryId ? { where: { categoryId } } : {}),
-  });
+// Sort on the author's own date rather than on when the row happened to be
+// written, so a backdated record still lands in the right place.
+const RECENT = { orderBy: "data.date", direction: "desc" };
+const RECENT_LIMIT = 8;
+// The grid always shows six full weeks, so a month view also needs the
+// leading and trailing days of its neighbours.
+function calendarRange() {
+  const year = state.month.getFullYear();
+  const month = state.month.getMonth();
+  const start = new Date(year, month, 1 - new Date(year, month, 1).getDay());
+  const end = new Date(start);
+  end.setDate(start.getDate() + 41);
+  return { gte: dateKey(start), lte: dateKey(end) };
+}
+function categoryWhere() {
+  return state.categoryFilter ? { categoryId: state.categoryFilter } : {};
+}
+async function loadPosts(categoryId = state.categoryFilter) {
   state.categoryFilter = categoryId;
-  state.posts = postsFromDocuments(documents);
+  const where = categoryWhere();
+  const posts = state.db.collection("posts");
+  const [page, total] = await Promise.all([
+    posts.list({ ...RECENT, limit: RECENT_LIMIT, where }),
+    // The server counts. The browser never pages through everything to total.
+    posts.count({ where }),
+  ]);
+  state.posts = postsFromDocuments(page.documents);
+  state.total = total;
+}
+async function loadMonth() {
+  // One range query per month, instead of every post the site has ever had.
+  state.monthPosts = postsFromDocuments(
+    await collect(state.db.collection("posts"), {
+      where: { ...categoryWhere(), date: calendarRange() },
+      orderBy: "data.date",
+    }),
+  );
+}
+async function migrateCategories(documents) {
+  for (const category of state.categories) {
+    const source = documents.find((doc) => doc.id === category.id)?.data;
+    if (source?.name !== category.name || source?.color !== category.color)
+      await state.owner.collection("categories").set(category.id, {
+        name: category.name,
+        color: category.color,
+      });
+  }
+  let migrated = 0;
+  // A one-time migration has to see every post, not just the recent page.
+  for await (const document of state.owner.collection("posts").all()) {
+    const [post] = postsFromDocuments([document]);
+    if (
+      post.categoryId &&
+      state.categories.some((category) => category.id === post.categoryId)
+    )
+      continue;
+    const legacy = categoryForPost(post);
+    let category = state.categories.find(
+      (item) =>
+        item.name.localeCompare(legacy.name, "ko", {
+          sensitivity: "base",
+        }) === 0,
+    );
+    if (!category) {
+      category = { id: crypto.randomUUID(), ...normalizeCategory(legacy) };
+      await state.owner.collection("categories").set(category.id, {
+        name: category.name,
+        color: category.color,
+      });
+      state.categories.push(category);
+    }
+    // A merge patch touches the category fields only, so the body and every
+    // other field are neither reread nor rewritten.
+    await state.owner
+      .collection("posts")
+      .update(
+        post.id,
+        { categoryId: category.id },
+        { unset: ["category", "categoryColor"], ifVersion: post.version },
+      );
+    migrated += 1;
+  }
+  state.categories.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  return migrated;
+}
+async function refresh() {
+  await Promise.all([loadPosts(), loadMonth()]);
+  render();
 }
 async function load() {
   try {
     state.db = await connect();
     state.owner = await state.db.completeOwnerSignIn();
-    const [posts, categories, guests, profile] = await Promise.all([
-      listAll(state.db.collection("posts"), {
-        orderBy: "created_at",
-        direction: "desc",
-      }),
-      listAll(state.db.collection("categories")),
-      listAll(state.db.collection("guestbook"), {
+    const [categories, guests, profile] = await Promise.all([
+      collect(state.db.collection("categories")),
+      collect(state.db.collection("guestbook"), {
         orderBy: "created_at",
         direction: "desc",
       }),
@@ -223,7 +299,6 @@ async function load() {
       .map((doc) => normalizeCategory({ id: doc.id, ...doc.data }))
       .filter((category) => category.name)
       .sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    state.posts = postsFromDocuments(posts);
     state.guests = guests.map((doc) => ({
       id: doc.id,
       createdAt: doc.created_at,
@@ -232,63 +307,17 @@ async function load() {
     let migrated = 0;
     if (state.owner) {
       try {
-        for (const category of state.categories) {
-          const source = categories.find((doc) => doc.id === category.id)?.data;
-          if (
-            source?.name !== category.name ||
-            source?.color !== category.color
-          )
-            await state.owner.collection("categories").set(category.id, {
-              name: category.name,
-              color: category.color,
-            });
-        }
-        for (const post of state.posts) {
-          if (
-            post.categoryId &&
-            state.categories.some((category) => category.id === post.categoryId)
-          )
-            continue;
-          const legacy = categoryForPost(post);
-          let category = state.categories.find(
-            (item) =>
-              item.name.localeCompare(legacy.name, "ko", {
-                sensitivity: "base",
-              }) === 0,
-          );
-          if (!category) {
-            category = {
-              id: crypto.randomUUID(),
-              ...normalizeCategory(legacy),
-            };
-            await state.owner.collection("categories").set(category.id, {
-              name: category.name,
-              color: category.color,
-            });
-            state.categories.push(category);
-          }
-          const data = { ...post, categoryId: category.id };
-          delete data.id;
-          delete data.createdAt;
-          delete data.category;
-          delete data.categoryColor;
-          await state.owner.collection("posts").set(post.id, data);
-          post.categoryId = category.id;
-          delete post.category;
-          delete post.categoryColor;
-          migrated += 1;
-        }
-        state.categories.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+        migrated = await migrateCategories(categories);
       } catch (error) {
         notice(
-          `글은 불러왔지만 카테고리 마이그레이션을 저장하지 못했습니다. ${error.message || error}`,
+          `카테고리 마이그레이션을 저장하지 못했습니다. ${error.message || error}`,
         );
       }
     }
     populateCategoryOptions();
     populateCategoryFilter();
     renderProfile(profile?.data || fallbackProfile);
-    render();
+    await refresh();
     setOwnerUI();
     if (migrated)
       notice(`${migrated}개 글의 카테고리를 데이터베이스로 옮겼습니다.`);
@@ -333,7 +362,7 @@ function renderFeatured() {
     root.innerHTML = `<div class="empty-card">${state.categoryFilter ? "이 카테고리에는 아직 기록이 없어요." : "아직 둥지에 기록이 없어요."}</div>`;
     return;
   }
-  state.posts.slice(0, 8).forEach((post) => {
+  state.posts.forEach((post) => {
     const article = document.createElement("article");
     article.className = "post-card";
     const category = categoryForPost(post);
@@ -361,7 +390,7 @@ function renderCalendar() {
     const cell = document.createElement("div");
     cell.className = `calendar-day${day.getMonth() !== month ? " muted" : ""}${key === today ? " today" : ""}`;
     cell.innerHTML = `<div class="day-number">${day.getDate()}</div>`;
-    state.posts
+    state.monthPosts
       .filter((post) => post.date === key)
       .slice(0, 3)
       .forEach((post) => {
@@ -409,7 +438,11 @@ async function ownerAction(action) {
   try {
     await action();
   } catch (error) {
-    notice(error.message || String(error));
+    notice(
+      error?.code === "VERSION_CONFLICT"
+        ? "다른 곳에서 먼저 저장한 기록입니다. 새로고침한 뒤 다시 시도하세요."
+        : error.message || String(error),
+    );
   } finally {
     state.busy = false;
   }
@@ -460,6 +493,9 @@ function syncCategoryEditor() {
 function openEditor(post = null) {
   $("editorForm").reset();
   $("postId").value = post?.id || "";
+  // Saving quotes the version this form was opened with, so a record edited
+  // elsewhere in the meantime is reported instead of silently overwritten.
+  state.editingVersion = post?.version;
   $("editorTitle").textContent = post ? "기록 수정" : "새 기록";
   $("titleInput").value = cleanText(post?.title);
   $("dateInput").value = post?.date || dateKey(new Date());
@@ -499,26 +535,26 @@ document
   .forEach(
     (button) => (button.onclick = () => button.closest("dialog").close()),
   );
-$("previousMonth").onclick = () => {
-  state.month = new Date(
-    state.month.getFullYear(),
-    state.month.getMonth() - 1,
-    1,
-  );
-  renderCalendar();
-};
-$("nextMonth").onclick = () => {
-  state.month = new Date(
-    state.month.getFullYear(),
-    state.month.getMonth() + 1,
-    1,
-  );
-  renderCalendar();
-};
-$("todayButton").onclick = () => {
-  state.month = new Date();
-  renderCalendar();
-};
+// Each month is its own range query, so moving through the calendar asks the
+// database for that month rather than filtering everything already loaded.
+function showMonth(month) {
+  ownerAction(async () => {
+    const previous = state.month;
+    state.month = month;
+    try {
+      await loadMonth();
+    } catch (error) {
+      state.month = previous;
+      throw error;
+    }
+    renderCalendar();
+  });
+}
+$("previousMonth").onclick = () =>
+  showMonth(new Date(state.month.getFullYear(), state.month.getMonth() - 1, 1));
+$("nextMonth").onclick = () =>
+  showMonth(new Date(state.month.getFullYear(), state.month.getMonth() + 1, 1));
+$("todayButton").onclick = () => showMonth(new Date());
 $("categoryInput").onchange = () => {
   syncCategoryEditor();
   if (!$("newCategoryInput").disabled) $("newCategoryInput").focus();
@@ -530,12 +566,17 @@ $("categoryFilter").onchange = async (event) => {
   select.disabled = true;
   notice("카테고리 기록을 불러오고 있습니다…");
   try {
-    await loadPosts(select.value);
+    const previous = state.categoryFilter;
+    try {
+      await loadPosts(select.value);
+      await loadMonth();
+    } catch (error) {
+      state.categoryFilter = previous;
+      throw error;
+    }
     renderFeatured();
     renderCalendar();
-    notice(
-      `${select.selectedOptions[0].textContent} · ${state.posts.length}개 기록`,
-    );
+    notice(`${select.selectedOptions[0].textContent} · ${state.total}개 기록`);
   } catch (error) {
     select.value = state.categoryFilter;
     notice(`카테고리를 불러오지 못했습니다. ${error.message || error}`);
@@ -625,6 +666,8 @@ $("editorForm").onsubmit = (event) => {
       bodyMarkdown,
       coverImage: markdownImage(bodyMarkdown),
     };
+    // A new record must not exist yet; an edit must still be at its version.
+    const ifVersion = state.editingVersion ?? 0;
     if (newCategory) {
       await state.owner.batch([
         {
@@ -633,35 +676,51 @@ $("editorForm").onsubmit = (event) => {
           id: category.id,
           data: { name: category.name, color: category.color },
         },
-        { type: "set", collection: "posts", id, data: post },
+        { type: "set", collection: "posts", id, data: post, ifVersion },
       ]);
       state.categories.push(category);
       state.categories.sort((a, b) => a.name.localeCompare(b.name, "ko"));
       populateCategoryOptions();
       populateCategoryFilter();
-    } else await state.owner.collection("posts").set(id, post);
-    const existing = state.posts.findIndex((p) => p.id === id);
-    const visible =
-      !state.categoryFilter || post.categoryId === state.categoryFilter;
-    if (!visible && existing >= 0) state.posts.splice(existing, 1);
-    else if (existing >= 0)
-      state.posts[existing] = { ...state.posts[existing], ...post };
-    else if (visible)
-      state.posts.unshift({ id, createdAt: new Date().toISOString(), ...post });
+    } else await state.owner.collection("posts").set(id, post, { ifVersion });
     $("editorDialog").close();
-    render();
+    await refresh();
     notice("기록을 저장했습니다.");
   });
 };
+// Editor uploads record the post they belong to, so deleting a record can take
+// its images with it instead of leaking them against the storage quota forever.
+async function deletePostImages(postId) {
+  const files = await state.owner.files.list();
+  const orphans = files.filter((file) => {
+    const references = file.metadata?.references;
+    return (
+      Array.isArray(references) &&
+      references.length > 0 &&
+      references.every(
+        (reference) =>
+          reference?.collection === "posts" && reference?.id === postId,
+      )
+    );
+  });
+  for (const file of orphans) await state.owner.files.delete(file.id);
+  return orphans.length;
+}
 $("deleteButton").onclick = () =>
   ownerAction(async () => {
     const id = $("postId").value;
     if (!id || !state.owner || !confirm("이 기록을 삭제할까요?")) return;
-    await state.owner.collection("posts").delete(id);
-    state.posts = state.posts.filter((p) => p.id !== id);
+    await state.owner
+      .collection("posts")
+      .delete(id, { ifVersion: state.editingVersion });
+    const removed = await deletePostImages(id);
     $("editorDialog").close();
-    render();
-    notice("기록을 삭제했습니다.");
+    await refresh();
+    notice(
+      removed
+        ? `기록과 이미지 ${removed}장을 삭제했습니다.`
+        : "기록을 삭제했습니다.",
+    );
   });
 $("guestbookForm").onsubmit = (event) => {
   event.preventDefault();

@@ -172,11 +172,17 @@ integration("indexed filtered queries", () => {
     for (const [where, ids] of [
       // A month window: the query the calendar view needs.
       [{ date: { gte: "2026-09-01", lt: "2026-10-01" } }, ["other", "sep"]],
-      [{ date: { gte: "2026-09-01", lte: "2026-10-01" } }, ["oct", "other", "sep"]],
+      [
+        { date: { gte: "2026-09-01", lte: "2026-10-01" } },
+        ["oct", "other", "sep"],
+      ],
       [{ date: { gt: "2026-09-15" } }, ["oct", "other"]],
       [{ date: { lte: "2026-01-15" } }, ["jan"]],
       // Ranges never leak across types: numbers, arrays and absent fields stay out.
-      [{ date: { gte: "2026-01-01", lte: "2026-12-31" } }, ["jan", "oct", "other", "sep"]],
+      [
+        { date: { gte: "2026-01-01", lte: "2026-12-31" } },
+        ["jan", "oct", "other", "sep"],
+      ],
       [{ score: { gte: 20, lt: 40 } }, ["oct", "sep"]],
       [{ score: { gte: "20" } }, []],
       // Equality and ranges combine with AND.
@@ -192,16 +198,20 @@ integration("indexed filtered queries", () => {
         adminUserId: undefined,
       });
       expect(result.documents!.map((d) => d.id)).toEqual(ids);
-      expect(
-        (await call("GET", ["notes"], { where, count: true })).count,
-      ).toBe(ids.length);
+      expect((await call("GET", ["notes"], { where, count: true })).count).toBe(
+        ids.length,
+      );
     }
   });
   test("counts respect filters and read permissions without paging", async () => {
     expect((await call("GET", ["posts"], { count: true })).count).toBe(8);
     expect(
-      (await call("GET", ["posts"], { count: true, where: { category: "일상" } }))
-        .count,
+      (
+        await call("GET", ["posts"], {
+          count: true,
+          where: { category: "일상" },
+        })
+      ).count,
     ).toBe(2);
     // Counting ignores paging inputs rather than truncating at a page.
     expect(

@@ -66,7 +66,9 @@ integration("site database integration", () => {
   });
   test("preview gate rejects sites outside the configured allowlist", async () => {
     const denied = (
-      await sql<{ id: number }>`insert into users(login_name, supporter_comp) values ('not-enabled', false) returning id`.execute(
+      await sql<{
+        id: number;
+      }>`insert into users(login_name, supporter_comp) values ('not-enabled', false) returning id`.execute(
         db,
       )
     ).rows[0].id;
@@ -199,7 +201,9 @@ integration("site database integration", () => {
       await expect(
         call("PATCH", ["notes", "one"], body, true),
       ).rejects.toMatchObject({ status: 400 });
-    await expect(call("PATCH", ["notes", "one"], { data: { a: 1 } })).rejects.toMatchObject({
+    await expect(
+      call("PATCH", ["notes", "one"], { data: { a: 1 } }),
+    ).rejects.toMatchObject({
       status: 403,
     });
   });

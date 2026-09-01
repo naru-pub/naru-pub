@@ -219,7 +219,9 @@ export async function executeData(command: DataCommand) {
           tx.fn.countAll<string>().as("matched"),
         );
         for (const condition of conditions) counter = counter.where(condition);
-        return { count: Number((await counter.executeTakeFirstOrThrow()).matched) };
+        return {
+          count: Number((await counter.executeTakeFirstOrThrow()).matched),
+        };
       }
       const limit = command.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 100)

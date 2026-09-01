@@ -42,7 +42,10 @@ export interface RangeFilter {
 /** Up to 5 predicates on top-level fields, combined with AND. A scalar is an
  * exact equality match; a comparison object is a range. Both bounds of one
  * range must share a type. */
-export type Filter = Record<string, string | number | boolean | null | RangeFilter>;
+export type Filter = Record<
+  string,
+  string | number | boolean | null | RangeFilter
+>;
 /** `data.<field>` sorts on a top-level document field. Absent fields sort with
  * JSON null, below strings, which sort below numbers. */
 export type OrderBy = "id" | "created_at" | "updated_at" | `data.${string}`;
@@ -128,9 +131,7 @@ export interface OwnerDatabase extends Database {
   expiresAt: number;
   files: FileStore;
   /** Atomically applies all operations or none. */
-  batch(
-    operations: BatchOperation[],
-  ): Promise<{
+  batch(operations: BatchOperation[]): Promise<{
     results: Array<{ id?: string; version?: number; success?: true }>;
   }>;
   /** Invalidates this client and attempts storage cleanup before server revocation. Offline revocation may fail. */

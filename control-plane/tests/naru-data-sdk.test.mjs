@@ -578,10 +578,16 @@ test("merge patches and conditional writes travel as PATCH and ifVersion", async
     // A conditional delete carries no body: intermediaries may drop one.
     assert.equal(calls[2].options.body, undefined);
     for (const bad of [-1, 1.5, "2", null])
-      assert.throws(() => posts.set("one", { title: "x" }, { ifVersion: bad }), TypeError);
+      assert.throws(
+        () => posts.set("one", { title: "x" }, { ifVersion: bad }),
+        TypeError,
+      );
     for (const patch of ["text", [1], null, undefined])
       assert.throws(() => posts.update("one", patch), TypeError);
-    assert.throws(() => posts.update("one", { a: 1 }, { unset: "a" }), TypeError);
+    assert.throws(
+      () => posts.update("one", { a: 1 }, { unset: "a" }),
+      TypeError,
+    );
     // The whole-document schema still guards set().
     assert.throws(() => posts.set("one", { title: 1 }), TypeError);
     assert.equal(calls.length, 3);
