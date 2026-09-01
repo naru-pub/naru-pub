@@ -138,9 +138,13 @@ export default function DatabaseManager({
                 });
               }}
             >
+              <label htmlFor="new-collection-name" className="text-sm font-medium">
+                새 컬렉션 이름
+              </label>
               <Input
+                id="new-collection-name"
                 aria-label="새 컬렉션 이름"
-                placeholder="새 컬렉션 이름 (예: guestbook)"
+                placeholder="예: guestbook"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 required
