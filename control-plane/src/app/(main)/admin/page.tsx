@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ReconcilePaymentButton } from "@/app/(main)/support/payments/ReconcilePaymentButton";
+import { ReconcilePaymentButton } from "./ReconcilePaymentButton";
 
 function formatDate(value: Date | string | null) {
   if (!value) return "-";
