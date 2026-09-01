@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import WebsiteAccess from "./WebsiteAccess";
+import MediaLibrary from "./MediaLibrary";
 
 type Collection = { name: string; read_access: string; write_access: string };
 type Document = { id: string; data: unknown };
@@ -89,6 +90,7 @@ export default function DatabaseManager({
         {[
           ["collections", "컬렉션과 문서"],
           ["access", "웹사이트 관리자 로그인"],
+          ["media", "미디어 라이브러리"],
           ["sdk", "웹 SDK"],
         ].map(([value, label]) => (
           <Button
@@ -138,7 +140,10 @@ export default function DatabaseManager({
                 });
               }}
             >
-              <label htmlFor="new-collection-name" className="text-sm font-medium">
+              <label
+                htmlFor="new-collection-name"
+                className="text-sm font-medium"
+              >
                 새 컬렉션 이름
               </label>
               <Input
@@ -379,6 +384,9 @@ export default function DatabaseManager({
       </div>
       <div hidden={view !== "access"}>
         <WebsiteAccess collections={collections} websiteUrl={websiteUrl} />
+      </div>
+      <div hidden={view !== "media"}>
+        <MediaLibrary />
       </div>
       <section hidden={view !== "sdk"} className="min-w-0 border p-5 space-y-4">
         <h2 className="font-bold">웹 SDK</h2>

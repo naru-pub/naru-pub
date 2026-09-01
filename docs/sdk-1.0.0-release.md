@@ -19,9 +19,10 @@ The fixture loads the actual local SDK and uses native browser sessionStorage,
 URL encoding, and crypto. API responses and credentials are synthetic; it makes
 no production writes. Stop the server afterward.
 
-Tests cover CRUD request isolation, PKCE/state and callback expiry, one-time
-concurrent completion, restoration without extending expiry, revocation, offline
-logout, storage denial, failed token persistence, JSON validation, non-JSON HTTP
+Tests cover CRUD request isolation, automatic Client ID discovery, PKCE/state and
+callback expiry, one-time concurrent completion, restoration without extending
+expiry, revocation, offline logout, storage denial, failed token persistence,
+JSON/schema validation, atomic batch encoding, upload metadata, non-JSON HTTP
 errors, network failures, sorting/filter encoding, and generic declaration usage.
 The blog tests exercise public browsing/guestbook and admin draft/publishing flows.
 

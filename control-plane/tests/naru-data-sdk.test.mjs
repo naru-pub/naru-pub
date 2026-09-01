@@ -42,6 +42,69 @@ test("SDK sends cross-origin CRUD requests without credentials", async () => {
   }
 });
 
+test("owner file upload authorizes, uploads directly, finalizes and exposes metadata", async () => {
+  const oldWindow = globalThis.window,
+    oldFetch = globalThis.fetch;
+  const browser = fakeBrowser();
+  globalThis.window = browser;
+  const key =
+    "naru:owner:https://naru.pub:alice:session:https://alice.example/admin.html";
+  browser.storage.set(
+    key,
+    JSON.stringify({
+      accessToken: "t".repeat(43),
+      expiresAt: Date.now() + 3600000,
+      redirectUri: browser.location.href,
+    }),
+  );
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    if (String(url) === "https://upload.example/signed")
+      return new Response(null, { status: 200 });
+    if (options.method === "POST")
+      return Response.json({
+        file: { id: "file_one", status: "pending" },
+        uploadUrl: "https://upload.example/signed",
+        method: "PUT",
+        headers: { "Content-Type": "image/png" },
+      });
+    return Response.json({
+      file: {
+        id: "file_one",
+        name: "upload",
+        contentType: "image/png",
+        size: 3,
+        status: "ready",
+        url: "https://media.naru.pub/1/file_one.png",
+      },
+    });
+  };
+  try {
+    const owner = await createDatabase({ site: "alice" }).completeOwnerSignIn();
+    const file = await owner.files.upload(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    );
+    assert.equal(file.url, "https://media.naru.pub/1/file_one.png");
+    assert.deepEqual(
+      calls.map((call) => [call.url, call.options.method]),
+      [
+        ["https://naru.pub/api/data/alice/_files", "POST"],
+        ["https://upload.example/signed", "PUT"],
+        ["https://naru.pub/api/data/alice/_files/file_one", "PUT"],
+      ],
+    );
+    assert.equal(calls[1].options.body.size, 3);
+    assert.equal(
+      calls[0].options.headers.Authorization,
+      `Bearer ${"t".repeat(43)}`,
+    );
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.fetch = oldFetch;
+  }
+});
+
 test("SDK exposes status codes and rejects unsafe path segments", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = async () =>
@@ -160,6 +223,88 @@ test("owner redirect uses PKCE; callback exchanges once and keeps public calls a
     globalThis.window = oldWindow;
     globalThis.fetch = oldFetch;
   }
+});
+
+test("owner sign-in discovers the registered site client when clientId is omitted", async () => {
+  const oldWindow = globalThis.window,
+    oldFetch = globalThis.fetch;
+  const browser = fakeBrowser();
+  globalThis.window = browser;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), options });
+    return Response.json({ clientId: "discovered-client" });
+  };
+  try {
+    const db = createDatabase({ site: "alice" });
+    await db.signInAsOwner({ collections: ["posts"] });
+    const discovery = new URL(calls[0].url);
+    assert.equal(discovery.pathname, "/api/data-auth/discover");
+    assert.equal(discovery.searchParams.get("site"), "alice");
+    assert.equal(
+      discovery.searchParams.get("redirectUri"),
+      "https://alice.example/admin.html",
+    );
+    assert.equal(
+      new URL(browser.location.href).searchParams.get("clientId"),
+      "discovered-client",
+    );
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.fetch = oldFetch;
+  }
+});
+
+test("schemas reject invalid writes and owner batch snapshots valid operations", async () => {
+  const oldWindow = globalThis.window,
+    oldFetch = globalThis.fetch;
+  const browser = fakeBrowser();
+  globalThis.window = browser;
+  browser.storage.set(
+    "naru:owner:https://naru.pub:alice:session:https://alice.example/admin.html",
+    JSON.stringify({
+      accessToken: "t".repeat(43),
+      expiresAt: Date.now() + 3600000,
+      redirectUri: browser.location.href,
+    }),
+  );
+  let body;
+  globalThis.fetch = async (_url, options) => {
+    body = options.body;
+    return Response.json({ results: [{ id: "one" }] });
+  };
+  try {
+    const db = createDatabase({
+      site: "alice",
+      schemas: { posts: (data) => typeof data.title === "string" },
+    });
+    assert.throws(() => db.collection("posts").set("bad", {}), TypeError);
+    const owner = await db.completeOwnerSignIn();
+    const data = { title: "hello" };
+    await owner.batch([{ type: "set", collection: "posts", id: "one", data }]);
+    data.title = "changed";
+    assert.equal(JSON.parse(body).operations[0].data.title, "hello");
+  } finally {
+    globalThis.window = oldWindow;
+    globalThis.fetch = oldFetch;
+  }
+});
+
+test("controlPlaneOrigin accepts loopback development only", () => {
+  assert.doesNotThrow(() =>
+    createDatabase({
+      site: "alice",
+      controlPlaneOrigin: "http://localhost:3000",
+    }),
+  );
+  assert.throws(
+    () =>
+      createDatabase({
+        site: "alice",
+        controlPlaneOrigin: "https://database.example",
+      }),
+    TypeError,
+  );
 });
 
 test("owner callback rejects tampering, missing state and denial without token requests", async () => {

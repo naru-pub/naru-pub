@@ -28,6 +28,10 @@ import {
   up as lifetimeUp,
   down as lifetimeDown,
 } from "@/migrations/1788208716196_configurable_admin_token_lifetime";
+import {
+  up as filesUp,
+  down as filesDown,
+} from "@/migrations/1788264228670_add_site_data_files";
 
 export async function setupTestDatabase() {
   process.env.FEATURE_ACCESS_MODE = "preview";
@@ -50,8 +54,10 @@ export async function setupTestDatabase() {
   await filterUp(db);
   await sessionsUp(db);
   await lifetimeUp(db);
+  await filesUp(db);
 }
 export async function teardownTestDatabase() {
+  await filesDown(db);
   await lifetimeDown(db);
   await sessionsDown(db);
   await filterDown(db);

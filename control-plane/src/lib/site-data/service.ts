@@ -105,7 +105,11 @@ export async function executeData(command: DataCommand) {
       .executeTakeFirst();
     if (!collection) throw new DataError(404, "Collection not found.");
     if (allowedIds !== undefined && !allowedIds.includes(collection.id))
-      throw new DataError(403, "Collection is outside the approved scope.");
+      throw new DataError(
+        403,
+        "Collection is outside the approved scope.",
+        "COLLECTION_NOT_AUTHORIZED",
+      );
     if (path.length === 1 && (method === "PATCH" || method === "DELETE")) {
       if (allowedIds !== undefined)
         throw new DataError(403, "Website tokens cannot manage collections.");
@@ -278,5 +282,111 @@ export async function executeData(command: DataCommand) {
     }
     // Do not read/return stored data: write-only callers may not read it.
     return { id };
+  });
+}
+
+export async function executeBatch(command: DataCommand) {
+  if (command.method !== "POST")
+    throw new DataError(405, "Method not allowed.");
+  const operations = command.body?.operations;
+  if (
+    !Array.isArray(operations) ||
+    !operations.length ||
+    operations.length > 100
+  )
+    throw new DataError(400, "Batch requires 1–100 operations.");
+  return db.transaction().execute(async (tx) => {
+    const owner = await tx
+      .selectFrom("users")
+      .select(["id", "supporter_comp"])
+      .where("login_name", "=", command.site)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!owner) throw new DataError(404, "Site not found.");
+    const preview = previewFeatureAccess(!!owner.supporter_comp, "database");
+    if (!(preview ?? (await userHasFeature(owner.id, "database"))))
+      throw new DataError(403, "Database access is not enabled for this site.");
+    const allowedIds = command.bearer
+      ? await tokenScope(
+          tx,
+          owner.id,
+          command.bearer.token,
+          command.bearer.origin,
+        )
+      : undefined;
+    if (allowedIds === undefined && command.adminUserId !== owner.id)
+      throw new DataError(403, "Owner access required.");
+    const collectionRows = await tx
+      .selectFrom("site_data_collections")
+      .selectAll()
+      .where("user_id", "=", owner.id)
+      .execute();
+    const results: { id?: string; success?: true }[] = [];
+    for (const raw of operations) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        throw new DataError(400, "Invalid batch operation.");
+      const operation = raw as Record<string, unknown>;
+      const collectionName = name(operation.collection);
+      const id = name(operation.id);
+      const collection = collectionRows.find(
+        (row) => row.name === collectionName,
+      );
+      if (!collection)
+        throw new DataError(404, `Collection ${collectionName} not found.`);
+      if (allowedIds !== undefined && !allowedIds.includes(collection.id))
+        throw new DataError(
+          403,
+          `Collection ${collectionName} is outside the approved scope.`,
+          "COLLECTION_NOT_AUTHORIZED",
+        );
+      authorize(collection.write_access, true);
+      if (operation.type === "delete") {
+        await tx
+          .deleteFrom("site_data_documents")
+          .where("collection_id", "=", collection.id)
+          .where("id", "=", id)
+          .execute();
+        results.push({ success: true });
+        continue;
+      }
+      if (operation.type !== "set" || !Object.hasOwn(operation, "data"))
+        throw new DataError(400, "Batch operations must be set or delete.");
+      const encoded = JSON.stringify(operation.data);
+      const size = Buffer.byteLength(encoded);
+      if (size > MAX_DOCUMENT_BYTES)
+        throw new DataError(413, "Document exceeds 64 KiB.");
+      await tx
+        .insertInto("site_data_documents")
+        .values({
+          collection_id: collection.id,
+          id,
+          data: sql`${encoded}::jsonb`,
+          size_bytes: size,
+        })
+        .onConflict((oc) =>
+          oc.columns(["collection_id", "id"]).doUpdateSet({
+            data: sql`${encoded}::jsonb`,
+            size_bytes: size,
+            updated_at: new Date(),
+          }),
+        )
+        .execute();
+      results.push({ id });
+    }
+    const usage = await tx
+      .selectFrom("site_data_documents as d")
+      .innerJoin("site_data_collections as c", "c.id", "d.collection_id")
+      .where("c.user_id", "=", owner.id)
+      .select([
+        sql<number>`coalesce(sum(d.size_bytes), 0)`.as("bytes"),
+        sql<number>`count(*)`.as("count"),
+      ])
+      .executeTakeFirstOrThrow();
+    if (
+      Number(usage.bytes) > MAX_SITE_BYTES ||
+      Number(usage.count) > MAX_DOCUMENTS
+    )
+      throw new DataError(409, "Site database quota exceeded.");
+    return { results };
   });
 }

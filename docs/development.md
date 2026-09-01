@@ -34,6 +34,8 @@ DATABASE_URL=postgresql://username:password@localhost:5432/naru
 
 # S3/R2 설정
 S3_BUCKET_NAME=your-bucket-name
+SITE_DATA_MEDIA_BUCKET=naru-media
+SITE_DATA_MEDIA_ORIGIN=https://media.naru.pub
 AWS_ACCESS_KEY_ID=your-access-key
 AWS_SECRET_ACCESS_KEY=your-secret-key
 
@@ -48,6 +50,11 @@ CLOUDFLARE_USER_API_TOKEN=your-cloudflare-api-token
 TOSS_CLIENT_KEY=your-toss-client-key
 TOSS_SECRET_KEY=your-toss-secret-key
 ```
+
+`naru-media`에는 `media.naru.pub` 공개 커스텀 도메인을 연결하세요. 객체 쓰기는
+서명된 R2 API URL로만 허용합니다. 브라우저가 직접 업로드할 수 있도록 버킷 CORS에서
+웹사이트 출처의 `PUT`과 `Content-Type` 헤더를 허용해야 합니다. R2 API 토큰에는
+`naru-media`의 객체 읽기·쓰기 권한도 필요합니다.
 
 `preview` 모드에서는 `users.supporter_comp`가 설정된 계정만 커스텀 도메인,
 분석, 데이터베이스를 사용할 수 있습니다. 이 기능을 후원자에게 공개할 때는

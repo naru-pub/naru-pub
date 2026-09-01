@@ -5,6 +5,7 @@ export const RESERVED_LOGIN_NAMES = new Set([
   // Naru Data is served from db.naru.pub; a user owning this login name would
   // shadow it.
   "db",
+  "media",
 ]);
 
 export function isReservedLoginName(loginName: string) {
@@ -65,7 +66,7 @@ export const FILE_EXTENSION_MIMETYPE_MAP: Record<
 };
 
 export const EDITABLE_FILE_EXTENSIONS = Object.keys(
-  EDITABLE_FILE_EXTENSION_MAP
+  EDITABLE_FILE_EXTENSION_MAP,
 );
 
 export const AUDIO_FILE_EXTENSIONS = [
@@ -86,13 +87,7 @@ export const IMAGE_FILE_EXTENSIONS = [
   "ico",
 ];
 
-export const FONT_FILE_EXTENSIONS = [
-  "woff",
-  "woff2",
-  "ttf",
-  "otf",
-  "eot",
-];
+export const FONT_FILE_EXTENSIONS = ["woff", "woff2", "ttf", "otf", "eot"];
 
 export const ALLOWED_FILE_EXTENSIONS = [
   ...EDITABLE_FILE_EXTENSIONS,

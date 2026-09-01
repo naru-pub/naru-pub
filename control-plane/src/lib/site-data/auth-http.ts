@@ -15,7 +15,7 @@ import {
 } from "./owner-auth";
 
 export async function ownerAuthRequest(request: Request, action: string) {
-  const crossOrigin = ["token", "revoke"].includes(action);
+  const crossOrigin = ["discover", "token", "revoke"].includes(action);
   const origin = request.headers.get("origin");
   const headers: Record<string, string> = {
     "Cache-Control": "no-store",
@@ -25,12 +25,48 @@ export async function ownerAuthRequest(request: Request, action: string) {
   if (crossOrigin && origin && origin !== "null")
     Object.assign(headers, {
       "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
     });
   try {
     if (request.method === "OPTIONS" && crossOrigin)
       return new Response(null, { status: 204, headers });
+    if (action === "discover") {
+      if (request.method !== "GET")
+        throw new DataError(405, "Method not allowed.");
+      const url = new URL(request.url);
+      const site = url.searchParams.get("site") || "";
+      const redirectUri = url.searchParams.get("redirectUri") || "";
+      let callback: URL;
+      try {
+        callback = new URL(redirectUri);
+      } catch {
+        throw new DataError(400, "Valid redirectUri required.");
+      }
+      if (!origin || origin !== callback.origin)
+        throw new DataError(
+          403,
+          "Redirect origin does not match.",
+          "REDIRECT_ORIGIN_MISMATCH",
+        );
+      const registration = await db
+        .selectFrom("site_data_clients as c")
+        .innerJoin("users as u", "u.id", "c.user_id")
+        .select(["u.id as user_id", "c.redirect_uri"])
+        .where("u.login_name", "=", site)
+        .where("c.redirect_uri", "=", callback.href)
+        .executeTakeFirst();
+      if (!registration)
+        throw new DataError(
+          404,
+          "Administrator callback is not registered.",
+          "UNREGISTERED_REDIRECT_URI",
+        );
+      return Response.json(
+        { clientId: await siteClientId(registration.user_id) },
+        { headers },
+      );
+    }
     if (crossOrigin) {
       if (request.method !== "POST")
         throw new DataError(405, "Method not allowed.");
@@ -118,6 +154,9 @@ export async function ownerAuthRequest(request: Request, action: string) {
           error instanceof DataError
             ? error.message
             : "Authorization request failed.",
+        ...(error instanceof DataError && error.code
+          ? { code: error.code }
+          : {}),
       },
       { status: error instanceof DataError ? error.status : 500, headers },
     );

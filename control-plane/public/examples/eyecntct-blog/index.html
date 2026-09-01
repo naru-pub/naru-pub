@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="날짜와 카테고리로 이어지는 비둘기 둥지의 기록"
+    />
+    <title>비둘기 둥지</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Noto+Sans+KR:wght@400;500;700;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="wordmark" href="#top">비둘기 둥지</a>
+      <nav aria-label="주요 메뉴">
+        <button class="nav-button" id="loginButton" type="button">
+          로그인
+        </button>
+        <button class="nav-button" id="guestbookButton" type="button">
+          방명록
+        </button>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="profile" aria-labelledby="profileName">
+        <div class="pigeon" aria-hidden="true">
+          <span class="pigeon-eye"></span><span class="pigeon-beak"></span
+          ><span class="pigeon-wing"></span>
+        </div>
+        <h1 id="profileName">비둘기</h1>
+        <p id="profileHandle">@eyecntct</p>
+        <p id="profileIntro">작고 사적인 날들의 기록</p>
+      </section>
+
+      <section class="featured-section" aria-labelledby="featuredTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Recently nested</p>
+            <h2 id="featuredTitle">최근 기록</h2>
+          </div>
+          <button
+            class="text-button owner-only"
+            id="newPostButton"
+            type="button"
+            hidden
+          >
+            새 글 쓰기
+          </button>
+        </div>
+        <div
+          class="featured-track"
+          id="featuredPosts"
+          tabindex="0"
+          aria-label="최근 글"
+        ></div>
+      </section>
+
+      <section class="calendar-section" aria-labelledby="calendarTitle">
+        <div class="calendar-heading">
+          <div>
+            <p class="eyebrow">Archive</p>
+            <h2 id="calendarTitle">
+              <span id="calendarYear"></span>년
+              <strong id="calendarMonth"></strong>월
+            </h2>
+          </div>
+          <div class="calendar-nav">
+            <button id="previousMonth" type="button" aria-label="이전 달">
+              ←</button
+            ><button id="todayButton" type="button">오늘</button
+            ><button id="nextMonth" type="button" aria-label="다음 달">
+              →
+            </button>
+          </div>
+        </div>
+        <div class="weekdays" aria-hidden="true">
+          <span>일</span><span>월</span><span>화</span><span>수</span
+          ><span>목</span><span>금</span><span>토</span>
+        </div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+      </section>
+      <p class="status" id="status" role="status"></p>
+    </main>
+
+    <dialog id="postDialog" class="dialog">
+      <button class="dialog-close" type="button" data-close aria-label="닫기">
+        ×
+      </button>
+      <article id="postDetail"></article>
+    </dialog>
+    <dialog id="guestbookDialog" class="dialog">
+      <button class="dialog-close" type="button" data-close aria-label="닫기">
+        ×
+      </button>
+      <p class="eyebrow">Guestbook</p>
+      <h2>방명록</h2>
+      <form id="guestbookForm">
+        <label>이름<input id="guestName" maxlength="40" required /></label
+        ><label
+          >메시지<textarea
+            id="guestMessage"
+            maxlength="1000"
+            required
+          ></textarea></label
+        ><button class="primary-button" type="submit">남기기</button>
+      </form>
+      <div class="guest-list" id="guestList"></div>
+    </dialog>
+    <dialog id="editorDialog" class="dialog editor-dialog">
+      <button class="dialog-close" type="button" data-close aria-label="닫기">
+        ×
+      </button>
+      <p class="eyebrow">Writing studio</p>
+      <h2 id="editorTitle">새 기록</h2>
+      <form id="editorForm">
+        <input id="postId" type="hidden" />
+        <label
+          >제목<input
+            id="titleInput"
+            maxlength="120"
+            required
+            placeholder="오늘의 제목"
+        /></label>
+        <div class="form-row">
+          <label>날짜<input id="dateInput" type="date" required /></label
+          ><label>카테고리<select id="categoryInput"></select></label>
+        </div>
+        <div class="form-row">
+          <label
+            >새 카테고리<input
+              id="newCategoryInput"
+              maxlength="30"
+              disabled
+              placeholder="카테고리 이름" /></label
+          ><label
+            >카테고리 색상<input id="colorInput" type="color" value="#777777"
+          /></label>
+        </div>
+        <label
+          >서브 카테고리<input
+            id="subcategoryInput"
+            maxlength="40"
+            placeholder="선택 사항"
+        /></label>
+        <div class="toolbar" aria-label="본문 서식">
+          <button type="button" data-command="bold"><b>B</b></button
+          ><button type="button" data-command="italic"><i>I</i></button
+          ><button type="button" data-command="formatBlock" data-value="h2">
+            제목</button
+          ><button type="button" data-command="insertUnorderedList">목록</button
+          ><label class="image-button"
+            >이미지<input id="imageInput" type="file" accept="image/*"
+          /></label>
+        </div>
+        <textarea
+          id="bodyInput"
+          class="rich-editor"
+          placeholder="마크다운으로 본문을 써 주세요…"
+        ></textarea>
+        <div class="editor-actions">
+          <button class="danger-button" id="deleteButton" type="button" hidden>
+            삭제</button
+          ><button class="primary-button" type="submit">저장</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

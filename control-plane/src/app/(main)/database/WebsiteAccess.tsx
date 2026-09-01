@@ -62,8 +62,9 @@ export default function WebsiteAccess({
       <h2 className="text-xl font-semibold">웹사이트 관리자 로그인</h2>
       <p className="text-sm">
         웹사이트의 관리자 페이지를 등록하세요. 나루에서 소유자가 승인하면 선택한
-        컬렉션의 문서를 읽고 변경할 수 있는 최대 24시간 동안 유지되는 권한을
-        받습니다. 계정이나 컬렉션 권한 설정은 변경할 수 없습니다.
+        컬렉션의 문서를 읽고 변경하며 Naru Media 파일을 관리할 수 있는 최대
+        24시간 동안 유지되는 권한을 받습니다. 계정이나 컬렉션 권한 설정은 변경할
+        수 없습니다.
       </p>
       <p className="text-sm text-muted-foreground">
         본인의 나루 주소 또는 활성화된 인증 도메인만 사용할 수 있습니다. 콜백

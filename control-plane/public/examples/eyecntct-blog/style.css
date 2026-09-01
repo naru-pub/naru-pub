@@ -1,0 +1,506 @@
+:root {
+  --paper: #f4f1e9;
+  --ink: #1d2428;
+  --muted: #73736e;
+  --line: #d9d5cb;
+  --card: #fffdf7;
+  --accent: #36c4d8;
+  --yellow: #f2d85f;
+  --shadow: 0 18px 55px rgba(35, 38, 39, 0.09);
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Noto Sans KR", sans-serif;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+}
+.site-header {
+  height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1240px;
+  margin: auto;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--line);
+}
+.wordmark {
+  font-family: "Gowun Batang", serif;
+  font-weight: 700;
+  font-size: 21px;
+  color: inherit;
+  text-decoration: none;
+}
+.site-header nav {
+  display: flex;
+  gap: 8px;
+}
+.nav-button,
+.text-button {
+  border: 0;
+  background: transparent;
+  padding: 10px 12px;
+}
+.nav-button:hover,
+.text-button:hover {
+  text-decoration: underline;
+}
+main {
+  max-width: 1240px;
+  margin: auto;
+  padding: 0 32px 80px;
+}
+.profile {
+  text-align: center;
+  padding: 72px 0 54px;
+}
+.pigeon {
+  position: relative;
+  width: 206px;
+  height: 206px;
+  margin: auto;
+  background: #303a3e;
+  border-radius: 56% 48% 54% 50%;
+  box-shadow: inset -28px -14px 0 #242b2e;
+}
+.pigeon:before {
+  content: "";
+  position: absolute;
+  width: 138px;
+  height: 138px;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  left: 34px;
+  top: 34px;
+}
+.pigeon-eye {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  background: var(--card);
+  border: 5px solid var(--ink);
+  border-radius: 50%;
+  top: 62px;
+  left: 67px;
+  z-index: 2;
+}
+.pigeon-beak {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border-top: 13px solid transparent;
+  border-bottom: 13px solid transparent;
+  border-right: 31px solid var(--yellow);
+  left: -19px;
+  top: 91px;
+}
+.pigeon-wing {
+  position: absolute;
+  width: 105px;
+  height: 122px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 62% 38% 58% 42%;
+  right: 18px;
+  bottom: 13px;
+  transform: rotate(-22deg);
+}
+.profile h1 {
+  font-family: "Gowun Batang", serif;
+  font-size: 38px;
+  margin: 22px 0 0;
+}
+.profile p {
+  margin: 5px 0;
+  color: var(--muted);
+}
+#profileIntro {
+  font-family: "Gowun Batang", serif;
+  font-size: 18px;
+  margin-top: 15px;
+}
+.section-heading,
+.calendar-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  margin: 0 0 5px;
+}
+.section-heading h2,
+.calendar-heading h2 {
+  font-family: "Gowun Batang", serif;
+  font-size: 31px;
+  margin: 0;
+}
+.featured-section {
+  padding: 28px 0 76px;
+}
+.featured-track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(300px, 1fr);
+  grid-template-rows: 1fr;
+  gap: 18px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 3px 3px 28px;
+}
+.post-card {
+  min-height: 340px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 23px;
+  display: grid;
+  grid-template-rows: auto auto 1fr 150px;
+  gap: 11px;
+  scroll-snap-align: start;
+  box-shadow: var(--shadow);
+  transition: transform 0.2s;
+}
+.post-card:hover {
+  transform: translateY(-4px);
+}
+.post-card button {
+  display: contents;
+  text-align: left;
+}
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.category {
+  font-weight: 800;
+  color: var(--category);
+}
+.post-card h3 {
+  font-family: "Gowun Batang", serif;
+  font-size: 24px;
+  line-height: 1.3;
+  margin: 0;
+}
+.excerpt {
+  color: #535653;
+  font-size: 14px;
+  line-height: 1.8;
+  margin: 0;
+}
+.cover {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  background: #e5e1d8;
+}
+.cover-placeholder {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--category) 18%, #f7f2e7),
+    #ece8df
+  );
+  font-family: "Gowun Batang", serif;
+  color: var(--muted);
+}
+.empty-card {
+  border: 1px dashed var(--line);
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.calendar-section {
+  padding: 43px 0 0;
+  border-top: 1px solid var(--line);
+}
+.calendar-nav {
+  display: flex;
+  gap: 6px;
+}
+.calendar-nav button {
+  border: 1px solid var(--line);
+  background: transparent;
+  padding: 8px 12px;
+}
+.weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.weekdays span {
+  padding: 12px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 12px;
+}
+.calendar-day {
+  min-height: 140px;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  padding: 10px;
+}
+.calendar-day:nth-child(7n) {
+  border-right: 1px solid var(--line);
+}
+.calendar-day:nth-last-child(-n + 7) {
+  border-bottom: 1px solid var(--line);
+}
+.calendar-day.muted {
+  opacity: 0.38;
+}
+.day-number {
+  font-size: 13px;
+}
+.calendar-day.today .day-number {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: white;
+  background: #f04c50;
+  border-radius: 50%;
+  margin-left: auto;
+}
+.day-post {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 5px 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.day-post:before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--category);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.status {
+  min-height: 24px;
+  text-align: center;
+  color: var(--muted);
+  margin-top: 26px;
+}
+.dialog {
+  width: min(680px, calc(100% - 28px));
+  max-height: 90vh;
+  border: 0;
+  padding: 34px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  overflow: auto;
+}
+.dialog::backdrop {
+  background: rgba(20, 24, 25, 0.55);
+  backdrop-filter: blur(3px);
+}
+.dialog-close {
+  position: absolute;
+  right: 16px;
+  top: 12px;
+  border: 0;
+  background: transparent;
+  font-size: 27px;
+}
+.dialog h2 {
+  font-family: "Gowun Batang", serif;
+  font-size: 32px;
+}
+.dialog label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 16px 0;
+}
+.dialog input,
+.dialog select,
+.dialog textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: white;
+  padding: 11px 12px;
+}
+.dialog textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.primary-button,
+.danger-button {
+  border: 0;
+  padding: 12px 20px;
+  font-weight: 700;
+}
+.primary-button {
+  background: var(--ink);
+  color: white;
+}
+.danger-button {
+  background: #f8e7e7;
+  color: #8e2929;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 20px;
+}
+.toolbar button,
+.image-button {
+  display: block;
+  border: 1px solid var(--line);
+  background: white;
+  padding: 7px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+.image-button input {
+  display: none;
+}
+.rich-editor {
+  min-height: 280px;
+  border: 1px solid var(--line);
+  background: white;
+  padding: 18px;
+  line-height: 1.8;
+  outline: none;
+  margin: 8px 0 18px;
+}
+.rich-editor:empty:before {
+  content: attr(data-placeholder);
+  color: #aaa;
+}
+.rich-editor img,
+.post-body img {
+  max-width: 100%;
+  height: auto;
+}
+.editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.guest-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 30px;
+}
+.guest-entry {
+  border-top: 1px solid var(--line);
+  padding-top: 13px;
+}
+.guest-entry time {
+  color: var(--muted);
+  font-size: 11px;
+}
+.post-body {
+  line-height: 1.9;
+  font-family: "Gowun Batang", serif;
+  font-size: 17px;
+}
+.post-detail-cover {
+  width: 100%;
+  max-height: 420px;
+  object-fit: cover;
+  margin: 12px 0 20px;
+}
+@media (max-width: 720px) {
+  .site-header {
+    height: 68px;
+    padding: 0 18px;
+  }
+  main {
+    padding: 0 18px 50px;
+  }
+  .profile {
+    padding: 54px 0 42px;
+  }
+  .pigeon {
+    width: 164px;
+    height: 164px;
+  }
+  .pigeon:before {
+    width: 110px;
+    height: 110px;
+    left: 27px;
+    top: 27px;
+  }
+  .pigeon-eye {
+    top: 48px;
+    left: 52px;
+  }
+  .pigeon-beak {
+    top: 73px;
+  }
+  .profile h1 {
+    font-size: 31px;
+  }
+  .featured-track {
+    grid-auto-columns: 82vw;
+  }
+  .calendar-day {
+    min-height: 82px;
+    padding: 6px;
+  }
+  .day-post {
+    font-size: 0;
+  }
+  .day-post:before {
+    width: 7px;
+    height: 7px;
+    margin: 2px;
+  }
+  .weekdays span {
+    padding: 8px;
+  }
+  .calendar-heading {
+    align-items: center;
+  }
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+  .dialog {
+    padding: 28px 20px;
+  }
+  .post-card {
+    min-height: 320px;
+  }
+}

@@ -97,14 +97,12 @@ async function loadList(reset = true) {
     $("manage-list").replaceChildren();
   }
   listKind = kind;
-  const page = await owner
-    .collection(kind)
-    .list({
-      limit: 20,
-      orderBy: "updated_at",
-      direction: "desc",
-      ...(cursor ? { after: cursor } : {}),
-    });
+  const page = await owner.collection(kind).list({
+    limit: 20,
+    orderBy: "updated_at",
+    direction: "desc",
+    ...(cursor ? { after: cursor } : {}),
+  });
   for (const doc of page.documents) {
     const row = element("div", "", "manage-row");
     const button = element("button", text(doc.data?.title, "제목 없음"));
@@ -198,12 +196,9 @@ try {
 updateUI();
 $("login").addEventListener("click", () =>
   run(async () => {
-    if (!config.clientId)
-      throw new Error("config.js에 제어판에서 발급받은 clientId를 입력하세요.");
     saveLocal();
     db ??= await connect();
     await db.signInAsOwner({
-      clientId: config.clientId,
       redirectUri: location.origin + location.pathname,
       collections: ["posts", "drafts"],
     });

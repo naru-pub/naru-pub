@@ -1,9 +1,11 @@
 /** Naru Data SDK 1.0.0. This release is still under active development. */
 export class NaruDataError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code) {
     super(message);
     this.name = "NaruDataError";
     this.status = status;
+    this.code =
+      code || (status === 401 ? "OWNER_SESSION_EXPIRED" : "REQUEST_FAILED");
   }
 }
 // Reject values JSON.stringify would silently discard or coerce.
@@ -60,12 +62,39 @@ const base64url = (bytes) =>
 const random = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
 
 export const CONTROL_PLANE_ORIGIN = "https://naru.pub";
-export function createDatabase({ site }) {
+export function createDatabase({
+  site,
+  controlPlaneOrigin = CONTROL_PLANE_ORIGIN,
+  schemas = {},
+}) {
   if (typeof site !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(site))
     throw new TypeError("A valid Naru site login name is required.");
-  const base = new URL(CONTROL_PLANE_ORIGIN);
+  const base = new URL(controlPlaneOrigin);
+  if (
+    base.origin !== CONTROL_PLANE_ORIGIN &&
+    !(
+      base.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname)
+    )
+  )
+    throw new TypeError(
+      "controlPlaneOrigin must be https://naru.pub or an HTTP loopback origin.",
+    );
   const root = `${base.origin}/api/data/${encodeURIComponent(site)}`;
   const storageKey = `naru:owner:${base.origin}:${site}`;
+  if (!schemas || typeof schemas !== "object" || Array.isArray(schemas))
+    throw new TypeError("schemas must be an object of validator functions.");
+  function validateDocument(collectionName, data) {
+    validateJson(data);
+    const validator = schemas[collectionName];
+    if (validator === undefined) return;
+    if (typeof validator !== "function")
+      throw new TypeError(`Schema for ${collectionName} must be a function.`);
+    if (validator(data) === false)
+      throw new TypeError(
+        `Document does not match the ${collectionName} schema.`,
+      );
+  }
   async function request(url, method = "GET", body, token) {
     // Serialize before awaiting so later caller mutations cannot change the write.
     const serialized = body === undefined ? undefined : JSON.stringify(body);
@@ -109,6 +138,7 @@ export function createDatabase({ site }) {
         typeof result?.error === "string"
           ? result.error
           : `Database request failed (HTTP ${response.status}).`,
+        typeof result?.code === "string" ? result.code : undefined,
       );
     if (!result || typeof result !== "object" || Array.isArray(result))
       throw new NaruDataError(
@@ -118,17 +148,49 @@ export function createDatabase({ site }) {
     return result;
   }
   function client(getToken = () => undefined, unauthorized = () => {}) {
+    const send = async (url, method, body) => {
+      try {
+        return await request(url, method, body, getToken());
+      } catch (error) {
+        if (error.status === 401) unauthorized();
+        throw error;
+      }
+    };
     return {
+      batch(operations) {
+        if (
+          !Array.isArray(operations) ||
+          !operations.length ||
+          operations.length > 100
+        )
+          throw new TypeError("Batch requires 1–100 operations.");
+        const snapshot = operations.map((operation) => {
+          if (
+            !operation ||
+            typeof operation !== "object" ||
+            Array.isArray(operation)
+          )
+            throw new TypeError("Invalid batch operation.");
+          const collection = operation.collection;
+          segment(collection);
+          segment(operation.id);
+          if (operation.type === "set")
+            validateDocument(collection, operation.data);
+          else if (operation.type !== "delete")
+            throw new TypeError("Batch operations must be set or delete.");
+          return operation.type === "set"
+            ? {
+                type: "set",
+                collection,
+                id: operation.id,
+                data: operation.data,
+              }
+            : { type: "delete", collection, id: operation.id };
+        });
+        return send(`${root}/_batch`, "POST", { operations: snapshot });
+      },
       collection(collectionName) {
         const path = `${root}/${segment(collectionName)}`;
-        const send = async (url, method, body) => {
-          try {
-            return await request(url, method, body, getToken());
-          } catch (error) {
-            if (error.status === 401) unauthorized();
-            throw error;
-          }
-        };
         return {
           async get(id) {
             return (await send(`${path}/${segment(id)}`)).document;
@@ -165,17 +227,119 @@ export function createDatabase({ site }) {
             return send(`${path}?${query}`);
           },
           add(data) {
-            validateJson(data);
+            validateDocument(collectionName, data);
             return send(path, "POST", { data });
           },
           set(id, data) {
-            validateJson(data);
+            validateDocument(collectionName, data);
             return send(`${path}/${segment(id)}`, "PUT", { data });
           },
           delete(id) {
             return send(`${path}/${segment(id)}`, "DELETE");
           },
         };
+      },
+      files: {
+        async get(id) {
+          return (await send(`${root}/_files/${segment(id)}`)).file;
+        },
+        async list() {
+          return (await send(`${root}/_files`)).files;
+        },
+        async upload(file, { onProgress, signal, metadata = {} } = {}) {
+          if (!(file instanceof Blob))
+            throw new TypeError("upload requires a File or Blob.");
+          if (onProgress !== undefined && typeof onProgress !== "function")
+            throw new TypeError("onProgress must be a function.");
+          if (signal?.aborted)
+            throw (
+              signal.reason || new DOMException("Upload aborted.", "AbortError")
+            );
+          validateJson(metadata);
+          if (!file.size || file.size > 25 * 1024 * 1024)
+            throw new TypeError("File must be between 1 byte and 25 MiB.");
+          const name =
+            typeof file.name === "string" && file.name ? file.name : "upload";
+          const contentType = file.type || "application/octet-stream";
+          const authorization = await send(`${root}/_files`, "POST", {
+            name,
+            contentType,
+            size: file.size,
+            metadata,
+          });
+          let response;
+          try {
+            if (onProgress && typeof XMLHttpRequest !== "undefined") {
+              response = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open(authorization.method, authorization.uploadUrl);
+                for (const [key, value] of Object.entries(
+                  authorization.headers,
+                ))
+                  xhr.setRequestHeader(key, value);
+                xhr.upload.onprogress = (event) =>
+                  onProgress({
+                    loaded: event.loaded,
+                    total: event.lengthComputable ? event.total : file.size,
+                  });
+                xhr.onload = () =>
+                  resolve({
+                    ok: xhr.status >= 200 && xhr.status < 300,
+                    status: xhr.status,
+                  });
+                xhr.onerror = () =>
+                  reject(new TypeError("Network request failed."));
+                xhr.onabort = () =>
+                  reject(
+                    signal?.reason ||
+                      new DOMException("Upload aborted.", "AbortError"),
+                  );
+                signal?.addEventListener("abort", () => xhr.abort(), {
+                  once: true,
+                });
+                xhr.send(file);
+              });
+            } else {
+              response = await fetch(authorization.uploadUrl, {
+                method: authorization.method,
+                headers: authorization.headers,
+                body: file,
+                signal,
+              });
+            }
+          } catch (cause) {
+            send(
+              `${root}/_files/${segment(authorization.file.id)}`,
+              "DELETE",
+            ).catch(() => {});
+            const error = new NaruDataError(
+              0,
+              "File upload failed. Check your connection before retrying.",
+            );
+            error.cause = cause;
+            throw error;
+          }
+          if (!response.ok) {
+            send(
+              `${root}/_files/${segment(authorization.file.id)}`,
+              "DELETE",
+            ).catch(() => {});
+            throw new NaruDataError(
+              response.status,
+              `File upload failed (HTTP ${response.status}).`,
+            );
+          }
+          return (
+            await send(
+              `${root}/_files/${segment(authorization.file.id)}`,
+              "PUT",
+              {},
+            )
+          ).file;
+        },
+        delete(id) {
+          return send(`${root}/_files/${segment(id)}`, "DELETE");
+        },
       },
     };
   }
@@ -270,8 +434,13 @@ export function createDatabase({ site }) {
       redirectUri = window.location.origin + window.location.pathname,
       collections,
     }) {
-      if (typeof clientId !== "string" || !clientId || clientId.length > 64)
-        throw new TypeError("Registered clientId required.");
+      if (
+        clientId !== undefined &&
+        (typeof clientId !== "string" || !clientId || clientId.length > 64)
+      )
+        throw new TypeError(
+          "clientId must be a non-empty string when provided.",
+        );
       if (
         !Array.isArray(collections) ||
         !collections.length ||
@@ -291,6 +460,28 @@ export function createDatabase({ site }) {
         throw new TypeError(
           "Callback must be a registered URL on this origin without query or fragment.",
         );
+      if (!clientId) {
+        const discovery = new URL("/api/data-auth/discover", base.origin);
+        discovery.search = new URLSearchParams({
+          site,
+          redirectUri: callback.href,
+        }).toString();
+        try {
+          clientId = (await request(discovery.href)).clientId;
+        } catch (error) {
+          if (error instanceof NaruDataError && error.status === 404) {
+            error.code = "UNREGISTERED_REDIRECT_URI";
+            error.message = `Register ${callback.href} as an administrator callback in Naru.`;
+          }
+          throw error;
+        }
+        if (typeof clientId !== "string" || !clientId || clientId.length > 64)
+          throw new NaruDataError(
+            502,
+            "Invalid owner client discovery response.",
+            "INVALID_CLIENT_DISCOVERY",
+          );
+      }
       const verifier = random(),
         state = random();
       const challenge = base64url(

@@ -1,8 +1,9 @@
 import { validateRequest } from "@/lib/auth";
-import { executeData } from "./service";
+import { executeBatch, executeData } from "./service";
 import { DataError, jsonBody, sameOrigin } from "./validation";
 import { parseWhereQuery } from "./filters";
 import { isIP } from "node:net";
+import { executeMedia } from "./media";
 
 const publicHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -55,9 +56,9 @@ export async function dataRequest(
     const body = ["POST", "PUT", "PATCH"].includes(request.method)
       ? await jsonBody(request)
       : undefined;
-    const result = await executeData({
+    const command = {
       site: site!,
-      path,
+      path: path[0] === "_files" ? path.slice(1) : path,
       method: request.method,
       adminUserId,
       bearer,
@@ -70,7 +71,13 @@ export async function dataRequest(
       limit: url.searchParams.has("limit")
         ? Number(url.searchParams.get("limit"))
         : undefined,
-    });
+    };
+    const result =
+      path[0] === "_files"
+        ? await executeMedia(command)
+        : path[0] === "_batch"
+          ? await executeBatch({ ...command, path: [] })
+          : await executeData(command);
     return Response.json(result, {
       headers,
       status: request.method === "POST" ? 201 : 200,
@@ -96,6 +103,9 @@ export async function dataRequest(
           error instanceof DataError
             ? error.message
             : "Database request failed.",
+        ...(error instanceof DataError && error.code
+          ? { code: error.code }
+          : {}),
       },
       { status: error instanceof DataError ? error.status : 500, headers },
     );

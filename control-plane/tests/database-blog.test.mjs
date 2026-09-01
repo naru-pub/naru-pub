@@ -179,14 +179,10 @@ test("admin preserves draft across login, retries same ID, fails closed on expir
   let failure = new Error("response lost");
   const owner = {
     expiresAt: Date.now() + 600000,
-    collection(name) {
-      assert.equal(name, "posts");
-      return {
-        set: async (id, data) => {
-          writes.push({ id, data });
-          if (failure) throw failure;
-        },
-      };
+    async batch(operations) {
+      const operation = operations[0];
+      writes.push({ id: operation.id, data: operation.data });
+      if (failure) throw failure;
     },
   };
   const after = await page(
@@ -305,6 +301,22 @@ function editorBackend() {
     },
     owner: {
       expiresAt: Date.now() + 600000,
+      async batch(operations) {
+        for (const operation of operations) {
+          const error = failure?.(operation.type, operation.collection);
+          if (error) throw error;
+        }
+        for (const operation of operations) {
+          calls.push([operation.type, operation.collection, operation.id]);
+          if (operation.type === "set")
+            rows[operation.collection].set(
+              operation.id,
+              structuredClone(operation.data),
+            );
+          else rows[operation.collection].delete(operation.id);
+        }
+        return { results: [] };
+      },
       collection(kind) {
         assert.ok(kind in rows);
         return {
@@ -365,7 +377,7 @@ test("server drafts survive publication failure; retry publishes same ID before 
   ]);
   assert.match(app.$("editing").textContent, /공개 글 편집/);
 });
-test("cleanup failure is reported as already public and can be retried", async () => {
+test("batch cleanup failure rolls publication back and can be retried", async () => {
   const db = editorBackend(),
     app = await page("admin", { completeOwnerSignIn: async () => db.owner });
   app.$("title").value = "제목";
@@ -375,9 +387,9 @@ test("cleanup failure is reported as already public and can be retried", async (
     op === "delete" && kind === "drafts" ? new Error("offline") : null,
   );
   await app.fire("post-form", "submit");
-  assert.equal(db.rows.posts.size, 1);
+  assert.equal(db.rows.posts.size, 0);
   assert.equal(db.rows.drafts.size, 1);
-  assert.match(app.$("status").textContent, /글은 공개되었지만/);
+  assert.match(app.$("status").textContent, /offline/);
   db.setFailure(() => null);
   await app.fire("post-form", "submit");
   assert.equal(db.rows.posts.size, 1);

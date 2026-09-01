@@ -24,7 +24,11 @@ export const digest = (value: string) =>
   createHash("sha256").update(value).digest("base64url");
 const secret = () => randomBytes(32).toString("base64url");
 const denied = () =>
-  new DataError(401, "Owner authorization is invalid, expired or revoked.");
+  new DataError(
+    401,
+    "Owner authorization is invalid, expired or revoked.",
+    "OWNER_SESSION_EXPIRED",
+  );
 
 function text(value: unknown, max = 2048): string {
   if (typeof value !== "string" || !value || value.length > max)
@@ -334,7 +338,9 @@ async function authorizationDetails(
     );
   await assertSiteOrigin(tx, userId, client.redirect_uri);
   const collections = await scope(tx, userId, input.collections);
-  const missing = collections.filter((c) => !client.collection_ids.includes(c.id));
+  const missing = collections.filter(
+    (c) => !client.collection_ids.includes(c.id),
+  );
   if (missing.length)
     throw new DataError(
       403,

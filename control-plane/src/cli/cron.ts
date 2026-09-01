@@ -18,6 +18,8 @@ const PAYMENT_RECONCILIATION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 const PAYMENT_REFUND_SYNC_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const EXPIRED_CUSTOM_DOMAIN_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const EXPIRED_GITHUB_DEPLOYMENT_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const MEDIA_CLEANUP_INTERVAL = 15 * 60 * 1000;
+const MEDIA_CLEANUP_TIMEOUT = 5 * 60 * 1000;
 
 function runWithTimeout(
   script: string,
@@ -108,6 +110,10 @@ async function runExpiredGitHubDeploymentCleanup() {
   );
 }
 
+async function runMediaCleanup() {
+  await runWithTimeout("cleanup-pending-media.ts", MEDIA_CLEANUP_TIMEOUT);
+}
+
 function scheduleDaily(hour: number, minute: number, fn: () => Promise<void>) {
   const runIfTime = () => {
     const now = new Date();
@@ -157,6 +163,10 @@ async function main() {
     GITHUB_DEPLOYMENT_CLEANUP_INTERVAL,
   );
   setTimeout(runExpiredGitHubDeploymentCleanup, 30 * 1000);
+
+  console.log("[cron] Scheduling pending media cleanup every 15 minutes");
+  setInterval(runMediaCleanup, MEDIA_CLEANUP_INTERVAL);
+  setTimeout(runMediaCleanup, 40 * 1000);
 
   // Run home directory updater daily at 22:00
   console.log("[cron] Scheduling home directory updater daily at 22:00");

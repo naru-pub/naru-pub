@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteSessionCookie, invalidateSession, validateRequest } from "@/lib/auth";
+import {
+  deleteSessionCookie,
+  invalidateSession,
+  validateRequest,
+} from "@/lib/auth";
 import { db } from "@/lib/database";
 import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import {
@@ -10,6 +14,7 @@ import {
 import { dispatchActorDelete } from "@/lib/federation";
 import { deleteCustomDomainsForUser } from "@/lib/customDomains";
 import { verify } from "@node-rs/argon2";
+import { deleteUserMedia } from "@/lib/site-data/media";
 
 export async function POST(request: NextRequest) {
   try {
@@ -119,6 +124,8 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+
+    await deleteUserMedia(user.id);
 
     // Federate the account deletion before the row (and its keys/followers)
     // cascade away. Failure here must not block deletion.

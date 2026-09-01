@@ -35,6 +35,7 @@ export interface HomeDirectoryExports {
   id: Generated<number>;
   user_id: number;
   status: Generated<string>;
+  metadata: Generated<unknown>;
   r2_key: string | null;
   size_bytes: number | null;
   download_expires_at: Timestamp | null;
@@ -270,6 +271,18 @@ export interface SiteDataRateLimits {
   window_start: Timestamp;
   count: number;
 }
+export interface SiteDataFiles {
+  id: string;
+  user_id: number;
+  object_key: string;
+  original_name: string;
+  content_type: string;
+  size_bytes: number;
+  status: Generated<string>;
+  metadata: Generated<unknown>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
 export interface DB {
   site_data_site_clients: { user_id: number; id: string };
   site_data_clients: SiteDataClients;
@@ -278,6 +291,7 @@ export interface DB {
   site_data_rate_limits: SiteDataRateLimits;
   site_data_collections: SiteDataCollections;
   site_data_documents: SiteDataDocuments;
+  site_data_files: SiteDataFiles;
   account_deletion_tokens: AccountDeletionTokens;
   activities: Activities;
   custom_domains: CustomDomains;

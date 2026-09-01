@@ -55,7 +55,8 @@ export default function Consent({
       <p>
         이 웹사이트에서 위 컬렉션의 모든 문서를 읽고, 생성하고, 덮어쓰고, 삭제할
         수 있습니다. 비공개 문서도 포함됩니다. 계정 설정이나 컬렉션 권한은
-        변경할 수 없습니다.
+        변경할 수 없습니다. 또한 Naru Media 파일을 업로드하고 조회·삭제할 수
+        있습니다.
       </p>
       <p className="text-sm text-muted-foreground">
         웹사이트에 포함된 외부 스크립트도 이 권한을 사용할 수 있습니다. 신뢰하는

@@ -343,9 +343,8 @@ const comments = await db.collection("comments").list({
                 </li>
                 <li>
                   접근할 컬렉션을 선택합니다. 이 예제는 <code>posts</code>와{" "}
-                  <code>drafts</code>를 선택합니다. 표시된 Client ID를
-                  복사합니다. Client ID는 웹사이트마다 고정된 공개 식별자입니다.
-                  여러 관리자 페이지에서 같은 ID를 사용합니다. 각 페이지의 URL과
+                  <code>drafts</code>를 선택합니다. SDK는 등록된 정확한 콜백
+                  URL로 공개 Client ID를 자동 확인합니다. 각 페이지의 URL과
                   컬렉션 권한은 따로 등록하고 수정할 수 있습니다.
                 </li>
                 <li>
@@ -357,7 +356,7 @@ const comments = await db.collection("comments").list({
                   호출하고, 반환받은 관리자 클라이언트로 문서를 저장합니다.
                 </li>
               </ol>
-              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  // Complete approval or restore this tab; null means signed out.\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\n\n// 로그인 버튼의 클릭 핸들러에서 호출하세요.\nasync function login() {\n  await db.signInAsOwner({\n    clientId: "제어판의-Client-ID",\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts", "drafts"],\n  });\n}\n\n// 저장 버튼 핸들러에서 호출하고 오류를 표시하세요.\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
+              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\n\nasync function login() {\n  await db.signInAsOwner({\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts", "drafts"],\n  });\n}\n\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
               <p>
                 콜백은 본인 나루 사이트 또는 활성화된 인증 도메인의 HTTPS
                 주소여야 합니다. 쿼리·해시·와일드카드는 사용할 수 없습니다.
@@ -384,13 +383,12 @@ const comments = await db.collection("comments").list({
                 없습니다.
               </p>
               <p>
-                기존 페이지별 Client ID는 더 이상 사용할 수 없습니다. 모든
-                관리자 페이지의 설정을 제어판의 웹사이트 공통 Client ID로 바꾸고
-                다시 로그인하세요. 등록된 URL과 컬렉션 권한은 유지됩니다. 관리자
-                토큰은 비밀이므로 외부 스크립트를 넣거나 복사·공유하지 마세요.
-                같은 출처의 다른 경로는 보안 격리 경계가 아닙니다. 브라우저가 탭
-                상태를 복원할 수 있으므로 명시적인 로그아웃으로 세션을
-                종료하세요.
+                Client ID를 코드에 복사할 필요가 없습니다. 등록되지 않은 정확한
+                URL에서는 <code>UNREGISTERED_REDIRECT_URI</code> 오류가
+                반환됩니다. 관리자 토큰은 비밀이므로 외부 스크립트를 넣거나
+                복사·공유하지 마세요. 같은 출처의 다른 경로는 보안 격리 경계가
+                아닙니다. 브라우저가 탭 상태를 복원할 수 있으므로 명시적인
+                로그아웃으로 세션을 종료하세요.
               </p>
               <p>
                 <code>signOut()</code>은 이 관리자 토큰을 폐기합니다. 나루
@@ -403,6 +401,53 @@ const comments = await db.collection("comments").list({
                 편집 페이지의 외부 스크립트는 관리자 권한을 악용할 수 있습니다.
                 신뢰할 수 있는 코드만 실행하세요. 문서 접근 권한으로 컬렉션
                 설정이나 계정 정보를 변경할 수는 없습니다.
+              </p>
+              <h3 className="text-lg font-semibold">파일과 이미지 업로드</h3>
+              <p>
+                관리자 클라이언트의 <code>owner.files.upload(file)</code>은
+                브라우저에서 Naru Media로 파일을 직접 올리고, 확인된 공개 URL과
+                파일 ID를 반환합니다. 문서에는 base64 대신 이 URL이나 ID를
+                저장하세요. 파일 하나는 25 MiB, 사이트당 1,000개·250 MiB까지
+                저장할 수 있습니다. HTML과 SVG는 허용하지 않습니다.
+              </p>
+              <Code>{`const image = await owner.files.upload(fileInput.files[0], {
+  signal: abortController.signal,
+  onProgress: ({ loaded, total }) => showProgress(loaded / total),
+  metadata: { altText: "설명", references: [{ collection: "posts", id: "hello" }] },
+});
+await owner.collection("posts").set("hello", {
+  title: "안녕하세요",
+  coverImage: image.url,
+});
+
+const files = await owner.files.list();
+await owner.files.delete(image.id);`}</Code>
+              <h3 className="text-lg font-semibold">원자적 batch와 검증</h3>
+              <p>
+                <code>owner.batch()</code>는 최대 100개의 문서 저장·삭제를 한
+                트랜잭션으로 처리합니다. 하나라도 실패하면 모두 취소됩니다.
+                <code>createDatabase()</code>의 <code>schemas</code>에는 요청 전
+                실행할 동기 검증 함수를 지정할 수 있습니다. 클라이언트 검증은
+                개발 편의 기능이며 보안 경계가 아닙니다.
+              </p>
+              <Code>{`const db = createDatabase({
+  site: "내-로그인-이름",
+  schemas: {
+    posts: (post) => typeof post?.title === "string" && post.title.length > 0,
+  },
+});
+
+await owner.batch([
+  { type: "set", collection: "posts", id, data: post },
+  { type: "delete", collection: "drafts", id },
+]);`}</Code>
+              <p>
+                SDK 오류의 <code>code</code>에는
+                <code>UNREGISTERED_REDIRECT_URI</code>,
+                <code>COLLECTION_NOT_AUTHORIZED</code>,
+                <code>OWNER_SESSION_EXPIRED</code>처럼 처리 가능한 안정적인 값이
+                들어갑니다. 로컬 개발에서는 <code>controlPlaneOrigin</code>에
+                HTTP localhost 또는 loopback 주소만 지정할 수 있습니다.
               </p>
             </Section>
             <Section id="example" title="05 · 예제 블로그 설치">
@@ -430,11 +475,10 @@ const comments = await db.collection("comments").list({
                 </li>
                 <li>
                   ‘웹사이트 관리자 로그인’에 이 콜백과 <code>posts</code>·
-                  <code>drafts</code> 컬렉션을 등록하고 Client ID를 복사합니다.
+                  <code>drafts</code> 컬렉션을 등록합니다.
                 </li>
                 <li>
-                  <code>config.js</code>의 <code>site</code>와{" "}
-                  <code>clientId</code>를 채웁니다.
+                  <code>config.js</code>의 <code>site</code>를 채웁니다.
                 </li>
                 <li>
                   파일을 모두 같은 폴더에 업로드합니다. 기존{" "}
@@ -447,7 +491,7 @@ const comments = await db.collection("comments").list({
                   글을 읽고 방명록도 남겨 보세요.
                 </li>
               </ol>
-              <Code>{`export const config = {\n  site: "내-로그인-이름",\n  clientId: "제어판에서-복사한-Client-ID",\n};`}</Code>
+              <Code>{`export const config = {\n  site: "내-로그인-이름",\n};`}</Code>
               <p>
                 파일을 직접 더블클릭한 <code>file://</code> 주소에서는 실행하지
                 마세요. 나루의 HTTPS 주소에서 확인하세요. 제공되는 미리보기에는

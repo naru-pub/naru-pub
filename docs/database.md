@@ -66,10 +66,10 @@ SDK declarations are available alongside the module at `/sdk/1.0.0/naru-data.d.t
 
 1. Open `/database` directly in the control plane (it is intentionally absent from the header).
 2. Under website administrator login, register an exact callback URL such as `https://your-login-name.naru.pub/admin.html` and select the collections it may access. The callback must be on your Naru subdomain or an active, verified custom domain; no query, fragment, credentials, wildcard or arbitrary external origin. Development mode also permits loopback callbacks.
-3. Copy the public Client ID into your editor page. One stable public Client ID identifies the website; each exact callback keeps independent collection permissions. Adding or editing a callback does not change the ID. Old callback-specific IDs are no longer accepted: update every admin page to the shared website Client ID and sign in again. Registered callbacks and collection permissions are preserved.
+3. The SDK discovers the site's stable public Client ID from the exact registered callback URL. Applications no longer need to copy it into configuration. Each callback keeps independent collection permissions.
 4. Call `signInAsOwner()` from a button. Naru authenticates the owner and asks for explicit consent. The website resumes at the registered callback, where `completeOwnerSignIn()` returns a separate authenticated client.
 
-Minimal editor-page wiring (replace site and Client ID):
+Minimal editor-page wiring (replace the site login name):
 
 ```html
 <meta name="referrer" content="no-referrer" />
@@ -98,7 +98,6 @@ Minimal editor-page wiring (replace site and Client ID):
   document.querySelector("#login").onclick = () =>
     run(() =>
       db.signInAsOwner({
-        clientId: "YOUR-REGISTERED-CLIENT-ID",
         redirectUri: window.location.origin + window.location.pathname,
         collections: ["posts"],
       }),
@@ -122,12 +121,11 @@ Minimal editor-page wiring (replace site and Client ID):
 </script>
 ```
 
-The requested collections must be a subset of the registration. The basic `db` remains public after signing in; only `admin` sends a bearer token. Tokens permit reading, creating, replacing and deleting documents in those collections, including private documents. They are tied to collection IDs so deleting and recreating a collection does not transfer old grants.
+The SDK discovers the site's public Client ID from the exact registered callback URL. The requested collections must be a subset of the registration. The basic `db` remains public after signing in; only `admin` sends a bearer token. Tokens permit reading, creating, replacing and deleting documents in those collections, including private documents. They are tied to collection IDs so deleting and recreating a collection does not transfer old grants.
 
 Authentication uses random state and mandatory S256 PKCE. The verifier and state live in tab-scoped sessionStorage for at most ten minutes; authorization codes expire after 60 seconds and are single-use, including concurrent exchanges. The server stores only code/token hashes. Each registered admin page has a control-plane token lifetime of 1-1440 whole minutes (default 1440). Each sign-in issues one opaque admin token capped by this setting, the duration displayed at consent, and the approving Naru session. The platform maximum remains 24 hours. The SDK stores it in sessionStorage under the site and exact callback. `completeOwnerSignIn()` restores it locally on reload without a network request; each subsequent data request rechecks authorization on the server. Neither reloads nor requests extend the original expiration. There are no refresh tokens or automatic renewals.
 
 Control-plane session expiry/deletion, registration removal, token revocation, and domain status are checked on every authenticated data request. Use the control panel to revoke a page's outstanding codes and tokens, or remove its registration to disable future login. `admin.signOut()` clears local credentials before requesting server revocation. A network failure is reported; a copied token may remain usable until revoked or its 24-hour deadline. This does not sign out of the Naru control plane. Browser session restoration can restore sessionStorage, so use explicit logout to end access. The token is accessible to same-origin JavaScript: URL paths are not security isolation boundaries. Never share it or load untrusted scripts. A stolen token can be used longer than a short-lived access token unless revoked.
-
 
 Authorization approval and registration changes require same-origin owner requests. Token exchange and API access require the registered origin plus the explicit code/verifier or bearer token; CORS never grants authorization. The consent page disallows framing. An origin check cannot prevent use of a stolen bearer token by a non-browser client: scripts running on your editor page can exercise owner privileges while signed in. Use a minimal trusted editor without third-party scripts, avoid unsafe HTML rendering, and set a no-referrer policy on the callback page.
 
@@ -139,34 +137,55 @@ Unversioned SDK URLs are not served. Existing `/sdk/naru-data.js` imports must b
 
 SDK versioning does not itself version the backend protocol. Version 1.0.0 uses `/api/data/:site`; preserve existing public CRUD behavior when extending it. Breaking server changes should introduce a separate API version.
 
+SDK 1.0.0 supports synchronous write validators through `schemas`, atomic owner writes through `owner.batch()`, upload progress/cancellation, and file metadata. A development control-plane override is accepted only for HTTP loopback origins:
+
+```js
+const db = createDatabase({
+  site: "your-login-name",
+  controlPlaneOrigin: "http://localhost:3000",
+  schemas: {
+    posts: (post) => typeof post?.title === "string" && post.title.length > 0,
+  },
+});
+
+await owner.batch([
+  { type: "set", collection: "posts", id: "hello", data: post },
+  { type: "delete", collection: "drafts", id: "hello" },
+]);
+```
+
+Schema validators run before requests and are developer feedback, not a security boundary. Batch operations commit in one server transaction. `NaruDataError.code` provides stable codes including `UNREGISTERED_REDIRECT_URI`, `COLLECTION_NOT_AUTHORIZED`, and `OWNER_SESSION_EXPIRED`.
+
 ## HTTP API
 
 Public/website-token root: `/api/data/:site`. Control-plane root: `/api/account/database` (site derived from the session). Collection management is restricted to the control-plane root.
 
-| Method | Path relative to root            | Body / result                                            |
-| ------ | -------------------------------- | -------------------------------------------------------- |
-| GET    | `/`                              | Admin only: `{ collections }`                            |
-| POST   | `/`                              | Admin only: `{ name, read?, write? }` creates collection |
-| PATCH  | `/:collection`                   | Admin only: `{ read, write }` replaces permissions       |
-| DELETE | `/:collection`                   | Admin only: deletes collection and its documents         |
-| GET    | `/:collection?limit=50&after=cursor` | `{ documents, nextCursor }`                              |
-| POST   | `/:collection`                   | `{ data }` creates document; returns `{ id }`            |
-| GET    | `/:collection/:id`               | `{ document }`                                           |
-| PUT    | `/:collection/:id`               | `{ data }` replaces document; returns `{ id }`           |
-| DELETE | `/:collection/:id`               | `{ success: true }`                                      |
+| Method | Path relative to root                | Body / result                                             |
+| ------ | ------------------------------------ | --------------------------------------------------------- |
+| GET    | `/`                                  | Admin only: `{ collections }`                             |
+| POST   | `/`                                  | Admin only: `{ name, read?, write? }` creates collection  |
+| PATCH  | `/:collection`                       | Admin only: `{ read, write }` replaces permissions        |
+| DELETE | `/:collection`                       | Admin only: deletes collection and its documents          |
+| GET    | `/:collection?limit=50&after=cursor` | `{ documents, nextCursor }`                               |
+| POST   | `/:collection`                       | `{ data }` creates document; returns `{ id }`             |
+| GET    | `/:collection/:id`                   | `{ document }`                                            |
+| PUT    | `/:collection/:id`                   | `{ data }` replaces document; returns `{ id }`            |
+| DELETE | `/:collection/:id`                   | `{ success: true }`                                       |
+| POST   | `/_batch`                            | Owner-only atomic `{ operations }`; returns `{ results }` |
 
 All JSON request bodies require `Content-Type: application/json`. Errors return `{ error }` with an HTTP status (400 invalid input, 401 no admin session, 403 denied, 404 missing, 409 duplicate/quota, 413 oversized, 415 wrong content type, 429 rate limit). Public preflight needs no authentication. Responses are not cached.
 
 Owner authorization endpoints:
 
-| Endpoint                                     | Purpose                                                                                                                                 |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /database/authorize`                    | Login/consent UI; never issues a code on GET.                                                                                           |
-| `POST /api/data-auth/authorize`              | Same-origin owner approval with `clientId`, `site`, `redirectUri`, `challenge`, `state`, `collections`; returns validated redirect URL. |
-| `POST /api/data-auth/token`                  | Exchange JSON `{ code, verifier, clientId, redirectUri }` from the registered Origin; returns `{ accessToken, tokenType, expiresIn, expiresAt }`.  |
-| `POST /api/data-auth/revoke`                 | Revoke the bearer token supplied in Authorization; requires its registered Origin.                                                      |
-| `GET/POST /api/account/database-clients`     | Same-origin owner registration listing/creation (`{ redirectUri, collections }`).                                                       |
-| `PATCH/DELETE /api/account/database-clients` | Same-origin owner revoke-all/remove registration (`{ id }`).                                                                            |
+| Endpoint                                     | Purpose                                                                                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /database/authorize`                    | Login/consent UI; never issues a code on GET.                                                                                                     |
+| `GET /api/data-auth/discover`                | Discovers the public site Client ID for an exact registered callback and matching Origin.                                                         |
+| `POST /api/data-auth/authorize`              | Same-origin owner approval with `clientId`, `site`, `redirectUri`, `challenge`, `state`, `collections`; returns validated redirect URL.           |
+| `POST /api/data-auth/token`                  | Exchange JSON `{ code, verifier, clientId, redirectUri }` from the registered Origin; returns `{ accessToken, tokenType, expiresIn, expiresAt }`. |
+| `POST /api/data-auth/revoke`                 | Revoke the bearer token supplied in Authorization; requires its registered Origin.                                                                |
+| `GET/POST /api/account/database-clients`     | Same-origin owner registration listing/creation (`{ redirectUri, collections }`).                                                                 |
+| `PATCH/DELETE /api/account/database-clients` | Same-origin owner revoke-all/remove registration (`{ id }`).                                                                                      |
 
 There are at most 20 registrations per site, 20 pending codes and 50 live tokens per registration. Expired grants are cleaned during authorization activity. Removing registrations/accounts/sessions cascades into their grants.
 
@@ -178,7 +197,47 @@ There are at most 20 registrations per site, 20 pending codes and 50 live tokens
 - Pages: 1–100 documents (default 50), defaulting to ID ascending under the database collation. See sorting below; pagination is not a snapshot across concurrent changes.
 - PostgreSQL JSONB semantics apply, including JavaScript number precision and no significant object key order.
 - Owner-row locks serialize permission checks, writes, and quota checks across server processes. Deletes free quota; account deletion cascades through collections and documents.
-- Replacements are atomic and last-write-wins; creates are insert-only. No realtime subscriptions, offline persistence, custom indexes or arbitrary query expressions, compare-and-set, SDK transactions, per-document rules or visitor accounts in v1.
+- Replacements and `owner.batch()` writes are atomic and last-write-wins; creates are insert-only. No realtime subscriptions, offline persistence, custom indexes or arbitrary query expressions, compare-and-set, per-document rules or visitor accounts in v1.
+
+## File uploads (SDK 1.0.0)
+
+Owner sessions can upload files directly to the `naru-media` R2 bucket. The SDK
+obtains a ten-minute signed upload URL, sends the bytes directly to R2, and asks
+Naru to verify the stored size and content type before returning a ready file.
+Database documents should store `file.id` or `file.url`, not base64 data.
+
+```js
+const image = await owner.files.upload(fileInput.files[0], {
+  signal: abortController.signal,
+  onProgress: ({ loaded, total }) => showProgress(loaded / total),
+  metadata: {
+    altText: "A pigeon",
+    references: [{ collection: "posts", id: "hello" }],
+  },
+});
+await owner.collection("posts").set("hello", {
+  title: "Hello",
+  coverImage: image.url,
+});
+
+const files = await owner.files.list();
+await owner.files.delete(image.id);
+```
+
+사이트 소유자는 데이터베이스 제어판의 **미디어 라이브러리**에서 파일을 끌어
+놓아 업로드하고, 저장 공간을 확인하고, 이름·형식으로 검색하거나 정렬하고, 공개
+URL을 복사하고, 파일을 삭제할 수 있습니다. 삭제 전에 해당 URL을 사용하는 문서를
+직접 확인해야 합니다.
+
+Uploads are owner-only and use the same tab-scoped website bearer token as
+document writes. Each file is limited to 25 MiB; each site is limited to 1,000
+files and 250 MiB. JPEG, PNG, WebP, AVIF, GIF, supported audio, PDF, ZIP, and
+plain text are accepted. HTML and SVG are rejected. Public objects are served
+from the separately isolated `media.naru.pub` origin. Deleting a file removes
+both the R2 object and its metadata; deleting an account removes its media
+prefix. Upload callers should keep the returned ID so unused objects can be
+deleted explicitly. Upload authorizations that are not finalized are removed by
+the background cleanup after one hour.
 
 Public access intentionally permits callers from any origin. Public creates use database-backed fixed-minute limits of 60 successful creates per site and 20 per caller/IP per site, shared across collections and server processes. Owner writes do not consume these limits. Failed writes roll back their counters.
 
@@ -226,10 +285,17 @@ A null cursor marks the end. Cache prior pages or their starting cursors for a P
 ## Equality filters and automatic indexes
 
 ```js
-const query = { where: { category: "일상", active: true }, orderBy: "created_at", direction: "desc", limit: 20 };
+const query = {
+  where: { category: "일상", active: true },
+  orderBy: "created_at",
+  direction: "desc",
+  limit: 20,
+};
 const page = await db.collection("posts").list(query);
 if (page.nextCursor) {
-  const next = await db.collection("posts").list({ ...query, after: page.nextCursor });
+  const next = await db
+    .collection("posts")
+    .list({ ...query, after: page.nextCursor });
 }
 ```
 
@@ -247,15 +313,13 @@ Create `posts` (world/admin), `guestbook` (world/create), and **`drafts` (admin/
 
 The public list filters by exact `category`. The editor loads paginated posts/drafts, edits documents while preserving other JSON fields, saves private drafts, publishes, and deletes the selected document after confirmation. Local tab storage preserves the editor through the login redirect; explicit server draft saving persists across sessions. Signing out clears the editor and local draft.
 
-Draft and public copies share an ID. Saving a private draft does not unpublish or change an existing public post. Publication writes the post first, then removes the draft; those two requests are not atomic. Failed publication preserves the draft; failed cleanup reports that the post is already public and can be retried with the same ID. Deletion affects only the selected collection. There is no conflict detection: concurrent editors use last-write-wins. Guestbook moderation remains in the control panel.
-
+Draft and public copies share an ID. Saving a private draft does not unpublish or change an existing public post. Publication uses `owner.batch()` to write the post and remove its draft atomically; failure preserves the draft and leaves the public post unchanged. Deletion affects only the selected collection. There is no conflict detection: concurrent editors use last-write-wins. Guestbook moderation remains in the control panel.
 
 ### Website identity and admin tokens
 
 `site_data_site_clients` stores one persistent ID per owner, independently of callback rows. Migration preserves callback rows as internal registration IDs, but invalidates all existing authorization codes and website access tokens. Old callback IDs are not accepted as public Client IDs. Each registered page retains its exact callback and collection IDs. Changing a callback URL or its collection permissions revokes all of its codes and access tokens, including when widening scope. Reducing its token lifetime also revokes them. Increasing only the lifetime preserves existing tokens with their original deadlines; pending codes retain the duration already approved. Saving an unchanged registration does not revoke access. Removing a callback cascades the same revocation; the website ID survives even when the last callback is removed.
 
 Every `/api/data-auth/token` exchange returns `{accessToken, tokenType: "Bearer", expiresIn, expiresAt}`. `expiresAt` is the fixed expiry in Unix milliseconds; the token lasts no longer than the configured page lifetime, consented duration, platform maximum, or approving Naru session, whichever ends first. `POST /api/data-auth/revoke` takes the bearer token and revokes it idempotently. The unpublished renewal tables and `/refresh` and `/end-session` endpoints have been removed; the existing access-token table is sufficient. Requests use explicit credentials and never ambient cookies.
-
 
 ### Configuring token lifetime
 
