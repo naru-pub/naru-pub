@@ -110,6 +110,7 @@ export async function applySuccessfulCharge(opts: {
   amount: number;
   from: Date; // base for the new period (now for first charge, current_period_end for renewals)
   preserveExistingEntitlement?: boolean;
+  subscriptionStatus?: "active" | "canceled";
   payment: TossPaymentResult;
   paymentId?: number;
 }): Promise<{ periodStart: Date; periodEnd: Date }> {
@@ -185,13 +186,14 @@ export async function applySuccessfulCharge(opts: {
         .execute();
     }
 
+    const subscriptionStatus = opts.subscriptionStatus ?? "active";
     await trx
       .updateTable("subscriptions")
       .set({
-        status: "active",
+        status: subscriptionStatus,
         current_period_start: periodStart,
         current_period_end: periodEnd,
-        next_billing_at: periodEnd,
+        next_billing_at: subscriptionStatus === "active" ? periodEnd : null,
         failed_charge_count: 0,
         charging_started_at: null,
         renewal_notice_sent_at: null,

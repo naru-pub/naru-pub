@@ -13,6 +13,8 @@ const GITHUB_DEPLOYMENT_CLEANUP_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const CUSTOM_DOMAIN_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 const SUBSCRIPTION_CHARGE_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const BILLING_NOTIFICATION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const PAYMENT_RECONCILIATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const PAYMENT_RECONCILIATION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 const EXPIRED_CUSTOM_DOMAIN_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const EXPIRED_GITHUB_DEPLOYMENT_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 
@@ -83,6 +85,10 @@ async function runBillingNotifications() {
   );
 }
 
+async function runPaymentReconciliation() {
+  await runWithTimeout("reconcile-payments.ts", PAYMENT_RECONCILIATION_TIMEOUT);
+}
+
 async function runExpiredCustomDomainCleanup() {
   await runWithTimeout(
     "cleanup-expired-custom-domains.ts",
@@ -134,6 +140,10 @@ async function main() {
   console.log("[cron] Scheduling custom-domain refresher every 3 minutes");
   setInterval(runCustomDomainRefresher, CUSTOM_DOMAIN_INTERVAL);
   setTimeout(runCustomDomainRefresher, 20 * 1000);
+
+  console.log("[cron] Scheduling payment reconciliation every 5 minutes");
+  setInterval(runPaymentReconciliation, PAYMENT_RECONCILIATION_INTERVAL);
+  setTimeout(runPaymentReconciliation, 45 * 1000);
 
   // Run expired GitHub deployment cleanup every 15 minutes
   console.log("[cron] Scheduling GitHub deployment cleanup every 15 minutes");

@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ReconcilePaymentButton } from "./ReconcilePaymentButton";
 
 function formatDate(value: Date | string | null) {
   if (!value) return "-";
@@ -135,6 +136,7 @@ export default async function PaymentsPage() {
                     <TableHead className="text-right">금액</TableHead>
                     <TableHead>이용 기간</TableHead>
                     <TableHead>주문번호</TableHead>
+                    <TableHead>작업</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -159,6 +161,11 @@ export default async function PaymentsPage() {
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
                         {payment.order_id}
+                      </TableCell>
+                      <TableCell>
+                        {payment.status === "pending" ? (
+                          <ReconcilePaymentButton paymentId={payment.id} />
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

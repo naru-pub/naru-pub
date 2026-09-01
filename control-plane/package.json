@@ -22,6 +22,7 @@
     "update-home-directory-sizes": "tsx src/cli/update-home-directory-sizes.ts",
     "fix-multiple-slashes": "tsx src/cli/fix-multiple-slashes.ts",
     "charge-subscriptions": "tsx src/cli/charge-subscriptions.ts",
+    "reconcile-payments": "tsx src/cli/reconcile-payments.ts",
     "send-billing-notifications": "tsx src/cli/send-billing-notifications.ts",
     "cleanup-expired-custom-domains": "tsx src/cli/cleanup-expired-custom-domains.ts",
     "cleanup-expired-github-deployments": "tsx src/cli/cleanup-expired-github-deployments.ts",
