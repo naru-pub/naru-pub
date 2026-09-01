@@ -251,6 +251,18 @@ integration("sorted database pagination", () => {
       ).documents!.map((d) => d.id),
     ).toEqual(["two"]);
   });
+  test("metadata ordering still reaches its index after the sort rewrite", async () => {
+    const plan = await db.transaction().execute(async (tx) => {
+      await sql`set local enable_seqscan=off`.execute(tx);
+      return sql`explain (format json) select id from site_data_documents
+        where collection_id = 1 order by "created_at" desc, id desc limit 2`.execute(
+        tx,
+      );
+    });
+    expect(JSON.stringify(plan.rows)).toContain(
+      "site_data_documents_created_at_idx",
+    );
+  });
   test("migration backfills creation time without changing data and supports rollback", async () => {
     await down(db);
     await up(db);
