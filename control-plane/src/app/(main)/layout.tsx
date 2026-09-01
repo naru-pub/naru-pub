@@ -8,7 +8,7 @@ import { getHomepageUrl } from "@/lib/utils";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
 import { SUPPORT_VISIBLE_USERS } from "@/lib/support";
-import { getUserEntitlement, PLAN_FEATURES } from "@/lib/entitlements";
+import { userHasFeature } from "@/lib/entitlements";
 
 export const metadata: Metadata = {
   title: "나루",
@@ -21,13 +21,14 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const { user } = await validateRequest();
-  const entitlement = user ? await getUserEntitlement(user.id) : null;
-  const features = entitlement?.isSupporter
-    ? (PLAN_FEATURES[entitlement.plan ?? "supporter"] ?? [])
-    : [];
-  const analyticsEnabled = features.includes("analytics");
-  const supporterToolsEnabled =
-    features.includes("custom_domains") || features.includes("github_deploys");
+  const [analyticsEnabled, customDomainsEnabled, githubDeploysEnabled] = user
+    ? await Promise.all([
+        userHasFeature(user.id, "analytics"),
+        userHasFeature(user.id, "custom_domains"),
+        userHasFeature(user.id, "github_deploys"),
+      ])
+    : [false, false, false];
+  const supporterToolsEnabled = customDomainsEnabled || githubDeploysEnabled;
 
   return (
     <html lang="ko" suppressHydrationWarning>

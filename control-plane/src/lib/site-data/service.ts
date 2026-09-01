@@ -15,6 +15,7 @@ import {
 import { filters } from "./filters";
 import { sorting, decodeCursor, encodeCursor } from "./pagination";
 import { tokenScope, limitPublicCreate } from "./owner-auth";
+import { previewFeatureAccess, userHasFeature } from "@/lib/entitlements";
 
 export type DataCommand = {
   site: string;
@@ -40,11 +41,14 @@ export async function executeData(command: DataCommand) {
     // are serialized across processes, including concurrent collection deletion.
     const owner = await tx
       .selectFrom("users")
-      .select("id")
+      .select(["id", "supporter_comp"])
       .where("login_name", "=", site)
       .forUpdate()
       .executeTakeFirst();
     if (!owner) throw new DataError(404, "Site not found.");
+    const preview = previewFeatureAccess(!!owner.supporter_comp, "database");
+    if (!(preview ?? (await userHasFeature(owner.id, "database"))))
+      throw new DataError(403, "Database access is not enabled for this site.");
     const allowedIds = command.bearer
       ? await tokenScope(
           tx,

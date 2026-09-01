@@ -3,12 +3,35 @@ import { addPaymentGrace } from "@/lib/subscriptions";
 
 // Features that a paid (supporter) plan can unlock. Add new features here as
 // they become gated.
-export type Feature = "custom_domains" | "github_deploys" | "analytics";
+export type Feature =
+  | "custom_domains"
+  | "github_deploys"
+  | "analytics"
+  | "database";
 
 export const PLAN_FEATURES: Record<string, Feature[]> = {
-  supporter: ["custom_domains", "github_deploys", "analytics"],
+  supporter: ["custom_domains", "github_deploys", "analytics", "database"],
   // To add a richer tier later, add another plan key with its feature list.
 };
+
+const PREVIEW_FEATURES: Feature[] = [
+  "custom_domains",
+  "analytics",
+  "database",
+];
+
+// null means the rollout gate is inactive and supporter entitlements apply.
+export function previewFeatureAccess(
+  supporterComp: boolean,
+  feature: Feature,
+): boolean | null {
+  if (
+    process.env.FEATURE_ACCESS_MODE === "supporters" ||
+    !PREVIEW_FEATURES.includes(feature)
+  )
+    return null;
+  return supporterComp;
+}
 
 export type UserEntitlement = {
   isSupporter: boolean;
@@ -72,6 +95,17 @@ export async function userHasFeature(
   userId: number,
   feature: Feature,
 ): Promise<boolean> {
+  if (process.env.FEATURE_ACCESS_MODE !== "supporters") {
+    const user = await db
+      .selectFrom("users")
+      .select("supporter_comp")
+      .where("id", "=", userId)
+      .executeTakeFirst();
+    if (user) {
+      const preview = previewFeatureAccess(!!user.supporter_comp, feature);
+      if (preview !== null) return preview;
+    }
+  }
   const ent = await getUserEntitlement(userId);
   if (!ent.isSupporter) return false;
   const planFeatures = PLAN_FEATURES[ent.plan ?? "supporter"] ?? [];

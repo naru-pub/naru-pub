@@ -1,19 +1,19 @@
 use anyhow::Result;
-use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::Credentials;
+use aws_sdk_s3::Client as S3Client;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use tokio::net::TcpListener;
+use ipnetwork::IpNetwork;
 use percent_encoding::percent_decode_str;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::net::IpAddr;
 use std::sync::Arc;
-use ipnetwork::IpNetwork;
+use tokio::net::TcpListener;
 
 // Configuration struct
 struct Config {
@@ -26,6 +26,7 @@ struct Config {
     platform_domain: String,
     r2_public_domain: String,
     payment_grace_days: i64,
+    feature_access_mode: String,
 }
 
 // Shared state for the application
@@ -36,6 +37,7 @@ struct AppState {
     platform_domain: String,
     r2_public_domain: String,
     payment_grace_days: i64,
+    feature_access_mode: String,
 }
 
 #[derive(Clone, Debug)]
@@ -51,7 +53,8 @@ async fn main() -> Result<()> {
         bucket_name: std::env::var("R2_BUCKET_NAME").expect("R2_BUCKET_NAME must be set"),
         account_id: std::env::var("R2_ACCOUNT_ID").expect("R2_ACCOUNT_ID must be set"),
         access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("AWS_ACCESS_KEY_ID must be set"),
-        secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("AWS_SECRET_ACCESS_KEY must be set"),
+        secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY")
+            .expect("AWS_SECRET_ACCESS_KEY must be set"),
         port: std::env::var("PORT")
             .unwrap_or_else(|_| "5000".to_string())
             .parse()
@@ -70,6 +73,8 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| "4".to_string())
             .parse()
             .expect("PAYMENT_GRACE_DAYS must be a valid number"),
+        feature_access_mode: std::env::var("FEATURE_ACCESS_MODE")
+            .unwrap_or_else(|_| "preview".to_string()),
     };
 
     // Initialize R2 client
@@ -104,6 +109,7 @@ async fn main() -> Result<()> {
         platform_domain: config.platform_domain,
         r2_public_domain: config.r2_public_domain,
         payment_grace_days: config.payment_grace_days,
+        feature_access_mode: config.feature_access_mode,
     });
 
     // Create a TCP listener
@@ -164,6 +170,7 @@ async fn resolve_site_owner(
     host: &str,
     platform_domain: &str,
     payment_grace_days: i64,
+    feature_access_mode: &str,
 ) -> Option<SiteOwner> {
     let host = normalize_host(host);
     if host.is_empty() || host == platform_domain {
@@ -175,15 +182,17 @@ async fn resolve_site_owner(
             return None;
         }
 
-        let user_result: Result<Option<(i32, String)>, _> = sqlx::query_as(
-            "SELECT id, login_name FROM users WHERE login_name = $1"
-        )
-        .bind(login_name)
-        .fetch_optional(db_pool)
-        .await;
+        let user_result: Result<Option<(i32, String)>, _> =
+            sqlx::query_as("SELECT id, login_name FROM users WHERE login_name = $1")
+                .bind(login_name)
+                .fetch_optional(db_pool)
+                .await;
 
         return match user_result {
-            Ok(Some((user_id, login_name))) => Some(SiteOwner { user_id, login_name }),
+            Ok(Some((user_id, login_name))) => Some(SiteOwner {
+                user_id,
+                login_name,
+            }),
             Ok(None) => None,
             Err(err) => {
                 eprintln!("Error resolving platform subdomain: {}", err);
@@ -192,8 +201,9 @@ async fn resolve_site_owner(
         };
     }
 
-    let domain_result: Result<Option<(i32, String)>, _> = sqlx::query_as(
-        "SELECT users.id, users.login_name
+    let domain_result: Result<Option<(i32, String)>, _> = if feature_access_mode == "supporters" {
+        sqlx::query_as(
+            "SELECT users.id, users.login_name
          FROM custom_domains
          INNER JOIN users ON users.id = custom_domains.user_id
          WHERE custom_domains.hostname = $1
@@ -204,15 +214,33 @@ async fn resolve_site_owner(
              users.supporter_comp = TRUE
              OR users.supporter_until > now()
              OR users.supporter_until + ($2::int * INTERVAL '1 day') > now()
-           )"
-    )
-    .bind(&host)
-    .bind(payment_grace_days as i32)
-    .fetch_optional(db_pool)
-    .await;
+           )",
+        )
+        .bind(&host)
+        .bind(payment_grace_days as i32)
+        .fetch_optional(db_pool)
+        .await
+    } else {
+        sqlx::query_as(
+            "SELECT users.id, users.login_name
+         FROM custom_domains
+         INNER JOIN users ON users.id = custom_domains.user_id
+         WHERE custom_domains.hostname = $1
+           AND custom_domains.verified_at IS NOT NULL
+           AND custom_domains.cloudflare_status = 'active'
+           AND custom_domains.ssl_status = 'active'
+           AND users.supporter_comp = TRUE",
+        )
+        .bind(&host)
+        .fetch_optional(db_pool)
+        .await
+    };
 
     match domain_result {
-        Ok(Some((user_id, login_name))) => Some(SiteOwner { user_id, login_name }),
+        Ok(Some((user_id, login_name))) => Some(SiteOwner {
+            user_id,
+            login_name,
+        }),
         Ok(None) => None,
         Err(err) => {
             eprintln!("Error resolving custom domain: {}", err);
@@ -257,7 +285,14 @@ fn directory_redirect(uri: &hyper::Uri, decoded_path: &str) -> Option<String> {
 }
 
 // Record a pageview in the database (fire-and-forget)
-fn record_pageview(db_pool: PgPool, user_id: i32, path: String, client_ip: IpAddr, referrer: Option<String>, user_agent: Option<String>) {
+fn record_pageview(
+    db_pool: PgPool,
+    user_id: i32,
+    path: String,
+    client_ip: IpAddr,
+    referrer: Option<String>,
+    user_agent: Option<String>,
+) {
     tokio::spawn(async move {
         // Convert IpAddr to IpNetwork for PostgreSQL inet type
         let ip_network = IpNetwork::from(client_ip);
@@ -269,7 +304,7 @@ fn record_pageview(db_pool: PgPool, user_id: i32, path: String, client_ip: IpAdd
                 WHERE user_id = $1
                 AND ip = $2
                 AND timestamp >= CURRENT_DATE
-            )"
+            )",
         )
         .bind(user_id)
         .bind(ip_network)
@@ -301,7 +336,7 @@ fn record_pageview(db_pool: PgPool, user_id: i32, path: String, client_ip: IpAdd
             VALUES ($1, CURRENT_DATE, 1, $2)
             ON CONFLICT (user_id, date) DO UPDATE SET
                 views = pageview_daily_stats.views + 1,
-                unique_visitors = pageview_daily_stats.unique_visitors + $2"
+                unique_visitors = pageview_daily_stats.unique_visitors + $2",
         )
         .bind(user_id)
         .bind(unique_increment)
@@ -336,6 +371,7 @@ async fn handle_request(
         &host,
         &state.platform_domain,
         state.payment_grace_days,
+        &state.feature_access_mode,
     )
     .await;
 
@@ -374,9 +410,18 @@ async fn handle_request(
     let pageview_path = if raw_path.is_empty() {
         "/".to_string()
     } else {
-        format!("/{}", raw_path.trim_end_matches("index.html").trim_end_matches('/'))
+        format!(
+            "/{}",
+            raw_path
+                .trim_end_matches("index.html")
+                .trim_end_matches('/')
+        )
     };
-    let pageview_path = if pageview_path.is_empty() { "/".to_string() } else { pageview_path };
+    let pageview_path = if pageview_path.is_empty() {
+        "/".to_string()
+    } else {
+        pageview_path
+    };
 
     let key = format!("{}/{}", site_owner.login_name, path);
 
@@ -388,9 +433,7 @@ async fn handle_request(
         // Redirect to the specified URL
         let redirect_url = format!(
             "https://{}/{}/{}",
-            state.r2_public_domain,
-            site_owner.login_name,
-            path
+            state.r2_public_domain, site_owner.login_name, path
         );
         return Ok(Response::builder()
             .status(302) // HTTP status code for redirection
@@ -401,7 +444,8 @@ async fn handle_request(
     }
 
     // Get the object from S3
-    match state.s3_client
+    match state
+        .s3_client
         .get_object()
         .bucket(&state.bucket_name)
         .key(key)
@@ -470,7 +514,11 @@ mod tests {
             ),
             ("/a%3Fb%23c", "a?b#c", "/a%3Fb%23c/"),
             ("/blog%2F", "blog/", "/blog%2F/"),
-            ("//example.com/blog", "example.com/blog", "/example.com/blog/"),
+            (
+                "//example.com/blog",
+                "example.com/blog",
+                "/example.com/blog/",
+            ),
             ("/blog?", "blog", "/blog/?"),
         ] {
             assert_eq!(

@@ -39,6 +39,7 @@ AWS_SECRET_ACCESS_KEY=your-secret-key
 
 # 기타
 NEXT_PUBLIC_DOMAIN=naru.pub
+FEATURE_ACCESS_MODE=preview
 CUSTOM_DOMAIN_CNAME_TARGET=custom-domains.naru.pub
 CLOUDFLARE_ZONE_ID=your-cloudflare-zone-id
 CLOUDFLARE_USER_API_TOKEN=your-cloudflare-api-token
@@ -47,6 +48,11 @@ CLOUDFLARE_USER_API_TOKEN=your-cloudflare-api-token
 TOSS_CLIENT_KEY=your-toss-client-key
 TOSS_SECRET_KEY=your-toss-secret-key
 ```
+
+`preview` 모드에서는 `users.supporter_comp`가 설정된 계정만 커스텀 도메인,
+분석, 데이터베이스를 사용할 수 있습니다. 이 기능을 후원자에게 공개할 때는
+`FEATURE_ACCESS_MODE=supporters`로 바꾸면 기존 후원자 권한과 결제 유예 기간을
+사용합니다.
 
 ## 3. 데이터베이스 설정
 

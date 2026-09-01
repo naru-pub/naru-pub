@@ -64,6 +64,24 @@ integration("site database integration", () => {
       await call("GET", ["private", "one"], undefined, true),
     ).toMatchObject({ document: { data: null } });
   });
+  test("preview gate rejects sites outside the configured allowlist", async () => {
+    const denied = (
+      await sql<{ id: number }>`insert into users(login_name, supporter_comp) values ('not-enabled', false) returning id`.execute(
+        db,
+      )
+    ).rows[0].id;
+    await expect(
+      executeData({
+        site: "not-enabled",
+        path: [],
+        method: "GET",
+        adminUserId: denied,
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      message: "Database access is not enabled for this site.",
+    });
+  });
   test.each([
     ["world", "world"],
     ["world", "admin"],

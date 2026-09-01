@@ -93,12 +93,12 @@ export default async function SupportersPage() {
           <CardHeader className="bg-secondary border-b-2 border-border">
             <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
               <BadgeCheck size={20} />
-              후원자 메뉴
+              확장 기능
             </CardTitle>
           </CardHeader>
           <CardContent className="p-6">
             <p className="text-muted-foreground text-base leading-relaxed">
-              후원자 전용 기능을 설정하고 관리합니다.
+              계정에 허용된 확장 기능을 설정하고 관리합니다.
             </p>
           </CardContent>
         </Card>

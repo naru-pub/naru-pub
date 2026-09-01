@@ -1,6 +1,7 @@
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { DataError, jsonBody, sameOrigin } from "./validation";
+import { userHasFeature } from "@/lib/entitlements";
 import {
   approveAuthorization,
   authorizationInput,
@@ -50,6 +51,8 @@ export async function ownerAuthRequest(request: Request, action: string) {
     sameOrigin(request);
     const { user, session } = await validateRequest();
     if (!user || !session) throw new DataError(401, "Sign in required.");
+    if (!(await userHasFeature(user.id, "database")))
+      throw new DataError(403, "Database access is not enabled for this site.");
     if (action === "clients" && request.method === "GET") {
       const clients = await db
         .selectFrom("site_data_clients")

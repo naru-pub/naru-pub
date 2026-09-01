@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          message: "커스텀 도메인은 후원자 전용 기능입니다.",
+          message: "커스텀 도메인 사용 권한이 없습니다.",
         },
         { status: 403 },
       );
@@ -160,7 +160,7 @@ export async function PATCH(request: NextRequest) {
 
     if (!(await userHasFeature(user.id, "custom_domains"))) {
       return NextResponse.json(
-        { success: false, message: "커스텀 도메인은 후원자 전용 기능입니다." },
+        { success: false, message: "커스텀 도메인 사용 권한이 없습니다." },
         { status: 403 },
       );
     }

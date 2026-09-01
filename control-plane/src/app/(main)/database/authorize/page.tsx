@@ -1,6 +1,7 @@
 import { validateRequest } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { userHasFeature } from "@/lib/entitlements";
 import {
   authorizationInput,
   previewAuthorization,
@@ -31,6 +32,7 @@ export default async function AuthorizePage({
     redirect(
       `/login?next=${encodeURIComponent(`/database/authorize?${query}`)}`,
     );
+  if (!(await userHasFeature(user.id, "database"))) redirect("/account");
   try {
     const input = authorizationInput({
       ...Object.fromEntries(query),
