@@ -35,7 +35,7 @@ function formatKrw(amount: number) {
   }).format(amount);
 }
 
-function statusLabel(status: string) {
+function statusLabel(status: string, refundedAmount = 0) {
   switch (status) {
     case "done":
       return "결제 완료";
@@ -44,7 +44,9 @@ function statusLabel(status: string) {
     case "pending":
       return "대기 중";
     case "canceled":
-      return "취소됨";
+      return refundedAmount > 0 ? "전액 환불" : "결제 취소";
+    case "partial_canceled":
+      return "부분 환불";
     case "expired":
       return "만료됨";
     default:
@@ -95,6 +97,8 @@ export default async function PaymentsPage() {
       "paid_at",
       "period_start",
       "period_end",
+      "refunded_amount",
+      "refunded_at",
       "created_at",
     ])
     .where("user_id", "=", user.id)
@@ -134,6 +138,7 @@ export default async function PaymentsPage() {
                     <TableHead>종류</TableHead>
                     <TableHead>상태</TableHead>
                     <TableHead className="text-right">금액</TableHead>
+                    <TableHead className="text-right">환불</TableHead>
                     <TableHead>이용 기간</TableHead>
                     <TableHead>주문번호</TableHead>
                     <TableHead>작업</TableHead>
@@ -148,11 +153,16 @@ export default async function PaymentsPage() {
                       <TableCell>{paymentKind(payment)}</TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(payment.status)}>
-                          {statusLabel(payment.status)}
+                          {statusLabel(payment.status, payment.refunded_amount)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
                         {formatKrw(payment.amount)}
+                      </TableCell>
+                      <TableCell className="text-right whitespace-nowrap">
+                        {payment.refunded_amount > 0
+                          ? formatKrw(payment.refunded_amount)
+                          : "-"}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">
                         {payment.period_start && payment.period_end
@@ -163,7 +173,9 @@ export default async function PaymentsPage() {
                         {payment.order_id}
                       </TableCell>
                       <TableCell>
-                        {payment.status === "pending" ? (
+                        {["pending", "done", "partial_canceled"].includes(
+                          payment.status,
+                        ) ? (
                           <ReconcilePaymentButton paymentId={payment.id} />
                         ) : null}
                       </TableCell>

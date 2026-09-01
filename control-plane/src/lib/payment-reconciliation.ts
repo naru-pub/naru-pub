@@ -1,5 +1,10 @@
 import { db } from "@/lib/database";
-import { BillingInterval, getPaymentByOrderId, TossApiError } from "@/lib/toss";
+import {
+  BillingInterval,
+  getPaymentByOrderId,
+  TossApiError,
+  TossPaymentResult,
+} from "@/lib/toss";
 import {
   applyOneTimePayment,
   applySuccessfulCharge,
@@ -7,10 +12,29 @@ import {
 
 const UNCONFIRMED_EXPIRY_MS = 30 * 60 * 1000;
 
+export function refundDetails(payment: TossPaymentResult, amount: number) {
+  const cancels = payment.cancels ?? [];
+  const refundedAmount = cancels.reduce(
+    (total, cancel) => total + cancel.cancelAmount,
+    0,
+  );
+  const refundedAt = cancels
+    .map((cancel) => cancel.canceledAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1);
+  return {
+    refundedAmount,
+    refundedAt: refundedAt ? new Date(refundedAt) : null,
+    full: refundedAmount >= amount,
+  };
+}
+
 export type ReconciliationResult =
   | { state: "done" }
   | { state: "pending" }
   | { state: "failed"; status: string }
+  | { state: "refunded"; amount: number; full: boolean }
   | { state: "expired" };
 
 export async function reconcilePayment(
@@ -22,8 +46,8 @@ export async function reconcilePayment(
     .where("id", "=", paymentId)
     .executeTakeFirstOrThrow();
 
-  if (payment.status === "done") return { state: "done" };
-  if (payment.status !== "pending") {
+  const refreshable = new Set(["pending", "done", "partial_canceled"]);
+  if (!refreshable.has(payment.status)) {
     return { state: "failed", status: payment.status };
   }
 
@@ -33,8 +57,9 @@ export async function reconcilePayment(
   } catch (error) {
     if (error instanceof TossApiError && error.status === 404) {
       if (
+        payment.status === "pending" &&
         Date.now() - new Date(payment.created_at).getTime() >
-        UNCONFIRMED_EXPIRY_MS
+          UNCONFIRMED_EXPIRY_MS
       ) {
         await db
           .updateTable("payments")
@@ -66,20 +91,50 @@ export async function reconcilePayment(
       "failed",
     ]);
     if (finalStatuses.has(status)) {
-      await db
-        .updateTable("payments")
-        .set({
-          toss_payment_key: tossPayment.paymentKey,
-          status,
-          raw: JSON.stringify(tossPayment),
-        })
-        .where("id", "=", payment.id)
-        .where("status", "=", "pending")
-        .execute();
+      const { refundedAmount, refundedAt, full } = refundDetails(
+        tossPayment,
+        payment.amount,
+      );
+
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .updateTable("payments")
+          .set({
+            toss_payment_key: tossPayment.paymentKey,
+            status,
+            refunded_amount: refundedAmount,
+            refunded_at: refundedAt,
+            raw: JSON.stringify(tossPayment),
+          })
+          .where("id", "=", payment.id)
+          .execute();
+
+        // Lenient policy: never shorten supporter_until. A full refund only
+        // stops future charges; the already granted period remains available.
+        if (full && payment.subscription_id) {
+          await trx
+            .updateTable("subscriptions")
+            .set({
+              status: "canceled",
+              toss_billing_key: null,
+              next_billing_at: null,
+              charging_started_at: null,
+              canceled_at: refundedAt ?? new Date(),
+              updated_at: new Date(),
+            })
+            .where("id", "=", payment.subscription_id)
+            .execute();
+        }
+      });
+      if (status === "canceled" || status === "partial_canceled") {
+        return { state: "refunded", amount: refundedAmount, full };
+      }
       return { state: "failed", status };
     }
     return { state: "pending" };
   }
+
+  if (payment.status !== "pending") return { state: "done" };
 
   if (payment.attempt_key?.startsWith("one_time:")) {
     await applyOneTimePayment({

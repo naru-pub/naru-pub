@@ -15,6 +15,7 @@ const SUBSCRIPTION_CHARGE_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const BILLING_NOTIFICATION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const PAYMENT_RECONCILIATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const PAYMENT_RECONCILIATION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+const PAYMENT_REFUND_SYNC_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const EXPIRED_CUSTOM_DOMAIN_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const EXPIRED_GITHUB_DEPLOYMENT_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 
@@ -89,6 +90,10 @@ async function runPaymentReconciliation() {
   await runWithTimeout("reconcile-payments.ts", PAYMENT_RECONCILIATION_TIMEOUT);
 }
 
+async function runPaymentRefundSync() {
+  await runWithTimeout("sync-payment-refunds.ts", PAYMENT_REFUND_SYNC_TIMEOUT);
+}
+
 async function runExpiredCustomDomainCleanup() {
   await runWithTimeout(
     "cleanup-expired-custom-domains.ts",
@@ -160,6 +165,9 @@ async function main() {
   // Run subscription renewal charger daily at 04:00
   console.log("[cron] Scheduling subscription charger daily at 04:00");
   scheduleDaily(4, 0, runSubscriptionCharger);
+
+  console.log("[cron] Scheduling payment refund sync daily at 04:15");
+  scheduleDaily(4, 15, runPaymentRefundSync);
 
   // Send renewal reminder emails daily at 09:00
   console.log("[cron] Scheduling billing notifications daily at 09:00");

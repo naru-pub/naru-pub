@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/database";
 import { getPaymentByOrderId, TossApiError } from "@/lib/toss";
+import { reconcilePayment } from "@/lib/payment-reconciliation";
 
 const ALLOWED_PAYMENT_STATUSES = new Set([
   "ready",
@@ -40,6 +41,10 @@ export async function POST(request: NextRequest) {
       payment.totalAmount === ledger.amount &&
       ALLOWED_PAYMENT_STATUSES.has(status)
     ) {
+      if (status === "canceled" || status === "partial_canceled") {
+        await reconcilePayment(ledger.id);
+        return NextResponse.json({ received: true });
+      }
       // Successful charges must still pass through confirm/renewal, which
       // atomically records the payment and grants the paid period. Leaving a
       // successful attempt pending makes that reconciliation possible.

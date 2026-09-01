@@ -183,6 +183,8 @@ export interface Payments {
   paid_at: Timestamp | null;
   period_start: Timestamp | null;
   period_end: Timestamp | null;
+  refunded_amount: Generated<number>;
+  refunded_at: Timestamp | null;
   raw: unknown | null;
   created_at: Generated<Timestamp>;
 }

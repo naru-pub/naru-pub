@@ -104,6 +104,12 @@ export type TossPaymentResult = {
   orderId: string;
   status: string; // "DONE" on success
   totalAmount: number;
+  balanceAmount?: number;
+  cancels?: Array<{
+    cancelAmount: number;
+    canceledAt?: string;
+    transactionKey?: string;
+  }> | null;
   approvedAt?: string;
   [key: string]: unknown;
 };
