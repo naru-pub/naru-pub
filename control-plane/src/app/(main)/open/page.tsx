@@ -22,11 +22,14 @@ async function getUserGrowthData() {
     .execute();
 
   // Group users by month and count cumulative growth
-  const monthlyData = users.reduce((acc, user) => {
-    const month = new Date(user.created_at).toISOString().slice(0, 7); // YYYY-MM format
-    acc[month] = (acc[month] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+  const monthlyData = users.reduce(
+    (acc, user) => {
+      const month = new Date(user.created_at).toISOString().slice(0, 7); // YYYY-MM format
+      acc[month] = (acc[month] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
 
   // Convert to cumulative data
   let cumulative = 0;
@@ -42,22 +45,26 @@ async function getUserGrowthData() {
 }
 
 async function getCurrentStorageStats() {
-  const users = await db
-    .selectFrom("users")
-    .select(["home_directory_size_bytes"])
-    .where("home_directory_size_bytes_updated_at", "is not", null)
-    .execute();
+  const [sizes, registered] = await Promise.all([
+    db
+      .selectFrom("users")
+      .select([
+        sql<number>`COALESCE(SUM(home_directory_size_bytes), 0)`.as("total"),
+        sql<number>`COALESCE(MAX(home_directory_size_bytes), 0)`.as("max"),
+      ])
+      .where("home_directory_size_bytes_updated_at", "is not", null)
+      .executeTakeFirst(),
+    db
+      .selectFrom("users")
+      .select(sql<number>`COUNT(*)`.as("count"))
+      .executeTakeFirst(),
+  ]);
 
-  const totalSize = users.reduce(
-    (sum, user) => sum + (user.home_directory_size_bytes || 0),
-    0
-  );
-  const averageSize = users.length > 0 ? totalSize / users.length : 0;
-  const maxSize =
-    users.length > 0
-      ? Math.max(...users.map((user) => user.home_directory_size_bytes || 0))
-      : 0;
-  const userCount = users.length;
+  const totalSize = Number(sizes?.total ?? 0);
+  const maxSize = Number(sizes?.max ?? 0);
+  // Every registered account, so this matches the number the front page shows.
+  const userCount = Number(registered?.count ?? 0);
+  const averageSize = userCount > 0 ? totalSize / userCount : 0;
 
   return {
     totalSize,
@@ -170,7 +177,9 @@ export default async function OpenPage() {
         <h2 className="text-3xl font-bold text-foreground mb-2 flex items-center gap-3">
           <BarChart3 size={28} /> 지표
         </h2>
-        <p className="text-muted-foreground">나루의 사용 현황과 통계를 확인해보세요.</p>
+        <p className="text-muted-foreground">
+          나루의 사용 현황과 통계를 확인해보세요.
+        </p>
       </div>
 
       {/* Current Statistics */}
@@ -185,9 +194,7 @@ export default async function OpenPage() {
             <div className="text-2xl font-bold text-foreground tabular-nums">
               {formatBytes(currentStats.totalSize)}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {currentStats.userCount}명의 사용자
-            </p>
+            <p className="text-xs text-muted-foreground">측정된 갠홈 합계</p>
           </CardContent>
         </Card>
         <Card className="bg-card border-2 border-border shadow-lg">
@@ -219,14 +226,14 @@ export default async function OpenPage() {
         <Card className="bg-card border-2 border-border shadow-lg">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
             <CardTitle className="text-sm font-medium text-foreground">
-              활성 사용자
+              전체 사용자
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4">
             <div className="text-2xl font-bold text-foreground tabular-nums">
               {currentStats.userCount}명
             </div>
-            <p className="text-xs text-muted-foreground">저장 용량이 계산된 사용자</p>
+            <p className="text-xs text-muted-foreground">가입한 모든 사용자</p>
           </CardContent>
         </Card>
         <Card className="bg-card border-2 border-border shadow-lg">
