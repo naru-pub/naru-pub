@@ -21,22 +21,6 @@ const nextConfig = {
       },
     ];
   },
-  async redirects() {
-    return [
-      // The guide moved out from under the database control panel; these URLs
-      // were public and may be linked from outside.
-      {
-        source: "/database/docs",
-        destination: "/docs/database",
-        permanent: true,
-      },
-      {
-        source: "/database/docs/blog.zip",
-        destination: "/docs/database/blog.zip",
-        permanent: true,
-      },
-    ];
-  },
   serverExternalPackages: ["@node-rs/argon2"],
   images: {
     remotePatterns: [

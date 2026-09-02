@@ -261,7 +261,7 @@ Integration tests require an empty database named exactly `naru_data_test`. They
 
 ## Public guide and example
 
-The Korean guides are served publicly at `/docs` (index), `/docs/database` and `/docs/media`; the old `/database/docs` URLs redirect there. The control panel links to it without adding a global header link. The static blog example lives in `control-plane/public/examples/database-blog/`; `/docs/database/blog.zip` packages these same source files at build time. See its README for installation and permission setup.
+The Korean guides are served publicly at `/docs` (index), `/docs/database` and `/docs/media`. The control panel links to it without adding a global header link. The static blog example lives in `control-plane/public/examples/database-blog/`; `/docs/database/blog.zip` packages these same source files at build time. See its README for installation and permission setup.
 
 ## Server-side sorting and pagination (SDK 1.0.0)
 
