@@ -64,7 +64,7 @@ export default async function RootLayout({
                         >
                           파일
                         </Link>
-                        <DocsMenu />
+                        {features.has("database") && <DocsMenu />}
                         <ExtensionsMenu
                           analytics={features.has("analytics")}
                           database={features.has("database")}
@@ -80,7 +80,6 @@ export default async function RootLayout({
                       </>
                     ) : (
                       <>
-                        <DocsMenu />
                         <Link
                           href="/login"
                           className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
