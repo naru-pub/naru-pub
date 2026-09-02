@@ -1,0 +1,186 @@
+"use client";
+
+import Link from "next/link";
+import {
+  BadgeCheck,
+  BarChart3,
+  Database,
+  Github,
+  Globe,
+  Heart,
+  LogOut,
+  ReceiptText,
+  Settings,
+  ShieldCheck,
+  User,
+} from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+const TRIGGER_CLASS =
+  "text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200";
+
+type ExtensionItem = {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  enabled: boolean;
+};
+
+export function ExtensionsMenu({
+  analytics,
+  database,
+  customDomains,
+  githubDeploys,
+}: {
+  analytics: boolean;
+  database: boolean;
+  customDomains: boolean;
+  githubDeploys: boolean;
+}) {
+  const items: ExtensionItem[] = [
+    {
+      href: "/analytics",
+      label: "분석",
+      icon: <BarChart3 size={16} />,
+      enabled: analytics,
+    },
+    {
+      href: "/database",
+      label: "데이터베이스",
+      icon: <Database size={16} />,
+      enabled: database,
+    },
+    {
+      href: "/supporters#custom-domains",
+      label: "커스텀 도메인",
+      icon: <Globe size={16} />,
+      enabled: customDomains,
+    },
+    {
+      href: "/supporters#github-deploys",
+      label: "GitHub 배포",
+      icon: <Github size={16} />,
+      enabled: githubDeploys,
+    },
+  ];
+
+  // A menu of nothing but locked rows would be a dead end, so it only appears
+  // once at least one extension is actually available.
+  if (!items.some((item) => item.enabled)) {
+    return null;
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className={TRIGGER_CLASS}>
+        확장 기능
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel className="flex items-center gap-2">
+          <BadgeCheck size={16} />
+          확장 기능
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {items.map((item) =>
+          item.enabled ? (
+            <DropdownMenuItem key={item.href} asChild>
+              <Link href={item.href} className="flex items-center gap-2">
+                {item.icon}
+                {item.label}
+              </Link>
+            </DropdownMenuItem>
+          ) : (
+            // Shown rather than hidden so the menu says what supporting adds.
+            <DropdownMenuItem key={item.href} disabled>
+              <span className="flex items-center gap-2">
+                {item.icon}
+                {item.label}
+                <span className="text-xs">후원자 전용</span>
+              </span>
+            </DropdownMenuItem>
+          ),
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export function AccountMenu({
+  loginName,
+  supportVisible,
+  paymentOperator,
+}: {
+  loginName: string;
+  supportVisible: boolean;
+  paymentOperator: boolean;
+}) {
+  async function logout() {
+    try {
+      const response = await fetch("/api/account/logout", { method: "POST" });
+      if (response.ok) {
+        window.location.href = "/";
+      }
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className={TRIGGER_CLASS}>계정</DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel className="flex items-center gap-2">
+          <User size={16} />
+          {loginName}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/account" className="flex items-center gap-2">
+            <Settings size={16} />
+            계정 관리
+          </Link>
+        </DropdownMenuItem>
+        {supportVisible && (
+          <>
+            <DropdownMenuItem asChild>
+              <Link href="/support" className="flex items-center gap-2">
+                <Heart size={16} />
+                후원하기
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/support/payments" className="flex items-center gap-2">
+                <ReceiptText size={16} />
+                결제 내역
+              </Link>
+            </DropdownMenuItem>
+          </>
+        )}
+        {paymentOperator && (
+          <DropdownMenuItem asChild>
+            <Link href="/admin" className="flex items-center gap-2">
+              <ShieldCheck size={16} />
+              운영
+            </Link>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={logout}>
+          <span className="flex items-center gap-2">
+            <LogOut size={16} />
+            로그아웃
+          </span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

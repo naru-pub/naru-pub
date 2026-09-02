@@ -104,17 +104,21 @@ export default async function SupportersPage() {
         </Card>
 
         {githubDeploysEnabled && (
-          <GitHubDeployTargetsCard
-            loginName={user.loginName}
-            targets={githubDeployTargets}
-          />
+          <div id="github-deploys" className="scroll-mt-6">
+            <GitHubDeployTargetsCard
+              loginName={user.loginName}
+              targets={githubDeployTargets}
+            />
+          </div>
         )}
         {customDomainsEnabled && (
-          <CustomDomainsCard
-            enabled={customDomainsEnabled}
-            domains={customDomains}
-            target={getCustomDomainTarget()}
-          />
+          <div id="custom-domains" className="scroll-mt-6">
+            <CustomDomainsCard
+              enabled={customDomainsEnabled}
+              domains={customDomains}
+              target={getCustomDomainTarget()}
+            />
+          </div>
         )}
       </div>
     </div>

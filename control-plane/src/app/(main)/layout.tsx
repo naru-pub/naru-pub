@@ -7,8 +7,9 @@ import { Toaster } from "@/components/ui/sonner";
 import { getHomepageUrl } from "@/lib/utils";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
-import { SUPPORT_VISIBLE_USERS } from "@/lib/support";
-import { userHasFeature } from "@/lib/entitlements";
+import { PAYMENT_OPERATOR_USERS, SUPPORT_VISIBLE_USERS } from "@/lib/support";
+import { getUserFeatures, type Feature } from "@/lib/entitlements";
+import { AccountMenu, ExtensionsMenu } from "@/components/NavMenus";
 
 export const metadata: Metadata = {
   title: "나루",
@@ -21,14 +22,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const { user } = await validateRequest();
-  const [analyticsEnabled, customDomainsEnabled, githubDeploysEnabled] = user
-    ? await Promise.all([
-        userHasFeature(user.id, "analytics"),
-        userHasFeature(user.id, "custom_domains"),
-        userHasFeature(user.id, "github_deploys"),
-      ])
-    : [false, false, false];
-  const supporterToolsEnabled = customDomainsEnabled || githubDeploysEnabled;
+  const features = user ? await getUserFeatures(user.id) : new Set<Feature>();
 
   return (
     <html lang="ko" suppressHydrationWarning>
@@ -70,36 +64,21 @@ export default async function RootLayout({
                         >
                           파일
                         </Link>
-                        {analyticsEnabled && (
-                          <Link
-                            href="/analytics"
-                            className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                          >
-                            분석
-                          </Link>
-                        )}
-                        {supporterToolsEnabled && (
-                          <Link
-                            href="/supporters"
-                            className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                          >
-                            후원자
-                          </Link>
-                        )}
-                        {SUPPORT_VISIBLE_USERS.has(user.loginName) && (
-                          <Link
-                            href="/support"
-                            className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                          >
-                            후원
-                          </Link>
-                        )}
-                        <Link
-                          href="/account"
-                          className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                        >
-                          계정
-                        </Link>
+                        <ExtensionsMenu
+                          analytics={features.has("analytics")}
+                          database={features.has("database")}
+                          customDomains={features.has("custom_domains")}
+                          githubDeploys={features.has("github_deploys")}
+                        />
+                        <AccountMenu
+                          loginName={user.loginName}
+                          supportVisible={SUPPORT_VISIBLE_USERS.has(
+                            user.loginName,
+                          )}
+                          paymentOperator={PAYMENT_OPERATOR_USERS.has(
+                            user.loginName,
+                          )}
+                        />
                       </>
                     ) : (
                       <>

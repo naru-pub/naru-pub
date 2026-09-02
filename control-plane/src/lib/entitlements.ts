@@ -9,6 +9,13 @@ export type Feature =
   | "analytics"
   | "database";
 
+export const ALL_FEATURES: Feature[] = [
+  "custom_domains",
+  "github_deploys",
+  "analytics",
+  "database",
+];
+
 export const PLAN_FEATURES: Record<string, Feature[]> = {
   supporter: ["custom_domains", "github_deploys", "analytics", "database"],
   // To add a richer tier later, add another plan key with its feature list.
@@ -89,6 +96,39 @@ export async function getUserEntitlement(
     graceEndsAt,
     inPaymentGrace,
   };
+}
+
+// Resolves every feature at once. The nav needs the whole set on every page
+// load, and calling userHasFeature per feature would repeat the same
+// entitlement lookup once for each of them.
+export async function getUserFeatures(userId: number): Promise<Set<Feature>> {
+  const [user, ent] = await Promise.all([
+    process.env.FEATURE_ACCESS_MODE !== "supporters"
+      ? db
+          .selectFrom("users")
+          .select("supporter_comp")
+          .where("id", "=", userId)
+          .executeTakeFirst()
+      : undefined,
+    getUserEntitlement(userId),
+  ]);
+
+  const planFeatures = ent.isSupporter
+    ? (PLAN_FEATURES[ent.plan ?? "supporter"] ?? [])
+    : [];
+
+  const features = new Set<Feature>();
+  for (const feature of ALL_FEATURES) {
+    const preview = user
+      ? previewFeatureAccess(!!user.supporter_comp, feature)
+      : null;
+    if (preview !== null) {
+      if (preview) features.add(feature);
+      continue;
+    }
+    if (planFeatures.includes(feature)) features.add(feature);
+  }
+  return features;
 }
 
 export async function userHasFeature(
