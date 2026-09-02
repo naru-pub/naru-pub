@@ -1,3 +1,5 @@
+import "./env";
+
 import * as path from "path";
 import { promises as fs } from "fs";
 import { FileMigrationProvider, Migrator } from "kysely/migration";
