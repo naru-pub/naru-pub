@@ -28,7 +28,7 @@ export default async function Home() {
           <CardContent className="p-6 space-y-4">
             <p className="text-muted-foreground text-base leading-relaxed">
               <strong className="text-primary">나루</strong>는 누구나 무료로
-              사용할 수 있는 비영리 웹사이트 호스팅 서비스입니다.
+              사용할 수 있는 웹사이트 호스팅 서비스입니다.
             </p>
             <p className="text-muted-foreground text-base leading-relaxed">
               개인 홈페이지나 블로그를 손쉽게 만들고 공유할 수 있도록
@@ -62,8 +62,8 @@ export default async function Home() {
 
               <div className="bg-background border border-border rounded p-3">
                 <strong className="text-foreground">ℹ️ 면책:</strong> 나루는
-                비영리 서비스이며, 사용상 발생하는 문제에 대해 어떠한 책임도
-                지지 않습니다.
+                무료 서비스이며, 사용상 발생하는 문제에 대해 어떠한 책임도 지지
+                않습니다.
               </div>
 
               <div className="bg-background border border-border rounded p-3">
