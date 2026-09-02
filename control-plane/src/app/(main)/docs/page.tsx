@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "사용 안내 | 나루",
+  title: "길잡이 | 나루",
   description: "나루의 데이터베이스와 미디어 라이브러리를 쓰는 방법",
 };
 
@@ -35,7 +35,7 @@ export default function DocsIndex() {
         <header className="mb-12 max-w-3xl space-y-5">
           <p className="text-sm text-muted-foreground">NARU / DOCS</p>
           <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
-            사용 안내
+            길잡이
           </h1>
           <p className="text-lg leading-8 text-muted-foreground">
             정적 웹사이트에 데이터와 파일을 더하는 방법을 안내합니다. 별도 서버

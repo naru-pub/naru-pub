@@ -9,7 +9,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
 import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
 import { getUserFeatures, type Feature } from "@/lib/entitlements";
-import { AccountMenu, ExtensionsMenu } from "@/components/NavMenus";
+import { AccountMenu, DocsMenu, ExtensionsMenu } from "@/components/NavMenus";
 
 export const metadata: Metadata = {
   title: "나루",
@@ -64,6 +64,7 @@ export default async function RootLayout({
                         >
                           파일
                         </Link>
+                        <DocsMenu />
                         <ExtensionsMenu
                           analytics={features.has("analytics")}
                           database={features.has("database")}
@@ -79,6 +80,7 @@ export default async function RootLayout({
                       </>
                     ) : (
                       <>
+                        <DocsMenu />
                         <Link
                           href="/login"
                           className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"

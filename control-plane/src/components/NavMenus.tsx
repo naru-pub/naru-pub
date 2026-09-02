@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   BadgeCheck,
+  BookOpen,
   BarChart3,
   Database,
   Github,
@@ -122,6 +123,40 @@ export function ExtensionsMenu({
 
 // /support and /support/payments are reachable by URL for any signed-in user
 // but deliberately unlinked, so nothing here points at them.
+export function DocsMenu() {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className={TRIGGER_CLASS}>
+        길잡이
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel className="flex items-center gap-2">
+          <BookOpen size={16} />
+          길잡이
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/docs" className="flex items-center gap-2">
+            전체 보기
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/docs/database" className="flex items-center gap-2">
+            <Database size={16} />
+            데이터베이스
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/docs/media" className="flex items-center gap-2">
+            <Images size={16} />
+            미디어 라이브러리
+          </Link>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AccountMenu({
   loginName,
   paymentOperator,
