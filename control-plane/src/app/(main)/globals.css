@@ -61,4 +61,12 @@
 
     --logo-filter: drop-shadow(0 0 1px white) drop-shadow(1px 0 1px white) drop-shadow(-1px 0 1px white) drop-shadow(0 1px 1px white) drop-shadow(0 -1px 1px white);
   }
+
+  /* The canvas, not just the layout wrapper, carries the theme background.
+     The wrapper is exactly one viewport tall, so on a page taller than the
+     window everything below the fold would otherwise fall through to the
+     browser's default canvas and show as a seam mid-scroll. */
+  body {
+    @apply bg-background;
+  }
 }
