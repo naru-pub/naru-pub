@@ -16,31 +16,105 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
+// A sparkline is drawn server-side as plain SVG. The charts on /open pull in
+// recharts behind "use client", which is far too much JavaScript to put on the
+// page every visitor loads for a decoration this small.
+function Sparkline({ values, label }: { values: number[]; label: string }) {
+  if (values.length < 2) return null;
+
+  const width = 100;
+  const height = 24;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  // A flat series would divide by zero; draw it along the baseline instead.
+  const span = max - min || 1;
+  const points = values.map((value, index) => {
+    const x = (index / (values.length - 1)) * width;
+    const y = height - ((value - min) / span) * height;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  });
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      className="text-primary mt-2 h-6 w-full"
+      role="img"
+      aria-label={label}
+    >
+      <polygon
+        points={`0,${height} ${points.join(" ")} ${width},${height}`}
+        fill="currentColor"
+        fillOpacity="0.12"
+      />
+      <polyline
+        points={points.join(" ")}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
 // The front page is the only page every visitor loads, so these stay pure SQL
 // aggregates. /open can afford to pull rows and reduce in JS; this cannot.
+// The two series are grouped in the database and come back a few dozen rows
+// each, never one row per user.
 async function getHeadlineStats() {
-  const [users, storage, pageviews] = await Promise.all([
-    db
-      .selectFrom("users")
-      .select(sql<number>`COUNT(*)`.as("count"))
-      .executeTakeFirst(),
-    db
-      .selectFrom("users")
-      .select(
-        sql<number>`COALESCE(SUM(home_directory_size_bytes), 0)`.as("bytes"),
-      )
-      .where("home_directory_size_bytes_updated_at", "is not", null)
-      .executeTakeFirst(),
-    db
-      .selectFrom("pageview_daily_stats")
-      .select(sql<number>`COALESCE(SUM(views), 0)`.as("count"))
-      .executeTakeFirst(),
-  ]);
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+
+  const [users, storage, pageviews, signupsByMonth, viewsByDay] =
+    await Promise.all([
+      db
+        .selectFrom("users")
+        .select(sql<number>`COUNT(*)`.as("count"))
+        .executeTakeFirst(),
+      db
+        .selectFrom("users")
+        .select(
+          sql<number>`COALESCE(SUM(home_directory_size_bytes), 0)`.as("bytes"),
+        )
+        .where("home_directory_size_bytes_updated_at", "is not", null)
+        .executeTakeFirst(),
+      db
+        .selectFrom("pageview_daily_stats")
+        .select(sql<number>`COALESCE(SUM(views), 0)`.as("count"))
+        .executeTakeFirst(),
+      db
+        .selectFrom("users")
+        .select([
+          sql<Date>`DATE_TRUNC('month', created_at)`.as("month"),
+          sql<number>`COUNT(*)`.as("count"),
+        ])
+        .groupBy(sql`DATE_TRUNC('month', created_at)`)
+        .orderBy(sql`DATE_TRUNC('month', created_at)`)
+        .execute(),
+      db
+        .selectFrom("pageview_daily_stats")
+        .select(["date", sql<number>`COALESCE(SUM(views), 0)`.as("views")])
+        .where("date", ">=", thirtyDaysAgo)
+        .groupBy("date")
+        .orderBy("date")
+        .execute(),
+    ]);
+
+  // Signups per month become the cumulative curve the headline number ends on.
+  let runningTotal = 0;
+  const userTrend = signupsByMonth.map((row) => {
+    runningTotal += Number(row.count);
+    return runningTotal;
+  });
 
   return {
     userCount: Number(users?.count ?? 0),
     totalBytes: Number(storage?.bytes ?? 0),
     totalViews: Number(pageviews?.count ?? 0),
+    userTrend,
+    viewTrend: viewsByDay.map((row) => Number(row.views)),
   };
 }
 
@@ -90,6 +164,7 @@ export default async function Home() {
                   {stats.userCount.toLocaleString("ko-KR")}명
                 </div>
                 <p className="text-xs text-muted-foreground">함께하는 사용자</p>
+                <Sparkline values={stats.userTrend} label="월별 누적 사용자" />
               </div>
               <div className="bg-background border border-border rounded p-3">
                 <div className="text-2xl font-bold text-foreground tabular-nums">
@@ -104,6 +179,10 @@ export default async function Home() {
                   {stats.totalViews.toLocaleString("ko-KR")}
                 </div>
                 <p className="text-xs text-muted-foreground">지금까지의 조회</p>
+                <Sparkline
+                  values={stats.viewTrend}
+                  label="최근 30일 페이지뷰"
+                />
               </div>
             </div>
             <Link
