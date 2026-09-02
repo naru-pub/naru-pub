@@ -61,6 +61,9 @@ export default function SignUpPage() {
     },
   });
 
+  // react-hook-form's watch() is opaque to the React Compiler, which reports a
+  // skipped compilation rather than a defect. The live domain preview needs it.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const username = form.watch("username");
   const domain = `${username === "" ? usernamePlaceholder : username}.${
     process.env.NEXT_PUBLIC_DOMAIN
@@ -101,7 +104,9 @@ export default function SignUpPage() {
       <div className="bg-card border-2 border-border shadow-lg rounded-lg p-6">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-foreground mb-2">회원가입</h1>
-          <p className="text-muted-foreground">나루에서 당신만의 웹 공간을 만드세요</p>
+          <p className="text-muted-foreground">
+            나루에서 당신만의 웹 공간을 만드세요
+          </p>
         </div>
 
         <Form {...form}>

@@ -34,10 +34,9 @@ export default function Editor({
     (val: string | undefined) => {
       setValue(val ?? "");
     },
-    [setValue]
+    [setValue],
   );
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const diffEditorRef = useRef<any>(null);
 
   useEffect(() => {
@@ -100,7 +99,7 @@ export default function Editor({
   }
 
   return (
-    <div className={`flex flex-col h-full ${showSaveButton ? 'gap-4' : ''}`}>
+    <div className={`flex flex-col h-full ${showSaveButton ? "gap-4" : ""}`}>
       <div className="flex-1 min-h-0">
         {showDiff ? (
           <DiffEditor
@@ -154,11 +153,7 @@ export default function Editor({
               {showDiff ? "편집" : "변경 사항"}
             </Button>
           )}
-          <Button
-            type="button"
-            value="저장"
-            onClick={handleSave}
-          >
+          <Button type="button" value="저장" onClick={handleSave}>
             저장
           </Button>
         </div>

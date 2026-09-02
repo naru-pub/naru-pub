@@ -38,36 +38,34 @@ export default function DownloadDirectoryButton({
     fetchStatus();
   }, [fetchStatus]);
 
-  // Poll while pending or in_progress
+  // Poll while pending or in_progress. Depending on the status alone keeps
+  // each refetch from restarting the interval it is being polled by.
+  const status = exportStatus?.status;
   useEffect(() => {
-    if (
-      !exportStatus ||
-      (exportStatus.status !== "pending" &&
-        exportStatus.status !== "in_progress")
-    ) {
+    if (status !== "pending" && status !== "in_progress") {
       setIsPolling(false);
       return;
     }
 
     setIsPolling(true);
     const interval = setInterval(async () => {
-      const status = await fetchStatus();
+      const latest = await fetchStatus();
       if (
-        status &&
-        status.status !== "pending" &&
-        status.status !== "in_progress"
+        latest &&
+        latest.status !== "pending" &&
+        latest.status !== "in_progress"
       ) {
         setIsPolling(false);
-        if (status.status === "completed") {
+        if (latest.status === "completed") {
           toast.success("갠홈 내보내기가 완료되었습니다.");
-        } else if (status.status === "failed") {
+        } else if (latest.status === "failed") {
           toast.error("갠홈 내보내기에 실패했습니다.");
         }
       }
     }, 10_000);
 
     return () => clearInterval(interval);
-  }, [exportStatus?.status, fetchStatus]);
+  }, [status, fetchStatus]);
 
   const handleRequest = async () => {
     setIsRequesting(true);

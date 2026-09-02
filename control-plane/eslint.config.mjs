@@ -1,7 +1,7 @@
 import coreWebVitals from "eslint-config-next/core-web-vitals";
 
 // Next 16 removed `next lint`, so ESLint runs directly and needs flat config.
-export default [
+const config = [
   {
     ignores: [
       ".next/**",
@@ -13,3 +13,5 @@ export default [
   },
   ...coreWebVitals,
 ];
+
+export default config;
