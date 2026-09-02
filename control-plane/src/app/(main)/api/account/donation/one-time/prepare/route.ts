@@ -7,7 +7,7 @@ import {
 } from "@/lib/support";
 import { db } from "@/lib/database";
 import {
-  isOneTimeYears,
+  isPurchasableOneTimeYears,
   newOrderId,
   oneTimeAmount,
   oneTimeOrderName,
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     // during a blue-green rollout.
     const body = await request.json().catch(() => ({ years: 1 }));
     const years = body?.years;
-    if (!isOneTimeYears(years)) {
+    if (!isPurchasableOneTimeYears(years)) {
       return NextResponse.json(
         { success: false, message: "후원 기간이 올바르지 않습니다." },
         { status: 400 },

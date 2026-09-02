@@ -11,6 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
+// 카드사 심사는 서비스 제공기간이 1년을 넘는 상품을 허용하지 않으므로, 일회성
+// 후원은 1년치 한 건만 판매한다. 서버(MAX_PURCHASABLE_ONE_TIME_YEARS)가 같은
+// 한도를 강제한다. lib/toss는 crypto를 끌어오므로 여기서 import하지 않는다.
+const ONE_TIME_YEARS = 1;
+const ONE_TIME_AMOUNT = 12000;
+
 type SubscriptionInfo = {
   status: string;
   billingInterval: string;
@@ -39,7 +45,6 @@ export default function SupportCard({
   const toasted = useRef(false);
   const [pending, setPending] = useState(false);
   const [resending, setResending] = useState(false);
-  const [oneTimeYears, setOneTimeYears] = useState(1);
   const untilLabel = supporterUntil
     ? new Date(supporterUntil).toLocaleDateString("ko-KR")
     : null;
@@ -116,7 +121,7 @@ export default function SupportCard({
       const res = await fetch("/api/account/donation/one-time/prepare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ years: oneTimeYears }),
+        body: JSON.stringify({ years: ONE_TIME_YEARS }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -326,34 +331,14 @@ export default function SupportCard({
                       {supportActive ? "일회성 후원으로 전환" : "한 번만 후원"}
                     </p>
                     <div className="flex flex-col gap-2 sm:flex-row">
-                      <label className="flex items-center gap-2 border border-border bg-background px-3 py-2 text-sm sm:w-40">
-                        <span className="shrink-0 text-muted-foreground">
-                          기간
-                        </span>
-                        <select
-                          value={oneTimeYears}
-                          onChange={(event) =>
-                            setOneTimeYears(Number(event.target.value))
-                          }
-                          disabled={pending}
-                          className="min-w-0 flex-1 bg-transparent font-medium outline-none"
-                          aria-label="일회성 후원 기간"
-                        >
-                          {[1, 2, 3, 5].map((years) => (
-                            <option key={years} value={years}>
-                              {years}년
-                            </option>
-                          ))}
-                        </select>
-                      </label>
                       <Button
                         onClick={donateOnce}
                         disabled={pending}
                         variant="outline"
                         className="flex-1"
                       >
-                        {(oneTimeYears * 12000).toLocaleString("ko-KR")}원 결제
-                        (자동 갱신 없음)
+                        {ONE_TIME_AMOUNT.toLocaleString("ko-KR")}원 결제 (1년,
+                        자동 갱신 없음)
                       </Button>
                     </div>
                   </>

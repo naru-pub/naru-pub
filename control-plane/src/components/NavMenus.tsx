@@ -122,8 +122,9 @@ export function ExtensionsMenu({
   );
 }
 
-// /support and /support/payments are reachable by URL for any signed-in user
-// but deliberately unlinked, so nothing here points at them.
+// /support is public and linked from the front page and BusinessFooter, which
+// is where 카드사 심사 expects to find it; /support/payments stays reachable by
+// URL for a signed-in user only, so nothing here points at either.
 export function DocsMenu() {
   return (
     <DropdownMenu>

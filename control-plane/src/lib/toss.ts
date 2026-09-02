@@ -19,6 +19,14 @@ export const PLAN_ORDER_NAMES: Record<BillingInterval, string> = {
 // recurring annual plan since there's no retention commitment.
 export const ONE_TIME_YEAR_AMOUNT = 12000;
 export const ONE_TIME_YEAR_ORDER_NAME = "나루 후원 (1년, 한 번만 결제)";
+
+// Card-company review (PG 심사) rejects a merchant whose 서비스 제공기간 runs
+// longer than a year, so nothing over one year may be sold any more.
+export const MAX_PURCHASABLE_ONE_TIME_YEARS = 1;
+
+// Multi-year purchases were sold before that rule was applied. Reading a stored
+// amount back — confirming a pending payment, reconciling a refund — still has
+// to resolve those rows, so the parse bound stays where it was.
 export const MAX_ONE_TIME_YEARS = 10;
 
 export function isOneTimeYears(value: unknown): value is number {
@@ -28,6 +36,11 @@ export function isOneTimeYears(value: unknown): value is number {
     value >= 1 &&
     value <= MAX_ONE_TIME_YEARS
   );
+}
+
+// The bound for a *new* purchase, as opposed to reading an existing one.
+export function isPurchasableOneTimeYears(value: unknown): value is number {
+  return isOneTimeYears(value) && value <= MAX_PURCHASABLE_ONE_TIME_YEARS;
 }
 
 export function oneTimeAmount(years: number): number {

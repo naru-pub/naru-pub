@@ -11,6 +11,7 @@ import {
   confirmPayment,
   isDefinitiveTossFailure,
   isOneTimeYears,
+  isPurchasableOneTimeYears,
   oneTimeAmount,
   oneTimeOrderName,
   oneTimeYearsForAmount,
@@ -81,6 +82,11 @@ describe("Toss payment requests", () => {
     expect(oneTimeYearsForAmount(60000)).toBe(5);
     expect(oneTimeYearsForAmount(13000)).toBeNull();
     expect(oneTimeOrderName(2)).toBe("나루 후원 (2년, 한 번만 결제)");
+    // Only one year may still be sold, but older multi-year amounts must keep
+    // resolving so their confirmations and refunds reconcile.
+    expect(isPurchasableOneTimeYears(1)).toBe(true);
+    expect(isPurchasableOneTimeYears(2)).toBe(false);
+    expect(isPurchasableOneTimeYears(0)).toBe(false);
   });
 
   test.each([
