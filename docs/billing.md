@@ -12,7 +12,7 @@
 - **구독 시작**: `subscription/prepare`가 플랜을 `incomplete` 구독으로 기록하고 `customerKey`를 반환 → 프런트가 `requestBillingAuth`로 카드 등록 → `/account/subscription/callback`이 `subscription/confirm` 호출 → 빌링키 발급 후 첫 결제, `subscriptions`를 `active`로, `supporter_until`을 채웁니다. 금액은 항상 서버(`lib/toss.ts`의 `PLAN_AMOUNTS`)에서 결정합니다.
 - **자동 갱신**: cron의 `charge-subscriptions.ts`(매일 04:00)가 `next_billing_at`이 지난 활성 구독을 빌링키로 청구해 기간을 연장합니다. 실패 시 결제 유예 기간 안에서 `MAX_PAYMENT_RETRY_ATTEMPTS`까지 재시도합니다. 재시도 한도나 유예 기간 끝에 도달하면 `past_due`로 전환됩니다.
 - **자동 대사**: `reconcile-payments.ts`가 5분마다 오래된 `pending` 주문을 Toss에서 조회합니다. 결제가 완료됐으면 결제 원장과 이용 기간을 한 트랜잭션으로 확정하고, 확인되지 않은 주문은 30분 뒤 만료합니다. 사용자는 결제 내역의 “다시 확인”으로 즉시 같은 대사를 요청할 수도 있습니다.
-- **환불 정책**: 웹훅과 매일 04:15의 `sync-payment-refunds.ts`가 Toss의 취소 내역과 환불 금액을 원장에 동기화합니다. 전액·부분 환불 모두 이미 부여한 `supporter_until`을 줄이지 않습니다. 전액 환불된 정기 후원만 자동 갱신을 취소하고 빌링키를 제거합니다.
+- **환불 정책**: 웹훅과 매일 04:15의 `sync-payment-refunds.ts`가 Toss의 취소 내역과 환불 금액을 원장에 동기화합니다. 전액 환불된 결제는 그 결제가 부여한 기간을 되돌립니다. `supporter_until`은 환불되지 않은 결제 원장에서 다시 계산하므로, 다른 결제가 산 기간은 건드리지 않고 줄어들기만 합니다. 부분 환불은 기간을 그대로 둡니다. 전액 환불된 정기 후원은 자동 갱신도 취소하고 빌링키를 제거합니다.
 - **운영 진단**: 결제 대사를 실행할 때마다 `last_reconciled_at`과 `reconciliation_error`를 기록합니다. 결제 운영자는 `/admin`에서 전체 사용자의 최근 결제, 대기·실패 상태, 환불, 구독 상태, Toss 불일치를 확인하고 수동 대사를 실행할 수 있습니다.
 - **이메일 알림**: 후원 시작/한 번만 후원 성공 시 한국어 인디웹 후원 감사 메일을 보냅니다. cron의 `send-billing-notifications.ts`(매일 09:00)가 다음 결제일 3일 이내인 인증된 이메일 계정에 갱신 예정 안내를 보냅니다. `charge-subscriptions.ts`는 갱신 결제 첫 실패 시 결제 유예 기간 안내를 한 번 보냅니다.
 - **취소**: `subscription/cancel`은 `status='canceled'`로 두고 `supporter_until`은 유지 → 결제한 기간 동안은 계속 이용 가능.

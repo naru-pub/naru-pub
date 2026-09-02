@@ -31,6 +31,29 @@ export function refundDetails(payment: TossPaymentResult, amount: number) {
   };
 }
 
+export type EntitlementLedgerRow = {
+  periodEnd: Date | string | null;
+  amount: number;
+  refundedAmount: number;
+};
+
+// supporter_until is the end of the latest period a payment actually paid for.
+// A fully refunded payment stops counting, so the time it granted goes with the
+// money. Partial refunds still count: they are normally a goodwill gesture, and
+// slicing a proportional piece off a stack of periods has no honest answer.
+export function supporterUntilFromLedger(
+  rows: EntitlementLedgerRow[],
+): Date | null {
+  let latest: Date | null = null;
+  for (const row of rows) {
+    if (!row.periodEnd) continue;
+    if (row.refundedAmount >= row.amount) continue;
+    const end = new Date(row.periodEnd);
+    if (!latest || end > latest) latest = end;
+  }
+  return latest;
+}
+
 export type ReconciliationResult =
   | { state: "done" }
   | { state: "pending" }
@@ -110,8 +133,45 @@ async function reconcilePaymentCore(
           .where("id", "=", payment.id)
           .execute();
 
-        // Lenient policy: never shorten supporter_until. A full refund only
-        // stops future charges; the already granted period remains available.
+        // Refunding takes back the time the refunded money paid for. Without
+        // this a chargeback bought a free supporter year: the money went back
+        // and the entitlement stayed. Recomputed from the ledger rather than
+        // subtracted, so a refund cannot disturb periods other payments paid
+        // for.
+        const ledger = await trx
+          .selectFrom("payments")
+          .select(["period_end", "amount", "refunded_amount"])
+          .where("user_id", "=", payment.user_id)
+          .where("period_end", "is not", null)
+          .execute();
+        const recomputed = supporterUntilFromLedger(
+          ledger.map((row) => ({
+            periodEnd: row.period_end,
+            amount: row.amount,
+            refundedAmount: row.refunded_amount,
+          })),
+        );
+        const currentUser = await trx
+          .selectFrom("users")
+          .select("supporter_until")
+          .where("id", "=", payment.user_id)
+          .executeTakeFirst();
+        const currentUntil = currentUser?.supporter_until
+          ? new Date(currentUser.supporter_until)
+          : null;
+        // Only ever shortens. Lifetime comps live on supporter_comp and are
+        // untouched by this.
+        if (
+          currentUntil &&
+          (recomputed === null || recomputed < currentUntil)
+        ) {
+          await trx
+            .updateTable("users")
+            .set({ supporter_until: recomputed })
+            .where("id", "=", payment.user_id)
+            .execute();
+        }
+
         if (full && payment.subscription_id) {
           await trx
             .updateTable("subscriptions")
