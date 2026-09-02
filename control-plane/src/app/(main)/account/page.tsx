@@ -4,11 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LogoutButton from "./LogoutButton";
 import DeleteAccountButton from "./DeleteAccountButton";
 import DownloadDirectoryButton from "./DownloadDirectoryButton";
-import { DiscoverabilityForm } from "./DiscoverabilityForm";
 import ChangePasswordForm from "./ChangePasswordForm";
 import EmailManagement from "./EmailManagement";
-import FediverseCard from "./FediverseCard";
-import { db } from "@/lib/database";
+import { hasVerifiedEmail } from "@/lib/support";
 import { Settings, User } from "lucide-react";
 
 export default async function AccountPage() {
@@ -17,37 +15,6 @@ export default async function AccountPage() {
   if (!user) {
     redirect("/");
   }
-
-  const followerRows = await db
-    .selectFrom("followers")
-    .innerJoin("remote_actors", "remote_actors.id", "followers.remote_actor_id")
-    .select([
-      "remote_actors.iri as iri",
-      "remote_actors.preferred_username as preferred_username",
-      "remote_actors.profile_url as profile_url",
-    ])
-    .where("followers.user_id", "=", user.id)
-    .orderBy("followers.id", "desc")
-    .limit(200)
-    .execute();
-
-  const followers = followerRows.map((row) => {
-    let host = "";
-    try {
-      host = new URL(row.iri).host;
-    } catch {
-      // fall through
-    }
-    const handle =
-      row.preferred_username && host
-        ? `@${row.preferred_username}@${host}`
-        : row.iri;
-    return {
-      handle,
-      url: row.profile_url ?? row.iri,
-    };
-  });
-  const fediverseDomain = process.env.NEXT_PUBLIC_DOMAIN ?? "naru.pub";
 
   return (
     <div className="bg-background min-h-screen">
@@ -77,12 +44,6 @@ export default async function AccountPage() {
           currentEmail={user.email}
           emailVerifiedAt={user.emailVerifiedAt}
         />
-        <FediverseCard
-          loginName={user.loginName}
-          domain={fediverseDomain}
-          followers={followers}
-        />
-        <DiscoverabilityForm discoverable={user.discoverable} />
         <ChangePasswordForm />
 
         <Card className="bg-card border-2 border-border shadow-lg">
@@ -94,7 +55,7 @@ export default async function AccountPage() {
           <CardContent className="p-6">
             <div className="flex flex-row gap-4 flex-wrap">
               <DownloadDirectoryButton
-                hasVerifiedEmail={!!user.email && !!user.emailVerifiedAt}
+                hasVerifiedEmail={hasVerifiedEmail(user)}
               />
               <LogoutButton />
               <DeleteAccountButton />

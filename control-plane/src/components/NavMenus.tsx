@@ -6,6 +6,7 @@ import {
   BarChart3,
   Database,
   Github,
+  Globe2,
   Globe,
   Images,
   LogOut,
@@ -152,6 +153,12 @@ export function AccountMenu({
           <Link href="/account" className="flex items-center gap-2">
             <Settings size={16} />
             계정 관리
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/presence" className="flex items-center gap-2">
+            <Globe2 size={16} />
+            공개 설정
           </Link>
         </DropdownMenuItem>
         {paymentOperator && (

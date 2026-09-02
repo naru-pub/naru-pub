@@ -68,10 +68,7 @@ export function DiscoverabilityForm({
       </CardHeader>
       <CardContent className="p-6">
         <Form {...form}>
-          <form
-            onSubmit={form.handleSubmit(onSubmit)}
-            className="space-y-4"
-          >
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
               control={form.control}
               name="discoverable"
@@ -84,7 +81,9 @@ export function DiscoverabilityForm({
                     />
                   </FormControl>
                   <div className="space-y-1 leading-none">
-                    <FormLabel className="text-foreground">검색 및 발견 허용</FormLabel>
+                    <FormLabel className="text-foreground">
+                      검색 및 발견 허용
+                    </FormLabel>
                     <FormDescription className="text-muted-foreground">
                       해당 설정을 활성화한 경우 나루 메인 홈페이지에 노출될 수
                       있습니다.
