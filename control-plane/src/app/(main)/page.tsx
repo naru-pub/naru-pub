@@ -8,14 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdCard } from "@/components/AdCard";
 import { Info, ScrollText, History, BarChart3 } from "lucide-react";
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-}
-
 // A sparkline is drawn server-side as plain SVG. The charts on /open pull in
 // recharts behind "use client", which is far too much JavaScript to put on the
 // page every visitor loads for a decoration this small.
@@ -67,58 +59,44 @@ async function getHeadlineStats() {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
 
-  const [
-    users,
-    storage,
-    pageviews,
-    edits,
-    signupsByMonth,
-    viewsByDay,
-    editsByDay,
-  ] = await Promise.all([
-    db
-      .selectFrom("users")
-      .select(sql<number>`COUNT(*)`.as("count"))
-      .executeTakeFirst(),
-    db
-      .selectFrom("users")
-      .select(
-        sql<number>`COALESCE(SUM(home_directory_size_bytes), 0)`.as("bytes"),
-      )
-      .where("home_directory_size_bytes_updated_at", "is not", null)
-      .executeTakeFirst(),
-    db
-      .selectFrom("pageview_daily_stats")
-      .select(sql<number>`COALESCE(SUM(views), 0)`.as("count"))
-      .executeTakeFirst(),
-    db
-      .selectFrom("edit_daily_stats")
-      .select(sql<number>`COALESCE(SUM(edit_count), 0)`.as("count"))
-      .executeTakeFirst(),
-    db
-      .selectFrom("users")
-      .select([
-        sql<Date>`DATE_TRUNC('month', created_at)`.as("month"),
-        sql<number>`COUNT(*)`.as("count"),
-      ])
-      .groupBy(sql`DATE_TRUNC('month', created_at)`)
-      .orderBy(sql`DATE_TRUNC('month', created_at)`)
-      .execute(),
-    db
-      .selectFrom("pageview_daily_stats")
-      .select(["date", sql<number>`COALESCE(SUM(views), 0)`.as("views")])
-      .where("date", ">=", thirtyDaysAgo)
-      .groupBy("date")
-      .orderBy("date")
-      .execute(),
-    db
-      .selectFrom("edit_daily_stats")
-      .select(["date", sql<number>`COALESCE(SUM(edit_count), 0)`.as("edits")])
-      .where("date", ">=", thirtyDaysAgo)
-      .groupBy("date")
-      .orderBy("date")
-      .execute(),
-  ]);
+  const [users, pageviews, edits, signupsByMonth, viewsByDay, editsByDay] =
+    await Promise.all([
+      db
+        .selectFrom("users")
+        .select(sql<number>`COUNT(*)`.as("count"))
+        .executeTakeFirst(),
+      db
+        .selectFrom("pageview_daily_stats")
+        .select(sql<number>`COALESCE(SUM(views), 0)`.as("count"))
+        .executeTakeFirst(),
+      db
+        .selectFrom("edit_daily_stats")
+        .select(sql<number>`COALESCE(SUM(edit_count), 0)`.as("count"))
+        .executeTakeFirst(),
+      db
+        .selectFrom("users")
+        .select([
+          sql<Date>`DATE_TRUNC('month', created_at)`.as("month"),
+          sql<number>`COUNT(*)`.as("count"),
+        ])
+        .groupBy(sql`DATE_TRUNC('month', created_at)`)
+        .orderBy(sql`DATE_TRUNC('month', created_at)`)
+        .execute(),
+      db
+        .selectFrom("pageview_daily_stats")
+        .select(["date", sql<number>`COALESCE(SUM(views), 0)`.as("views")])
+        .where("date", ">=", thirtyDaysAgo)
+        .groupBy("date")
+        .orderBy("date")
+        .execute(),
+      db
+        .selectFrom("edit_daily_stats")
+        .select(["date", sql<number>`COALESCE(SUM(edit_count), 0)`.as("edits")])
+        .where("date", ">=", thirtyDaysAgo)
+        .groupBy("date")
+        .orderBy("date")
+        .execute(),
+    ]);
 
   // Signups per month become the cumulative curve the headline number ends on.
   let runningTotal = 0;
@@ -129,7 +107,6 @@ async function getHeadlineStats() {
 
   return {
     userCount: Number(users?.count ?? 0),
-    totalBytes: Number(storage?.bytes ?? 0),
     totalViews: Number(pageviews?.count ?? 0),
     totalEdits: Number(edits?.count ?? 0),
     userTrend,
@@ -178,21 +155,13 @@ export default async function Home() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="bg-background border border-border rounded p-3">
                 <div className="text-2xl font-bold text-foreground tabular-nums">
                   {stats.userCount.toLocaleString("ko-KR")}명
                 </div>
                 <p className="text-xs text-muted-foreground">함께하는 사용자</p>
                 <Sparkline values={stats.userTrend} label="월별 누적 사용자" />
-              </div>
-              <div className="bg-background border border-border rounded p-3">
-                <div className="text-2xl font-bold text-foreground tabular-nums">
-                  {formatBytes(stats.totalBytes)}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  갠홈에 담긴 이야기
-                </p>
               </div>
               <div className="bg-background border border-border rounded p-3">
                 <div className="text-2xl font-bold text-foreground tabular-nums">
