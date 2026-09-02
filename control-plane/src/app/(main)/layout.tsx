@@ -41,7 +41,7 @@ export default async function RootLayout({
         >
           <div className="bg-background h-screen flex flex-col">
             <nav className="bg-card border-b border-border">
-              <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex items-center justify-between h-16">
                   <div className="flex items-center">
                     <Link href="/" className="flex items-center gap-3 group">
@@ -136,7 +136,7 @@ export default async function RootLayout({
 
               {user && (
                 <div className="border-t border-border bg-primary/5">
-                  <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
                     <p className="text-sm flex items-center gap-2 whitespace-nowrap overflow-x-auto">
                       <span className="text-muted-foreground select-none">
                         {user.loginName}@naru:~$

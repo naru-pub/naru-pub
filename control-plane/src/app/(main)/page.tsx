@@ -17,8 +17,8 @@ export default async function Home() {
     .execute();
 
   return (
-    <div className="bg-background min-h-screen p-6 space-y-8">
-      <div className="max-w-4xl mx-auto space-y-8">
+    <div className="bg-background min-h-screen p-6">
+      <div className="mx-auto max-w-7xl space-y-8">
         <Card className="bg-card border-2 border-border shadow-lg">
           <CardHeader className="bg-secondary border-b-2 border-border">
             <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
@@ -80,7 +80,7 @@ export default async function Home() {
           </CardContent>
         </Card>
 
-        <div className="grid md:grid-cols-2 gap-6">
+        <div className="grid gap-6 md:grid-cols-2">
           <AdCard
             icon="🥒"
             title="오이카페"
@@ -126,56 +126,52 @@ export default async function Home() {
             buttonHref="https://x.com/naru_pub"
           />
         </div>
-      </div>
 
-      {recentlyRenderedUsers.length > 0 && (
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="bg-secondary border-b-2 border-border">
-            <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
-              <History size={20} /> 최근 업데이트된
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-6">
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(220px,100%),1fr))] gap-4">
-              {recentlyRenderedUsers.map((user) => {
-                const homepageUrl = getHomepageUrl(user.login_name);
+        {recentlyRenderedUsers.length > 0 && (
+          <Card className="bg-card border-2 border-border shadow-lg">
+            <CardHeader className="bg-secondary border-b-2 border-border">
+              <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
+                <History size={20} /> 최근 업데이트된
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(220px,100%),1fr))] gap-4">
+                {recentlyRenderedUsers.map((user) => {
+                  const homepageUrl = getHomepageUrl(user.login_name);
 
-                return (
-                  <div
-                    key={user.id}
-                    className="bg-card border border-border rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow duration-200"
-                  >
-                    <Link
-                      href={homepageUrl}
-                      target="_blank"
-                      className="block"
+                  return (
+                    <div
+                      key={user.id}
+                      className="bg-card border border-border rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow duration-200"
                     >
-                      <div className="border border-border rounded mb-3 overflow-hidden">
-                        <Image
-                          src={getRenderedSiteUrl(
-                            user.login_name,
-                            user.site_rendered_at
-                          )}
-                          alt="screenshot"
-                          width={320}
-                          height={240}
-                          className="w-full h-auto hover:opacity-90 transition-opacity"
-                        />
-                      </div>
-                      <Button
-                        variant="outline"
-                        className="w-full border-border text-muted-foreground hover:bg-background bg-card"
-                      >
-                        {user.login_name}
-                      </Button>
-                    </Link>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                      <Link href={homepageUrl} target="_blank" className="block">
+                        <div className="border border-border rounded mb-3 overflow-hidden">
+                          <Image
+                            src={getRenderedSiteUrl(
+                              user.login_name,
+                              user.site_rendered_at
+                            )}
+                            alt="screenshot"
+                            width={320}
+                            height={240}
+                            className="w-full h-auto hover:opacity-90 transition-opacity"
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          className="w-full border-border text-muted-foreground hover:bg-background bg-card"
+                        >
+                          {user.login_name}
+                        </Button>
+                      </Link>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }
