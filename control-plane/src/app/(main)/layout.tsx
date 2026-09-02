@@ -7,7 +7,6 @@ import { Toaster } from "@/components/ui/sonner";
 import { getHomepageUrl } from "@/lib/utils";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
-import { SUPPORT_VISIBLE_USERS } from "@/lib/support";
 import { userHasFeature } from "@/lib/entitlements";
 
 export const metadata: Metadata = {
@@ -98,14 +97,12 @@ export default async function RootLayout({
                             후원자
                           </Link>
                         )}
-                        {SUPPORT_VISIBLE_USERS.has(user.loginName) && (
-                          <Link
-                            href="/support"
-                            className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                          >
-                            후원
-                          </Link>
-                        )}
+                        <Link
+                          href="/support"
+                          className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+                        >
+                          후원
+                        </Link>
                         <Link
                           href="/account"
                           className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"

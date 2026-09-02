@@ -4,7 +4,6 @@ import { ArrowLeft, ReceiptText } from "lucide-react";
 
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { SUPPORT_VISIBLE_USERS } from "@/lib/support";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -78,10 +77,6 @@ export default async function PaymentsPage() {
 
   if (!user) {
     redirect("/");
-  }
-
-  if (!SUPPORT_VISIBLE_USERS.has(user.loginName)) {
-    redirect("/account");
   }
 
   const payments = await db
