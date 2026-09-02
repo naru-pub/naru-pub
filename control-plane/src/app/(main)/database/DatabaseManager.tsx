@@ -33,6 +33,7 @@ export default function DatabaseManager({
   const [read, setRead] = useState("admin");
   const [write, setWrite] = useState("admin");
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [id, setId] = useState("");
   const [json, setJson] = useState('{\n  "message": "안녕하세요!"\n}');
@@ -61,6 +62,9 @@ export default function DatabaseManager({
       after ? [...previous, ...result.documents] : result.documents,
     );
     setCursor(result.nextCursor);
+    // The list is paged, so the collection's real size comes from the server
+    // rather than from however many rows happen to be on screen.
+    if (!after) setTotal((await api(`/${collection}?count=1`)).count);
   }
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -133,6 +137,7 @@ export default function DatabaseManager({
                   setWrite("admin");
                   setId("");
                   setDocuments([]);
+                  setTotal(null);
                   setCursor(null);
                   setNewName("");
                   await refresh();
@@ -171,6 +176,7 @@ export default function DatabaseManager({
                       setWrite(c.write_access);
                       setId("");
                       setDocuments([]);
+                      setTotal(null);
                       setCursor(null);
                       await load(c.name);
                     })
@@ -202,7 +208,9 @@ export default function DatabaseManager({
                     {selected}
                   </h2>
                   <span className="text-sm text-muted-foreground">
-                    불러온 문서 {documents.length}개
+                    {total === null
+                      ? `불러온 문서 ${documents.length}개`
+                      : `문서 ${total}개 중 ${documents.length}개 불러옴`}
                   </span>
                 </div>
                 <details className="border p-4 space-y-4">
@@ -267,6 +275,7 @@ export default function DatabaseManager({
                             await api(`/${selected}`, "DELETE");
                             setSelected("");
                             setDocuments([]);
+                            setTotal(null);
                             await refresh();
                           });
                       }}

@@ -107,6 +107,67 @@
         invalid && calls.length === 2,
         "invalid JSON is rejected before a request",
       );
+      const modern = [];
+      window.fetch = async (url, options) => {
+        modern.push({ url: new URL(url), options });
+        if (new URL(url).searchParams.get("count") === "1")
+          return Response.json({ count: 7 });
+        return Response.json(
+          modern.length === 2
+            ? { documents: [{ id: "a" }, { id: "b" }], nextCursor: "v1.next" }
+            : { documents: [{ id: "c" }], nextCursor: null },
+        );
+      };
+      const month = { gte: "2026-09-01", lt: "2026-10-01" };
+      check(
+        (await db.collection("posts").count({ where: { date: month } })) === 7,
+        "count() reads a server total",
+      );
+      check(
+        JSON.parse(modern[0].url.searchParams.get("where")).date.lt ===
+          "2026-10-01" &&
+          !modern[0].url.searchParams.has("limit") &&
+          !modern[0].url.searchParams.has("after"),
+        "range filters survive URL encoding and counting skips paging",
+      );
+      const seen = [];
+      for await (const document of db
+        .collection("posts")
+        .all({ orderBy: "data.date", direction: "desc" }))
+        seen.push(document.id);
+      check(
+        seen.join(",") === "a,b,c" && modern.length === 3,
+        "all() walks cursors through a real async generator",
+      );
+      check(
+        modern[1].url.searchParams.get("orderBy") === "data.date" &&
+          modern[2].url.searchParams.get("after") === "v1.next",
+        "document field ordering and cursors reach the wire",
+      );
+      window.fetch = async (url, options) => {
+        modern.push({ url: new URL(url), options });
+        return Response.json({ id: "one", version: 3 });
+      };
+      await owner
+        .collection("posts")
+        .update(
+          "one",
+          { title: "부분 수정" },
+          { unset: ["legacy"], ifVersion: 2 },
+        );
+      check(
+        modern[3].options.method === "PATCH" &&
+          modern[3].url.searchParams.get("ifVersion") === "2" &&
+          JSON.parse(modern[3].options.body).unset[0] === "legacy",
+        "merge patches carry unset and ifVersion",
+      );
+      await owner.collection("posts").delete("one", { ifVersion: 3 });
+      check(
+        modern[4].options.method === "DELETE" &&
+          modern[4].url.searchParams.get("ifVersion") === "3" &&
+          modern[4].options.body === undefined,
+        "conditional delete carries no body",
+      );
       window.fetch = async () =>
         new Response("<html>Unauthorized</html>", { status: 401 });
       let revoked = false;
