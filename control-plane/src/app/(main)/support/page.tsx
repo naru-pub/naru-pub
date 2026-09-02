@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { getUserEntitlement } from "@/lib/entitlements";
-import { hasVerifiedEmail, SUPPORT_VISIBLE_USERS } from "@/lib/support";
+import { hasVerifiedEmail } from "@/lib/support";
 import SupportCard from "../account/SupportCard";
 
 export default async function SupportPage() {
@@ -14,10 +14,6 @@ export default async function SupportPage() {
 
   if (!user) {
     redirect("/");
-  }
-
-  if (!SUPPORT_VISIBLE_USERS.has(user.loginName)) {
-    redirect("/account");
   }
 
   const entitlement = await getUserEntitlement(user.id);

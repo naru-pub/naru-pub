@@ -7,9 +7,7 @@ import {
   Database,
   Github,
   Globe,
-  Heart,
   LogOut,
-  ReceiptText,
   Settings,
   ShieldCheck,
   User,
@@ -114,13 +112,13 @@ export function ExtensionsMenu({
   );
 }
 
+// /support and /support/payments are reachable by URL for any signed-in user
+// but deliberately unlinked, so nothing here points at them.
 export function AccountMenu({
   loginName,
-  supportVisible,
   paymentOperator,
 }: {
   loginName: string;
-  supportVisible: boolean;
   paymentOperator: boolean;
 }) {
   async function logout() {
@@ -149,22 +147,6 @@ export function AccountMenu({
             계정 관리
           </Link>
         </DropdownMenuItem>
-        {supportVisible && (
-          <>
-            <DropdownMenuItem asChild>
-              <Link href="/support" className="flex items-center gap-2">
-                <Heart size={16} />
-                후원하기
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/support/payments" className="flex items-center gap-2">
-                <ReceiptText size={16} />
-                결제 내역
-              </Link>
-            </DropdownMenuItem>
-          </>
-        )}
         {paymentOperator && (
           <DropdownMenuItem asChild>
             <Link href="/admin" className="flex items-center gap-2">

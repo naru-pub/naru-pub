@@ -7,7 +7,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { getHomepageUrl } from "@/lib/utils";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
-import { PAYMENT_OPERATOR_USERS, SUPPORT_VISIBLE_USERS } from "@/lib/support";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
 import { getUserFeatures, type Feature } from "@/lib/entitlements";
 import { AccountMenu, ExtensionsMenu } from "@/components/NavMenus";
 
@@ -72,9 +72,6 @@ export default async function RootLayout({
                         />
                         <AccountMenu
                           loginName={user.loginName}
-                          supportVisible={SUPPORT_VISIBLE_USERS.has(
-                            user.loginName,
-                          )}
                           paymentOperator={PAYMENT_OPERATOR_USERS.has(
                             user.loginName,
                           )}
