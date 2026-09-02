@@ -1,0 +1,1991 @@
+{
+  "version": "1.0.0",
+  "entries": [
+    {
+      "name": "createDatabase",
+      "kind": "function",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "사이트 하나의 데이터베이스 클라이언트를 만듭니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "요청은 일어나지 않습니다. 인자를 확인하고 손잡이를 돌려줄 뿐입니다. 돌아온 클라이언트는 공개용입니다. 관리자 클라이언트는 "
+            },
+            {
+              "type": "code",
+              "value": "signInAsOwner()"
+            },
+            {
+              "type": "text",
+              "value": "와 "
+            },
+            {
+              "type": "code",
+              "value": "completeOwnerSignIn()"
+            },
+            {
+              "type": "text",
+              "value": "으로 따로 얻어 함께 씁니다."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "javascript",
+          "code": "const db = createDatabase({ site: \"alice\" });\nconst { documents } = await db.collection(\"posts\").list({ limit: 20 });"
+        }
+      ],
+      "throws": [
+        [
+          {
+            "type": "paragraph",
+            "spans": [
+              {
+                "type": "code",
+                "value": "site"
+              },
+              {
+                "type": "text",
+                "value": "가 올바른 로그인 이름이 아니거나, "
+              },
+              {
+                "type": "code",
+                "value": "controlPlaneOrigin"
+              },
+              {
+                "type": "text",
+                "value": "이 "
+              },
+              {
+                "type": "code",
+                "value": "https://naru.pub"
+              },
+              {
+                "type": "text",
+                "value": "도 HTTP 루프백 출처도 아니거나, "
+              },
+              {
+                "type": "code",
+                "value": "schemas"
+              },
+              {
+                "type": "text",
+                "value": "가 함수를 담은 객체가 아니면 TypeError."
+              }
+            ]
+          }
+        ]
+      ],
+      "signature": "createDatabase(options: {\n  controlPlaneOrigin?: string;\n  schemas?: Record<string, (data: Json) => boolean | void>;\n  site: string;\n}): Database & {\n  completeOwnerSignIn(): Promise<OwnerDatabase | null>;\n  signInAsOwner(options: {\n    clientId?: string;\n    collections: string[];\n    redirectUri?: string;\n  }): Promise<void>;\n}",
+      "parameters": [
+        {
+          "name": "options",
+          "type": "{ controlPlaneOrigin?: string; schemas?: Record<string, (data: Json) => boolean | void>; site: string }",
+          "summary": [],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "Collection",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "컬렉션 하나를 가리키는 손잡이입니다. "
+            },
+            {
+              "type": "code",
+              "value": "Database.collection"
+            },
+            {
+              "type": "text",
+              "value": "에서 얻으며, 손잡이를 만드는 것만으로는 요청이 일어나지 않습니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "code",
+              "value": "T"
+            },
+            {
+              "type": "text",
+              "value": "는 저장하려는 문서의 형태입니다. 쓰기의 타입을 잡아 주고 읽기에도 그대로 적용되지만, 서버는 이를 검사하지 않습니다. "
+            },
+            {
+              "type": "code",
+              "value": "T"
+            },
+            {
+              "type": "text",
+              "value": "를 바꾸기 전에 저장한 문서는 예전 형태 그대로 돌아옵니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface Collection<T = Json>",
+      "extends": [],
+      "members": [
+        {
+          "name": "add",
+          "optional": false,
+          "signature": "add(data: T): Promise<Written>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "서버가 매긴 UUID로 문서를 새로 만듭니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "새로 만들기만 하므로 기존 문서를 덮어쓰지 않습니다. 읽기 권한도 필요 없어서, 아무도 목록을 볼 수 없는 컬렉션에도 방명록을 만들 수 있습니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "all",
+          "optional": false,
+          "signature": "all(\n  options?: Omit<ListOptions, \"after\">,\n): AsyncIterableIterator<Document<T>>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "조건에 맞는 모든 문서를 필요할 때마다 한 쪽씩 가져옵니다. "
+                },
+                {
+                  "type": "code",
+                  "value": "limit"
+                },
+                {
+                  "type": "text",
+                  "value": "은 쪽 크기입니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "반복자가 그 쪽에 닿을 때 비로소 요청하므로, 중간에 멈추면 요청도 멈춥니다."
+                }
+              ]
+            },
+            {
+              "type": "code",
+              "language": "javascript",
+              "code": "for await (const post of posts.all({ orderBy: \"created_at\" })) {\n  if (post.data.title === needle) return post;\n}"
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "count",
+          "optional": false,
+          "signature": "count(options?: { where?: Filter }): Promise<number>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "조건에 맞는 문서 수를 서버가 쪽 나눔 없이 세어 돌려줍니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "delete",
+          "optional": false,
+          "signature": "delete(id: string, options?: Conditional): Promise<{ success: true }>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "문서를 지웁니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "여러 번 해도 같습니다. 없는 문서를 지워도 성공합니다. 이미 읽어 둔 그 문서만 지우려면 "
+                },
+                {
+                  "type": "code",
+                  "value": "ifVersion"
+                },
+                {
+                  "type": "text",
+                  "value": "을 넘기세요."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "get",
+          "optional": false,
+          "signature": "get(id: string): Promise<Document<T>>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "ID로 문서 하나를 가져옵니다."
+                }
+              ]
+            }
+          ],
+          "throws": [
+            [
+              {
+                "type": "paragraph",
+                "spans": [
+                  {
+                    "type": "text",
+                    "value": "문서가 없으면 "
+                  },
+                  {
+                    "type": "code",
+                    "value": "status: 404"
+                  },
+                  {
+                    "type": "text",
+                    "value": "인 NaruDataError."
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "name": "list",
+          "optional": false,
+          "signature": "list(\n  options?: ListOptions,\n): Promise<{ documents: Document<T>[]; nextCursor: string | null }>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "한 쪽을 가져옵니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "컬렉션 끝에 이르면 "
+                },
+                {
+                  "type": "code",
+                  "value": "nextCursor"
+                },
+                {
+                  "type": "text",
+                  "value": "가 "
+                },
+                {
+                  "type": "code",
+                  "value": "null"
+                },
+                {
+                  "type": "text",
+                  "value": "입니다. 그 값을 그대로 "
+                },
+                {
+                  "type": "code",
+                  "value": "after"
+                },
+                {
+                  "type": "text",
+                  "value": "로 넘기되 "
+                },
+                {
+                  "type": "code",
+                  "value": "where"
+                },
+                {
+                  "type": "text",
+                  "value": ", "
+                },
+                {
+                  "type": "code",
+                  "value": "orderBy"
+                },
+                {
+                  "type": "text",
+                  "value": ", "
+                },
+                {
+                  "type": "code",
+                  "value": "direction"
+                },
+                {
+                  "type": "text",
+                  "value": "은 똑같이 유지하세요. 커서는 그것을 만든 질의에 묶여 있어서, 필터가 달라지면 400으로 거부됩니다. 쪽 크기는 중간에 바꿔도 됩니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "넘겨보는 동안의 상태가 고정되지는 않습니다. 훑는 사이에 커서 앞쪽으로 들어온 문서는 처음부터 다시 읽어야 보입니다."
+                }
+              ]
+            },
+            {
+              "type": "code",
+              "language": "javascript",
+              "code": "let after;\ndo {\n  const page = await posts.list({ limit: 20, after });\n  render(page.documents);\n  after = page.nextCursor ?? undefined;\n} while (after);"
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "set",
+          "optional": false,
+          "signature": "set(id: string, data: T, options?: Conditional): Promise<Written>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "문서 전체를 바꾸고, 없으면 새로 만듭니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "합치기가 아니라 교체입니다. "
+                },
+                {
+                  "type": "code",
+                  "value": "data"
+                },
+                {
+                  "type": "text",
+                  "value": "에 없는 필드는 사라집니다. 문서의 일부만 바꾸려면 "
+                },
+                {
+                  "type": "code",
+                  "value": "Collection.update"
+                },
+                {
+                  "type": "text",
+                  "value": "를 쓰세요. 교체해도 "
+                },
+                {
+                  "type": "code",
+                  "value": "created_at"
+                },
+                {
+                  "type": "text",
+                  "value": "은 남습니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "update",
+          "optional": false,
+          "signature": "update(\n  id: string,\n  patch: Partial<T>,\n  options?: Conditional & { unset?: (keyof T & string)[] },\n): Promise<Written>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "얕은 합치기입니다. 패치에 있는 필드가 저장된 필드를 대신하고, "
+                },
+                {
+                  "type": "code",
+                  "value": "unset"
+                },
+                {
+                  "type": "text",
+                  "value": "에 적은 이름은 지워집니다. 문서가 이미 있고 JSON 객체를 담고 있어야 합니다. 패치는 조각이라 문서 전체를 보는 schemas 검사기는 실행되지 않습니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "합치기는 한 겹까지입니다. 패치 안의 중첩 객체는 저장된 중첩 객체에 섞이지 않고 통째로 대신합니다."
+                }
+              ]
+            }
+          ],
+          "throws": [
+            [
+              {
+                "type": "paragraph",
+                "spans": [
+                  {
+                    "type": "text",
+                    "value": "문서가 없으면 "
+                  },
+                  {
+                    "type": "code",
+                    "value": "status: 404"
+                  },
+                  {
+                    "type": "text",
+                    "value": "인 NaruDataError."
+                  }
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Conditional",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "문서 하나를 쓰는 모든 작업에 섞어 쓰는 낙관적 동시성 제어입니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface Conditional",
+      "extends": [],
+      "members": [
+        {
+          "name": "ifVersion",
+          "optional": true,
+          "signature": "ifVersion?: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "저장된 버전이 그대로일 때만 쓰고, 아니면 "
+                },
+                {
+                  "type": "code",
+                  "value": "VERSION_CONFLICT"
+                },
+                {
+                  "type": "text",
+                  "value": " NaruDataError로 거부합니다. "
+                },
+                {
+                  "type": "code",
+                  "value": "0"
+                },
+                {
+                  "type": "text",
+                  "value": "은 문서가 아직 없어야 한다는 뜻입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "Database",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "code",
+              "value": "createDatabase"
+            },
+            {
+              "type": "text",
+              "value": "가 돌려주는 공개 클라이언트입니다. 인증 없이 요청하므로 컬렉션의 공개 범위가 허용한 곳까지만 닿습니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface Database",
+      "extends": [],
+      "members": [
+        {
+          "name": "collection",
+          "optional": false,
+          "signature": "collection<T = Json>(name: string): Collection<T>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "타입은 애플리케이션의 형태를 적어 둔 것일 뿐, 읽은 값을 검증하지 않습니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "Document",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "저장된 문서 하나와, 그 문서를 따라다니는 서버 메타데이터입니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface Document<T = Json>",
+      "extends": [],
+      "members": [
+        {
+          "name": "created_at",
+          "optional": false,
+          "signature": "created_at: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "서버가 매기는 ISO 8601 생성 시각이며, "
+                },
+                {
+                  "type": "code",
+                  "value": "set"
+                },
+                {
+                  "type": "text",
+                  "value": "으로 교체해도 유지됩니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "data",
+          "optional": false,
+          "signature": "data: T",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "저장한 JSON입니다. "
+                },
+                {
+                  "type": "code",
+                  "value": "T"
+                },
+                {
+                  "type": "text",
+                  "value": "는 선언일 뿐 검증된 형태가 아닙니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "id",
+          "optional": false,
+          "signature": "id: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "ASCII 영문자, 숫자, 밑줄, 하이픈 1~64자입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "metadata",
+          "optional": false,
+          "signature": "metadata: Json",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "서버가 채우는 자리입니다. 직접 쓴 문서에는 "
+                },
+                {
+                  "type": "code",
+                  "value": "{}"
+                },
+                {
+                  "type": "text",
+                  "value": "가 들어 있습니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "updated_at",
+          "optional": false,
+          "signature": "updated_at: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "가장 최근에 반영된 쓰기의 ISO 8601 시각입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "version",
+          "optional": false,
+          "signature": "version: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "쓰기가 반영될 때마다 증가합니다. "
+                },
+                {
+                  "type": "code",
+                  "value": "ifVersion"
+                },
+                {
+                  "type": "text",
+                  "value": "으로 되돌려 주세요."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "FileStore",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "관리자 세션에서만 닿을 수 있는 미디어 라이브러리입니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface FileStore",
+      "extends": [],
+      "members": [
+        {
+          "name": "delete",
+          "optional": false,
+          "signature": "delete(id: string): Promise<{ success: true }>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "저장된 파일과 그 정보를 지웁니다. 이 파일을 쓰는 문서는 그대로 남으니 먼저 확인하세요."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "get",
+          "optional": false,
+          "signature": "get(id: string): Promise<StoredFile>",
+          "summary": [],
+          "throws": [
+            [
+              {
+                "type": "paragraph",
+                "spans": [
+                  {
+                    "type": "text",
+                    "value": "파일이 없으면 "
+                  },
+                  {
+                    "type": "code",
+                    "value": "status: 404"
+                  },
+                  {
+                    "type": "text",
+                    "value": "인 NaruDataError."
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "name": "list",
+          "optional": false,
+          "signature": "list(): Promise<StoredFile[]>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이 사이트의 준비된 파일 전부입니다. 쪽 나눔은 없습니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "upload",
+          "optional": false,
+          "signature": "upload(\n  file: Blob | File,\n  options?: {\n    metadata?: Json;\n    onProgress?: (progress: { loaded: number; total: number }) => void;\n    signal?: AbortSignal;\n  },\n): Promise<StoredFile>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "파일 하나를 올리고 서버가 확인할 때까지 기다립니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "바이트는 제어판을 거치지 않고 짧게 유효한 서명 주소로 저장소에 바로 갑니다. 그래서 업로드가 실패해도 남는 것이 없습니다. SDK가 오류를 던지기 전에 잡아 둔 자리를 되돌립니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이미지, 오디오, PDF, ZIP, 일반 텍스트를 받습니다. HTML과 SVG는 미디어 출처에서 실행될 수 있어 거부합니다. 문서에는 바이트가 아니라 돌아온 "
+                },
+                {
+                  "type": "code",
+                  "value": "id"
+                },
+                {
+                  "type": "text",
+                  "value": "나 "
+                },
+                {
+                  "type": "code",
+                  "value": "url"
+                },
+                {
+                  "type": "text",
+                  "value": "을 저장하세요."
+                }
+              ]
+            },
+            {
+              "type": "code",
+              "language": "javascript",
+              "code": "const image = await owner.files.upload(input.files[0], {\n  onProgress: ({ loaded, total }) => bar.value = loaded / total,\n  metadata: { altText: \"비둘기\" },\n});\nawait owner.collection(\"posts\").update(\"hello\", { cover: image.url });"
+            }
+          ],
+          "throws": [
+            [
+              {
+                "type": "paragraph",
+                "spans": [
+                  {
+                    "type": "text",
+                    "value": "빈 파일이거나 파일 하나의 한도를 넘으면 TypeError."
+                  }
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "name": "usage",
+          "optional": false,
+          "signature": "usage(): Promise<MediaUsage>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이 사이트의 미디어 한도에서 쓰고 있는 양입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "ListOptions",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "컬렉션의 한 쪽입니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface ListOptions extends QueryOptions",
+      "extends": [
+        "QueryOptions"
+      ],
+      "members": [
+        {
+          "name": "after",
+          "optional": true,
+          "signature": "after?: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "같은 컬렉션, 같은 정렬, 같은 필터에서 받은 커서입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "limit",
+          "optional": true,
+          "signature": "limit?: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "한 쪽에 담을 문서 수로 1~100입니다. 기본값은 50입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "MediaUsage",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "사이트가 미디어 한도를 얼마나 쓰고 있는지 보여 줍니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface MediaUsage",
+      "extends": [],
+      "members": [
+        {
+          "name": "bytes",
+          "optional": false,
+          "signature": "bytes: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "준비된 파일이 차지한 바이트입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "count",
+          "optional": false,
+          "signature": "count: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "준비된 파일 수입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "maxBytes",
+          "optional": false,
+          "signature": "maxBytes: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이 사이트에 허용된 전체 바이트입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "maxFiles",
+          "optional": false,
+          "signature": "maxFiles: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이 사이트에 허용된 전체 파일 수입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "pending",
+          "optional": false,
+          "signature": "pending: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "아직 마무리되지 않은 업로드 수입니다. 한 시간 뒤 정리됩니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "OwnerDatabase",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "code",
+              "value": "completeOwnerSignIn()"
+            },
+            {
+              "type": "text",
+              "value": "이 돌려주는, 사이트 관리자로 인증된 클라이언트입니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "비공개 컬렉션과 미디어 라이브러리, 묶음 쓰기에 닿되 콜백 등록에 적어 둔 컬렉션까지만 허용됩니다. 공개 클라이언트는 그대로 쓸 수 있고 계속 익명입니다. 토큰을 보내는 것은 이 클라이언트뿐입니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "토큰은 탭 안에서만 사는 "
+            },
+            {
+              "type": "code",
+              "value": "sessionStorage"
+            },
+            {
+              "type": "text",
+              "value": "에 있고, 그 페이지의 어떤 스크립트든 읽을 수 있습니다. 편집 페이지에는 외부 스크립트를 두지 마세요."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface OwnerDatabase extends Database",
+      "extends": [
+        "Database"
+      ],
+      "members": [
+        {
+          "name": "expiresAt",
+          "optional": false,
+          "signature": "expiresAt: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "관리자 세션이 끝나는 시각(최대 24시간)이며 유닉스 밀리초입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "files",
+          "optional": false,
+          "signature": "files: FileStore",
+          "summary": [],
+          "throws": []
+        },
+        {
+          "name": "batch",
+          "optional": false,
+          "signature": "batch(\n  operations: BatchOperation[],\n): Promise<{\n  results: { id?: string; success?: true; version?: number }[];\n}>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "전부 반영하거나 전부 되돌립니다."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "서버 트랜잭션 하나로 처리되므로, 두 컬렉션을 어긋나지 않게 지키는 방법입니다. 글을 공개하면서 초고를 지우는 일이 둘 다 일어나거나 둘 다 일어나지 않습니다. 결과는 넘긴 작업과 같은 순서로 돌아옵니다."
+                }
+              ]
+            },
+            {
+              "type": "code",
+              "language": "javascript",
+              "code": "await owner.batch([\n  { type: \"set\", collection: \"posts\", id: \"hello\", data: post },\n  { type: \"delete\", collection: \"drafts\", id: \"hello\" },\n]);"
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "signOut",
+          "optional": false,
+          "signature": "signOut(): Promise<void>",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이 클라이언트를 무효로 만들고, 서버에 폐기를 요청하기 전에 저장된 자격 증명을 지웁니다. 연결이 끊겨 있으면 서버 폐기는 실패할 수 있습니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "QueryOptions",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "code",
+              "value": "list"
+            },
+            {
+              "type": "text",
+              "value": ", "
+            },
+            {
+              "type": "code",
+              "value": "all"
+            },
+            {
+              "type": "text",
+              "value": ", "
+            },
+            {
+              "type": "code",
+              "value": "count"
+            },
+            {
+              "type": "text",
+              "value": "가 함께 쓰는 거르기와 정렬 옵션입니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface QueryOptions",
+      "extends": [],
+      "members": [
+        {
+          "name": "direction",
+          "optional": true,
+          "signature": "direction?: \"desc\" | \"asc\"",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "기본값은 "
+                },
+                {
+                  "type": "code",
+                  "value": "asc"
+                },
+                {
+                  "type": "text",
+                  "value": "입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "orderBy",
+          "optional": true,
+          "signature": "orderBy?: OrderBy",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "기본값은 "
+                },
+                {
+                  "type": "code",
+                  "value": "id"
+                },
+                {
+                  "type": "text",
+                  "value": "입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "where",
+          "optional": true,
+          "signature": "where?: Filter",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "거르지 않으려면 생략하거나 "
+                },
+                {
+                  "type": "code",
+                  "value": "{}"
+                },
+                {
+                  "type": "text",
+                  "value": "를 넘기세요."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "RangeFilter",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "범위 비교는 JSONB 타입 안에서만 이루어집니다. 문자열 경계는 수 필드와 절대 맞지 않고, 그 필드가 없는 문서는 결과에서 빠집니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface RangeFilter",
+      "extends": [],
+      "members": [
+        {
+          "name": "gt",
+          "optional": true,
+          "signature": "gt?: string | number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "초과."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "gte",
+          "optional": true,
+          "signature": "gte?: string | number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이상."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "lt",
+          "optional": true,
+          "signature": "lt?: string | number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "미만."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "lte",
+          "optional": true,
+          "signature": "lte?: string | number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이하."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "StoredFile",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "사이트 미디어 라이브러리에 있는 파일입니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface StoredFile",
+      "extends": [],
+      "members": [
+        {
+          "name": "contentType",
+          "optional": false,
+          "signature": "contentType: string",
+          "summary": [],
+          "throws": []
+        },
+        {
+          "name": "created_at",
+          "optional": false,
+          "signature": "created_at: string",
+          "summary": [],
+          "throws": []
+        },
+        {
+          "name": "id",
+          "optional": false,
+          "signature": "id: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "서버가 매긴 ID입니다. 이 값이나 "
+                },
+                {
+                  "type": "code",
+                  "value": "url"
+                },
+                {
+                  "type": "text",
+                  "value": "을 문서에 저장하세요."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "metadata",
+          "optional": false,
+          "signature": "metadata: Json",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "업로드할 때 함께 넘긴 정보입니다. 대체 텍스트나 이 파일을 쓰는 문서 목록처럼 애플리케이션이 정하는 값입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "name",
+          "optional": false,
+          "signature": "name: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "원래 파일 이름이며, 이름이 없으면 "
+                },
+                {
+                  "type": "code",
+                  "value": "\"upload\""
+                },
+                {
+                  "type": "text",
+                  "value": "입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "size",
+          "optional": false,
+          "signature": "size: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "업로드가 끝난 뒤 서버가 확인한 바이트 크기입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "status",
+          "optional": false,
+          "signature": "status: \"ready\"",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "준비된 파일만 돌아옵니다. 마무리되지 않은 업로드는 나오지 않습니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "updated_at",
+          "optional": false,
+          "signature": "updated_at: string",
+          "summary": [],
+          "throws": []
+        },
+        {
+          "name": "url",
+          "optional": false,
+          "signature": "url: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "분리된 "
+                },
+                {
+                  "type": "code",
+                  "value": "media.naru.pub"
+                },
+                {
+                  "type": "text",
+                  "value": " 출처에서 제공되는 공개 주소입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "Written",
+      "kind": "interface",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "쓰기가 성공했을 때 돌아오는 값입니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "interface Written",
+      "extends": [],
+      "members": [
+        {
+          "name": "id",
+          "optional": false,
+          "signature": "id: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "직접 정한 문서 ID이거나, "
+                },
+                {
+                  "type": "code",
+                  "value": "add"
+                },
+                {
+                  "type": "text",
+                  "value": "가 매긴 UUID입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "version",
+          "optional": false,
+          "signature": "version: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "이 쓰기가 만든 버전입니다. 새로 만든 문서는 "
+                },
+                {
+                  "type": "code",
+                  "value": "1"
+                },
+                {
+                  "type": "text",
+                  "value": "입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "NaruDataError",
+      "kind": "class",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "호출하는 쪽의 실수가 아닌 모든 실패입니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "잘못된 ID, JSON으로 표현할 수 없는 값처럼 호출하는 쪽의 실수는 요청을 보내기 전에 "
+            },
+            {
+              "type": "code",
+              "value": "TypeError"
+            },
+            {
+              "type": "text",
+              "value": "로 알립니다. 네트워크까지 간 실패는 이 오류로 전달됩니다."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "javascript",
+          "code": "try {\n  await db.collection(\"posts\").get(\"missing\");\n} catch (error) {\n  if (error instanceof NaruDataError && error.status === 404) show(\"글 없음\");\n  else throw error;\n}"
+        }
+      ],
+      "throws": [],
+      "signature": "class NaruDataError extends Error",
+      "extends": [
+        "Error"
+      ],
+      "members": [
+        {
+          "name": "cause",
+          "optional": true,
+          "signature": "cause?: unknown",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "원인이 된 네트워크 오류나 파싱 오류입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "code",
+          "optional": false,
+          "signature": "code: string",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "프로그램이 판단할 수 있는 고정된 실패 코드입니다. "
+                },
+                {
+                  "type": "code",
+                  "value": "VERSION_CONFLICT"
+                },
+                {
+                  "type": "text",
+                  "value": ", "
+                },
+                {
+                  "type": "code",
+                  "value": "OWNER_SESSION_EXPIRED"
+                },
+                {
+                  "type": "text",
+                  "value": ", "
+                },
+                {
+                  "type": "code",
+                  "value": "COLLECTION_NOT_AUTHORIZED"
+                },
+                {
+                  "type": "text",
+                  "value": ", "
+                },
+                {
+                  "type": "code",
+                  "value": "UNREGISTERED_REDIRECT_URI"
+                },
+                {
+                  "type": "text",
+                  "value": " 등이 있고, 분류되지 않은 실패는 "
+                },
+                {
+                  "type": "code",
+                  "value": "REQUEST_FAILED"
+                },
+                {
+                  "type": "text",
+                  "value": "입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        },
+        {
+          "name": "status",
+          "optional": false,
+          "signature": "status: number",
+          "summary": [
+            {
+              "type": "paragraph",
+              "spans": [
+                {
+                  "type": "text",
+                  "value": "HTTP 상태 코드이며, 응답을 받지 못했으면 0입니다."
+                }
+              ]
+            }
+          ],
+          "throws": []
+        }
+      ]
+    },
+    {
+      "name": "BatchOperation",
+      "kind": "type",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "code",
+              "value": "OwnerDatabase.batch"
+            },
+            {
+              "type": "text",
+              "value": "에 담기는 작업 하나입니다. 문서 하나를 다루는 메서드와 짝을 이루되 컬렉션을 작업마다 적으므로, 한 묶음이 여러 컬렉션에 걸칠 수 있습니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "type BatchOperation =\n  | { collection: string; data: Json; type: \"add\" }\n  | ({ collection: string; id: string } & Conditional &\n      (\n        | { data: Json; type: \"set\" }\n        | { data: Json; type: \"update\"; unset?: string[] }\n        | { type: \"delete\" }\n      ))"
+    },
+    {
+      "name": "Filter",
+      "kind": "type",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "최상위 필드에 조건을 최대 5개까지 걸고 AND로 묶습니다. 스칼라 값은 정확히 같은지 보고, 비교 객체는 범위를 봅니다. 한 필드의 두 경계는 타입이 같아야 합니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "같은지 보는 기준은 엄격합니다. "
+            },
+            {
+              "type": "code",
+              "value": "1"
+            },
+            {
+              "type": "text",
+              "value": "은 "
+            },
+            {
+              "type": "code",
+              "value": "\"1\""
+            },
+            {
+              "type": "text",
+              "value": "과 다르고, 문자열은 대소문자를 가리며, "
+            },
+            {
+              "type": "code",
+              "value": "null"
+            },
+            {
+              "type": "text",
+              "value": "은 저장된 null과 맞을 뿐 필드가 없는 문서와는 맞지 않습니다. 중첩 경로, 배열 포함 여부, OR, 부분 문자열 검색은 지원하지 않습니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "필터는 주소 질의 문자열에 실려 가므로, 비밀 값으로는 거르지 마세요."
+            }
+          ]
+        },
+        {
+          "type": "code",
+          "language": "javascript",
+          "code": "// 올해 공개된 글을 최신순으로.\nawait db.collection(\"posts\").list({\n  where: { published: true, created_at: { gte: \"2026-01-01\" } },\n  orderBy: \"created_at\",\n  direction: \"desc\",\n});"
+        }
+      ],
+      "throws": [],
+      "signature": "type Filter = Record<\n  string,\n  string | number | boolean | null | RangeFilter\n>"
+    },
+    {
+      "name": "Json",
+      "kind": "type",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "JSON으로 오갈 수 있는 모든 값입니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "code",
+              "value": "JSON.stringify"
+            },
+            {
+              "type": "text",
+              "value": "가 조용히 버리거나 바꿔 버리는 값은 쓰기에서 거부됩니다. "
+            },
+            {
+              "type": "code",
+              "value": "undefined"
+            },
+            {
+              "type": "text",
+              "value": ", 유한하지 않은 수, "
+            },
+            {
+              "type": "code",
+              "value": "BigInt"
+            },
+            {
+              "type": "text",
+              "value": ", 함수, 심볼, 순환 참조, 구멍 난 배열, getter, 열거되지 않는 속성, 클래스 인스턴스가 여기 해당합니다. 날짜는 직접 문자열로 바꾸세요. "
+            },
+            {
+              "type": "code",
+              "value": "Date"
+            },
+            {
+              "type": "text",
+              "value": "도 클래스 인스턴스여서 거부됩니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "저장된 값은 PostgreSQL JSONB 규칙을 따릅니다. 객체 키 순서는 보존되지 않고, 수는 자바스크립트의 정밀도를 그대로 가집니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "type Json =\n  | null\n  | boolean\n  | number\n  | string\n  | Json[]\n  | { [key: string]: Json }"
+    },
+    {
+      "name": "OrderBy",
+      "kind": "type",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "code",
+              "value": "data.<필드>"
+            },
+            {
+              "type": "text",
+              "value": "는 문서의 최상위 필드로 정렬합니다. 값이 없는 필드는 JSON null로 취급되어 문자열보다 아래에, 문자열은 수보다 아래에 놓입니다."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "code",
+              "value": "id"
+            },
+            {
+              "type": "text",
+              "value": ", "
+            },
+            {
+              "type": "code",
+              "value": "created_at"
+            },
+            {
+              "type": "text",
+              "value": ", "
+            },
+            {
+              "type": "code",
+              "value": "updated_at"
+            },
+            {
+              "type": "text",
+              "value": "은 서버 메타데이터로 정렬합니다. 시각이 같으면 같은 방향의 ID 순으로 갈립니다. 목록에는 바뀌지 않는 "
+            },
+            {
+              "type": "code",
+              "value": "created_at"
+            },
+            {
+              "type": "text",
+              "value": "을 권합니다. 넘겨보는 도중에 값이 바뀌는 필드로 정렬하면 문서가 빠지거나 두 번 나올 수 있습니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "type OrderBy = \"id\" | \"created_at\" | \"updated_at\" | `data.${string}`"
+    },
+    {
+      "name": "CONTROL_PLANE_ORIGIN",
+      "kind": "variable",
+      "summary": [
+        {
+          "type": "paragraph",
+          "spans": [
+            {
+              "type": "text",
+              "value": "SDK가 실제 서비스에서 이야기하는 유일한 제어판입니다."
+            }
+          ]
+        }
+      ],
+      "throws": [],
+      "signature": "const CONTROL_PLANE_ORIGIN: \"https://naru.pub\""
+    }
+  ]
+}

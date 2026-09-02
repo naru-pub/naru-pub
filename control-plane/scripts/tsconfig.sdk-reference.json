@@ -1,0 +1,14 @@
+{
+  "//": "Reads the published SDK declarations on their own terms, independently of the application. skipLibCheck stays off: the declarations are themselves a .d.ts, and skipping lib checks would skip checking them.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "types": [],
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  "include": ["../public/sdk/*/naru-data.d.ts"]
+}

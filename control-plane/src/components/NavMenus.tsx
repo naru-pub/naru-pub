@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   BadgeCheck,
   BookOpen,
+  Code2,
   BarChart3,
   Database,
   Github,
@@ -150,6 +151,12 @@ export function DocsMenu() {
           <Link href="/docs/media" className="flex items-center gap-2">
             <Images size={16} />
             미디어 라이브러리
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/docs/sdk/1.0.0" className="flex items-center gap-2">
+            <Code2 size={16} />
+            SDK 레퍼런스
           </Link>
         </DropdownMenuItem>
       </DropdownMenuContent>
