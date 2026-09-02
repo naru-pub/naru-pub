@@ -199,8 +199,9 @@ export default async function Home() {
           <CardContent className="p-6 space-y-4">
             <div className="space-y-3 text-muted-foreground">
               <div className="bg-background border border-border rounded p-3">
-                <strong className="text-foreground">💾 저장공간:</strong>{" "}
-                사용자당 1GB의 저장 용량이 제공됩니다.
+                <strong className="text-foreground">💾 저장공간:</strong> 따로
+                용량 제한을 두지 않습니다. 파일 하나는 10 MiB까지 올릴 수 있고,
+                함께 쓰는 공간이니 적당한 선에서 부탁드려요.
               </div>
 
               <div className="bg-background border border-border rounded p-3">
