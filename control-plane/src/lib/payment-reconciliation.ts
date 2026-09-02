@@ -38,16 +38,16 @@ export type EntitlementLedgerRow = {
 };
 
 // supporter_until is the end of the latest period a payment actually paid for.
-// A fully refunded payment stops counting, so the time it granted goes with the
-// money. Partial refunds still count: they are normally a goodwill gesture, and
-// slicing a proportional piece off a stack of periods has no honest answer.
+// A refunded payment stops counting, so the time it granted goes back with the
+// money. 나루 does not offer partial refunds, so any refunded amount undoes the
+// whole purchase rather than a slice of it.
 export function supporterUntilFromLedger(
   rows: EntitlementLedgerRow[],
 ): Date | null {
   let latest: Date | null = null;
   for (const row of rows) {
     if (!row.periodEnd) continue;
-    if (row.refundedAmount >= row.amount) continue;
+    if (row.refundedAmount > 0) continue;
     const end = new Date(row.periodEnd);
     if (!latest || end > latest) latest = end;
   }
@@ -172,7 +172,7 @@ async function reconcilePaymentCore(
             .execute();
         }
 
-        if (full && payment.subscription_id) {
+        if (refundedAmount > 0 && payment.subscription_id) {
           await trx
             .updateTable("subscriptions")
             .set({

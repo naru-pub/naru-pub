@@ -14,7 +14,7 @@ describe("supporter_until after a refund", () => {
     ).toEqual(new Date(YEAR_TWO_END));
   });
 
-  test("drops the time a fully refunded payment paid for", () => {
+  test("drops the time a refunded payment paid for", () => {
     expect(
       supporterUntilFromLedger([
         { periodEnd: YEAR_ONE_END, amount: 12000, refundedAmount: 0 },
@@ -31,12 +31,14 @@ describe("supporter_until after a refund", () => {
     ).toBeNull();
   });
 
-  test("leaves partial refunds alone", () => {
+  // 나루 does not offer partial refunds, so a partial amount is treated as
+  // undoing the purchase rather than a slice of it.
+  test("treats any refunded amount as undoing the purchase", () => {
     expect(
       supporterUntilFromLedger([
-        { periodEnd: YEAR_TWO_END, amount: 12000, refundedAmount: 11999 },
+        { periodEnd: YEAR_TWO_END, amount: 12000, refundedAmount: 1 },
       ]),
-    ).toEqual(new Date(YEAR_TWO_END));
+    ).toBeNull();
   });
 
   // Refunding an earlier payment must not take back time a later, unrefunded
