@@ -67,40 +67,58 @@ async function getHeadlineStats() {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
 
-  const [users, storage, pageviews, signupsByMonth, viewsByDay] =
-    await Promise.all([
-      db
-        .selectFrom("users")
-        .select(sql<number>`COUNT(*)`.as("count"))
-        .executeTakeFirst(),
-      db
-        .selectFrom("users")
-        .select(
-          sql<number>`COALESCE(SUM(home_directory_size_bytes), 0)`.as("bytes"),
-        )
-        .where("home_directory_size_bytes_updated_at", "is not", null)
-        .executeTakeFirst(),
-      db
-        .selectFrom("pageview_daily_stats")
-        .select(sql<number>`COALESCE(SUM(views), 0)`.as("count"))
-        .executeTakeFirst(),
-      db
-        .selectFrom("users")
-        .select([
-          sql<Date>`DATE_TRUNC('month', created_at)`.as("month"),
-          sql<number>`COUNT(*)`.as("count"),
-        ])
-        .groupBy(sql`DATE_TRUNC('month', created_at)`)
-        .orderBy(sql`DATE_TRUNC('month', created_at)`)
-        .execute(),
-      db
-        .selectFrom("pageview_daily_stats")
-        .select(["date", sql<number>`COALESCE(SUM(views), 0)`.as("views")])
-        .where("date", ">=", thirtyDaysAgo)
-        .groupBy("date")
-        .orderBy("date")
-        .execute(),
-    ]);
+  const [
+    users,
+    storage,
+    pageviews,
+    edits,
+    signupsByMonth,
+    viewsByDay,
+    editsByDay,
+  ] = await Promise.all([
+    db
+      .selectFrom("users")
+      .select(sql<number>`COUNT(*)`.as("count"))
+      .executeTakeFirst(),
+    db
+      .selectFrom("users")
+      .select(
+        sql<number>`COALESCE(SUM(home_directory_size_bytes), 0)`.as("bytes"),
+      )
+      .where("home_directory_size_bytes_updated_at", "is not", null)
+      .executeTakeFirst(),
+    db
+      .selectFrom("pageview_daily_stats")
+      .select(sql<number>`COALESCE(SUM(views), 0)`.as("count"))
+      .executeTakeFirst(),
+    db
+      .selectFrom("edit_daily_stats")
+      .select(sql<number>`COALESCE(SUM(edit_count), 0)`.as("count"))
+      .executeTakeFirst(),
+    db
+      .selectFrom("users")
+      .select([
+        sql<Date>`DATE_TRUNC('month', created_at)`.as("month"),
+        sql<number>`COUNT(*)`.as("count"),
+      ])
+      .groupBy(sql`DATE_TRUNC('month', created_at)`)
+      .orderBy(sql`DATE_TRUNC('month', created_at)`)
+      .execute(),
+    db
+      .selectFrom("pageview_daily_stats")
+      .select(["date", sql<number>`COALESCE(SUM(views), 0)`.as("views")])
+      .where("date", ">=", thirtyDaysAgo)
+      .groupBy("date")
+      .orderBy("date")
+      .execute(),
+    db
+      .selectFrom("edit_daily_stats")
+      .select(["date", sql<number>`COALESCE(SUM(edit_count), 0)`.as("edits")])
+      .where("date", ">=", thirtyDaysAgo)
+      .groupBy("date")
+      .orderBy("date")
+      .execute(),
+  ]);
 
   // Signups per month become the cumulative curve the headline number ends on.
   let runningTotal = 0;
@@ -113,8 +131,10 @@ async function getHeadlineStats() {
     userCount: Number(users?.count ?? 0),
     totalBytes: Number(storage?.bytes ?? 0),
     totalViews: Number(pageviews?.count ?? 0),
+    totalEdits: Number(edits?.count ?? 0),
     userTrend,
     viewTrend: viewsByDay.map((row) => Number(row.views)),
+    editTrend: editsByDay.map((row) => Number(row.edits)),
   };
 }
 
@@ -158,7 +178,7 @@ export default async function Home() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="bg-background border border-border rounded p-3">
                 <div className="text-2xl font-bold text-foreground tabular-nums">
                   {stats.userCount.toLocaleString("ko-KR")}명
@@ -183,6 +203,13 @@ export default async function Home() {
                   values={stats.viewTrend}
                   label="최근 30일 페이지뷰"
                 />
+              </div>
+              <div className="bg-background border border-border rounded p-3">
+                <div className="text-2xl font-bold text-foreground tabular-nums">
+                  {stats.totalEdits.toLocaleString("ko-KR")}
+                </div>
+                <p className="text-xs text-muted-foreground">지금까지의 편집</p>
+                <Sparkline values={stats.editTrend} label="최근 30일 편집" />
               </div>
             </div>
             <Link

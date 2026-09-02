@@ -231,7 +231,7 @@ export default async function OpenPage() {
           </CardHeader>
           <CardContent className="p-4">
             <div className="text-2xl font-bold text-foreground tabular-nums">
-              {currentStats.userCount}명
+              {currentStats.userCount.toLocaleString("ko-KR")}명
             </div>
             <p className="text-xs text-muted-foreground">가입한 모든 사용자</p>
           </CardContent>
