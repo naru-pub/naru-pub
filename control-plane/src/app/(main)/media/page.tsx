@@ -42,10 +42,10 @@ export default async function MediaPage() {
             데이터베이스 →
           </a>
           <a
-            href="/database/docs/"
+            href="/docs/media"
             className="border px-4 py-2 text-sm hover:bg-muted"
           >
-            사용 안내 →
+            미디어 사용 안내 →
           </a>
         </div>
       </header>

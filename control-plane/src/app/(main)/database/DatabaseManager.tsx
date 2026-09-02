@@ -87,7 +87,7 @@ export default function DatabaseManager({
             미디어 라이브러리 →
           </a>
           <a
-            href="/database/docs/"
+            href="/docs/database"
             className="border px-4 py-2 text-sm hover:bg-muted"
           >
             사용 안내 및 예제 블로그 →

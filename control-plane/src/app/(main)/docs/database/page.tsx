@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import Code from "./Code";
+import Code from "../Code";
 
 export const metadata: Metadata = {
   title: "데이터베이스 사용 안내 | 나루",
@@ -33,11 +33,11 @@ function Section({
 }
 export default function DatabaseDocs() {
   return (
-    <div className="h-full overflow-auto">
+    <div className="min-h-screen">
       <div className="mx-auto max-w-6xl px-5 py-12 md:px-8">
         <header className="mb-12 max-w-3xl space-y-5">
           <p className="text-sm text-muted-foreground">
-            NARU / DATABASE / SDK 1.0.0
+            NARU / DOCS / DATABASE / SDK 1.0.0
           </p>
           <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
             정적 웹사이트에 데이터를 더하세요.
@@ -48,7 +48,7 @@ export default function DatabaseDocs() {
           </p>
           <div className="flex flex-wrap gap-5 text-sm underline underline-offset-4">
             <a href="/database">데이터베이스 제어판 열기 →</a>
-            <a href="/database/docs/blog.zip">예제 블로그 ZIP 내려받기 ↓</a>
+            <a href="/docs/database/blog.zip">예제 블로그 ZIP 내려받기 ↓</a>
           </div>
         </header>
         <div className="grid gap-10 lg:grid-cols-[230px_minmax(0,1fr)]">
@@ -492,6 +492,10 @@ try {
               </p>
               <h3 className="text-lg font-semibold">파일과 이미지 업로드</h3>
               <p>
+                한도와 허용 형식, 미디어 라이브러리 사용법은{" "}
+                <a href="/docs/media">미디어 사용 안내</a>에서 자세히 다룹니다.
+              </p>
+              <p>
                 관리자 클라이언트의 <code>owner.files.upload(file)</code>은
                 브라우저에서 Naru Media로 파일을 직접 올리고, 확인된 공개 URL과
                 파일 ID를 반환합니다. 문서에는 base64 대신 이 URL이나 ID를
@@ -570,7 +574,7 @@ await owner.batch([
                 사용할 수 있습니다.
               </p>
               <p>
-                <a href="/database/docs/blog.zip">예제 ZIP 내려받기</a> ·{" "}
+                <a href="/docs/database/blog.zip">예제 ZIP 내려받기</a> ·{" "}
                 <a href="/examples/database-blog/index.html">
                   설정 전 예제 화면 보기
                 </a>
