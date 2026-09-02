@@ -1,20 +1,60 @@
 import { db } from "@/lib/database";
+import { sql } from "kysely";
 import { getHomepageUrl, getRenderedSiteUrl } from "@/lib/utils";
 import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdCard } from "@/components/AdCard";
-import { Info, ScrollText, History } from "lucide-react";
+import { Info, ScrollText, History, BarChart3 } from "lucide-react";
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+
+// The front page is the only page every visitor loads, so these stay pure SQL
+// aggregates. /open can afford to pull rows and reduce in JS; this cannot.
+async function getHeadlineStats() {
+  const [users, storage, pageviews] = await Promise.all([
+    db
+      .selectFrom("users")
+      .select(sql<number>`COUNT(*)`.as("count"))
+      .executeTakeFirst(),
+    db
+      .selectFrom("users")
+      .select(
+        sql<number>`COALESCE(SUM(home_directory_size_bytes), 0)`.as("bytes"),
+      )
+      .where("home_directory_size_bytes_updated_at", "is not", null)
+      .executeTakeFirst(),
+    db
+      .selectFrom("pageview_daily_stats")
+      .select(sql<number>`COALESCE(SUM(views), 0)`.as("count"))
+      .executeTakeFirst(),
+  ]);
+
+  return {
+    userCount: Number(users?.count ?? 0),
+    totalBytes: Number(storage?.bytes ?? 0),
+    totalViews: Number(pageviews?.count ?? 0),
+  };
+}
 
 export default async function Home() {
-  const recentlyRenderedUsers = await db
-    .selectFrom("users")
-    .selectAll()
-    .where("discoverable", "=", true)
-    .orderBy("site_updated_at", "desc")
-    .where("site_rendered_at", "is not", null)
-    .execute();
+  const [recentlyRenderedUsers, stats] = await Promise.all([
+    db
+      .selectFrom("users")
+      .selectAll()
+      .where("discoverable", "=", true)
+      .orderBy("site_updated_at", "desc")
+      .where("site_rendered_at", "is not", null)
+      .execute(),
+    getHeadlineStats(),
+  ]);
 
   return (
     <div className="bg-background min-h-screen p-6">
@@ -40,19 +80,57 @@ export default async function Home() {
         <Card className="bg-card border-2 border-border shadow-lg">
           <CardHeader className="bg-secondary border-b-2 border-border">
             <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
+              <BarChart3 size={20} /> 지표
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-background border border-border rounded p-3">
+                <div className="text-2xl font-bold text-foreground tabular-nums">
+                  {stats.userCount.toLocaleString("ko-KR")}명
+                </div>
+                <p className="text-xs text-muted-foreground">함께하는 사용자</p>
+              </div>
+              <div className="bg-background border border-border rounded p-3">
+                <div className="text-2xl font-bold text-foreground tabular-nums">
+                  {formatBytes(stats.totalBytes)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  갠홈에 담긴 이야기
+                </p>
+              </div>
+              <div className="bg-background border border-border rounded p-3">
+                <div className="text-2xl font-bold text-foreground tabular-nums">
+                  {stats.totalViews.toLocaleString("ko-KR")}
+                </div>
+                <p className="text-xs text-muted-foreground">지금까지의 조회</p>
+              </div>
+            </div>
+            <Link
+              href="/open"
+              className="text-primary text-sm font-medium hover:underline"
+            >
+              전체 지표 보기 →
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card border-2 border-border shadow-lg">
+          <CardHeader className="bg-secondary border-b-2 border-border">
+            <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
               <ScrollText size={20} /> 사용 안내
             </CardTitle>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
             <div className="space-y-3 text-muted-foreground">
               <div className="bg-background border border-border rounded p-3">
-                <strong className="text-foreground">💾 저장공간:</strong> 사용자당
-                1GB의 저장 용량이 제공됩니다.
+                <strong className="text-foreground">💾 저장공간:</strong>{" "}
+                사용자당 1GB의 저장 용량이 제공됩니다.
               </div>
 
               <div className="bg-background border border-border rounded p-3">
-                <strong className="text-foreground">🎵 미디어:</strong> 크기가 큰
-                음악이나 영상은 되도록 SoundCloud나 YouTube로 게시해 주세요.
+                <strong className="text-foreground">🎵 미디어:</strong> 크기가
+                큰 음악이나 영상은 되도록 SoundCloud나 YouTube로 게시해 주세요.
               </div>
 
               <div className="bg-background border border-border rounded p-3">
@@ -144,12 +222,16 @@ export default async function Home() {
                       key={user.id}
                       className="bg-card border border-border rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow duration-200"
                     >
-                      <Link href={homepageUrl} target="_blank" className="block">
+                      <Link
+                        href={homepageUrl}
+                        target="_blank"
+                        className="block"
+                      >
                         <div className="border border-border rounded mb-3 overflow-hidden">
                           <Image
                             src={getRenderedSiteUrl(
                               user.login_name,
-                              user.site_rendered_at
+                              user.site_rendered_at,
                             )}
                             alt="screenshot"
                             width={320}

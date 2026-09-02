@@ -62,18 +62,6 @@ export default async function RootLayout({
                   </div>
 
                   <div className="flex items-center space-x-1">
-                    <Link
-                      href="/"
-                      className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                    >
-                      소개
-                    </Link>
-                    <Link
-                      href="/open"
-                      className="text-muted-foreground hover:text-foreground hover:bg-accent px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                    >
-                      지표
-                    </Link>
                     {user ? (
                       <>
                         <Link
