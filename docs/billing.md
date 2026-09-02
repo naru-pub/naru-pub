@@ -8,6 +8,7 @@
 
 결제는 **Toss Payments 자동결제(빌링)** 입니다. 월 1,000원 / 연 10,000원.
 
+- **이메일 인증 선행**: 후원을 시작하려면 인증된 이메일 주소가 있어야 합니다. `subscription/prepare`와 `donation/one-time/prepare`는 `users.email`과 `users.email_verified_at`이 모두 채워져 있지 않으면 403을 반환하고, `/support`의 후원 카드도 결제 버튼 대신 인증 안내와 인증 메일 재발송 버튼을 보여줍니다. 영수증, 갱신 예정 안내, 결제 실패 안내를 반드시 전달할 수 있어야 하기 때문입니다.
 - **구독 시작**: `subscription/prepare`가 플랜을 `incomplete` 구독으로 기록하고 `customerKey`를 반환 → 프런트가 `requestBillingAuth`로 카드 등록 → `/account/subscription/callback`이 `subscription/confirm` 호출 → 빌링키 발급 후 첫 결제, `subscriptions`를 `active`로, `supporter_until`을 채웁니다. 금액은 항상 서버(`lib/toss.ts`의 `PLAN_AMOUNTS`)에서 결정합니다.
 - **자동 갱신**: cron의 `charge-subscriptions.ts`(매일 04:00)가 `next_billing_at`이 지난 활성 구독을 빌링키로 청구해 기간을 연장합니다. 실패 시 결제 유예 기간 안에서 `MAX_PAYMENT_RETRY_ATTEMPTS`까지 재시도합니다. 재시도 한도나 유예 기간 끝에 도달하면 `past_due`로 전환됩니다.
 - **자동 대사**: `reconcile-payments.ts`가 5분마다 오래된 `pending` 주문을 Toss에서 조회합니다. 결제가 완료됐으면 결제 원장과 이용 기간을 한 트랜잭션으로 확정하고, 확인되지 않은 주문은 30분 뒤 만료합니다. 사용자는 결제 내역의 “다시 확인”으로 즉시 같은 대사를 요청할 수도 있습니다.

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { loadTossPayments } from "@tosspayments/tosspayments-sdk";
-import { Heart } from "lucide-react";
+import { Heart, Send } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -22,17 +23,22 @@ export default function SupportCard({
   supportActive,
   supporterUntil,
   subscription,
+  email,
+  emailVerified,
 }: {
   clientKey: string;
   comp: boolean;
   supportActive: boolean;
   supporterUntil: string | null;
   subscription: SubscriptionInfo | null;
+  email: string | null;
+  emailVerified: boolean;
 }) {
   const router = useRouter();
   const params = useSearchParams();
   const toasted = useRef(false);
   const [pending, setPending] = useState(false);
+  const [resending, setResending] = useState(false);
   const [oneTimeYears, setOneTimeYears] = useState(1);
   const untilLabel = supporterUntil
     ? new Date(supporterUntil).toLocaleDateString("ko-KR")
@@ -142,6 +148,26 @@ export default function SupportCard({
     }
   }
 
+  async function resendVerification() {
+    setResending(true);
+    try {
+      const res = await fetch("/api/account/resend-verification-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success(data.message ?? "인증 이메일을 다시 보냈습니다.");
+      } else {
+        toast.error(data.message ?? "인증 이메일을 보내지 못했습니다.");
+      }
+    } catch {
+      toast.error("인증 이메일 발송 중 오류가 발생했습니다.");
+    } finally {
+      setResending(false);
+    }
+  }
+
   async function cancel() {
     if (
       !confirm(
@@ -242,7 +268,32 @@ export default function SupportCard({
               </div>
             ) : null}
 
-            {(showRecurringOptions || showOneTimeOptions) && (
+            {!emailVerified && (
+              <div className="space-y-3 border-2 border-yellow-500 bg-yellow-500/5 p-3 text-sm">
+                <p className="text-yellow-800 dark:text-yellow-300">
+                  {email
+                    ? `후원 영수증과 결제 안내를 보내드려야 하므로, 후원을 시작하려면 먼저 이메일 인증이 필요합니다. ${email} 주소로 보낸 인증 메일을 확인해 주세요.`
+                    : "후원 영수증과 결제 안내를 보내드려야 하므로, 후원을 시작하려면 인증된 이메일 주소가 필요합니다. 계정 관리에서 이메일을 등록해 주세요."}
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  {email && (
+                    <Button
+                      variant="outline"
+                      onClick={resendVerification}
+                      disabled={resending}
+                    >
+                      <Send size={16} />
+                      {resending ? "발송 중..." : "인증 이메일 재발송"}
+                    </Button>
+                  )}
+                  <Button asChild variant="outline">
+                    <Link href="/account">계정 관리로 이동</Link>
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {emailVerified && (showRecurringOptions || showOneTimeOptions) && (
               <div className="space-y-2">
                 {showRecurringOptions && (
                   <>

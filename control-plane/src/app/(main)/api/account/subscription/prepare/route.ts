@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { validateRequest } from "@/lib/auth";
+import {
+  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
+  hasVerifiedEmail,
+} from "@/lib/support";
 import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
 import { isBillingInterval, PLAN_AMOUNTS } from "@/lib/toss";
@@ -24,6 +28,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, message: "로그인이 필요합니다." },
         { status: 401 },
+      );
+    }
+
+    if (!hasVerifiedEmail(user)) {
+      return NextResponse.json(
+        { success: false, message: EMAIL_VERIFICATION_REQUIRED_MESSAGE },
+        { status: 403 },
       );
     }
 

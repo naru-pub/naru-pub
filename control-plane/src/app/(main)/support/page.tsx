@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { getUserEntitlement } from "@/lib/entitlements";
-import { SUPPORT_VISIBLE_USERS } from "@/lib/support";
+import { hasVerifiedEmail, SUPPORT_VISIBLE_USERS } from "@/lib/support";
 import SupportCard from "../account/SupportCard";
 
 export default async function SupportPage() {
@@ -49,6 +49,8 @@ export default async function SupportPage() {
               : null
           }
           subscription={subscription}
+          email={user.email}
+          emailVerified={hasVerifiedEmail(user)}
         />
         <div className="flex justify-end">
           <Button asChild variant="outline">
