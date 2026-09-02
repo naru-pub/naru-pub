@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import WebsiteAccess from "./WebsiteAccess";
-import MediaLibrary from "./MediaLibrary";
 
 type Collection = { name: string; read_access: string; write_access: string };
 type Document = { id: string; data: unknown };
@@ -83,18 +82,22 @@ export default function DatabaseManager({
             최대 10 MiB · 문서 10,000개 · 컬렉션 100개
           </p>
         </div>
-        <a
-          href="/database/docs/"
-          className="border px-4 py-2 text-sm hover:bg-muted"
-        >
-          사용 안내 및 예제 블로그 →
-        </a>
+        <div className="flex flex-wrap gap-2">
+          <a href="/media" className="border px-4 py-2 text-sm hover:bg-muted">
+            미디어 라이브러리 →
+          </a>
+          <a
+            href="/database/docs/"
+            className="border px-4 py-2 text-sm hover:bg-muted"
+          >
+            사용 안내 및 예제 블로그 →
+          </a>
+        </div>
       </header>
       <nav aria-label="데이터베이스 메뉴" className="flex flex-wrap gap-2">
         {[
           ["collections", "컬렉션과 문서"],
           ["access", "웹사이트 관리자 로그인"],
-          ["media", "미디어 라이브러리"],
           ["sdk", "웹 SDK"],
         ].map(([value, label]) => (
           <Button
@@ -393,9 +396,6 @@ export default function DatabaseManager({
       </div>
       <div hidden={view !== "access"}>
         <WebsiteAccess collections={collections} websiteUrl={websiteUrl} />
-      </div>
-      <div hidden={view !== "media"}>
-        <MediaLibrary />
       </div>
       <section hidden={view !== "sdk"} className="min-w-0 border p-5 space-y-4">
         <h2 className="font-bold">웹 SDK</h2>
