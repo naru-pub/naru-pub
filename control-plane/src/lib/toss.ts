@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomInt } from "crypto";
 
 const TOSS_API = "https://api.tosspayments.com";
 
@@ -212,6 +212,31 @@ export function addInterval(from: Date, interval: BillingInterval): Date {
   return d;
 }
 
-export function newOrderId(): string {
-  return `naru_${randomUUID().replace(/-/g, "")}`;
+// 주문번호는 두 곳에서 모양이 정해진다. 좁은 화면의 결제 내역 한 줄과,
+// 전화로 불러 주는 순간. 그래서 숫자만 쓰고 네 자리씩 끊는다. 한국어로 그냥
+// 읽으면 되고, 철자를 되묻을 글자가 아예 없다.
+//
+// 앞 여섯 자리는 KST 결제일(YYMMDD)이다. 덕분에 같은 번호가 겹칠 수 있는
+// 범위가 '그날 하루'로 좁아져서, 뒤에 붙는 여덟 자리만으로도 충분해진다.
+// 하루 200건이면 겹칠 확률이 하루 2×10^-4 — 십수 년에 한 번꼴이고, 그마저도
+// payments.order_id의 유니크 인덱스와 Toss가 큰 소리로 거절한다. 결제가
+// 잘못될 일은 없고 실패할 뿐이다. 앞자리가 결제일이라 전화로도 "9월 4일
+// 결제 맞으시죠?"로 한 번 더 맞춰볼 수 있다.
+//
+// Toss는 6~64자의 [A-Za-z0-9-_]를 받으므로 하이픈까지 그대로 통과한다.
+// 하이픈은 보기 좋으라고만 있는 게 아니라, 지원 문의용 스프레드시트가 열네
+// 자리 숫자를 수로 읽어 뭉개는 것도 막아 준다. 앞의 0도 그대로 살아남는다.
+const ORDER_ID_DATE = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Seoul",
+  year: "2-digit",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+export function newOrderId(now = new Date()): string {
+  const date = ORDER_ID_DATE.format(now).replace(/-/g, "");
+  // randomInt is rejection-sampled, so every eight-digit value is equally
+  // likely — no bias from folding a random byte into a decimal range.
+  const random = String(randomInt(0, 100_000_000)).padStart(8, "0");
+  return `${date}-${random.slice(0, 4)}-${random.slice(4)}`;
 }
