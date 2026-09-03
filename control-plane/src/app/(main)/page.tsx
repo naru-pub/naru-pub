@@ -6,8 +6,7 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdCard } from "@/components/AdCard";
-import { ONE_TIME_YEAR_AMOUNT, PLAN_AMOUNTS } from "@/lib/toss";
-import { Info, ScrollText, History, BarChart3, Heart } from "lucide-react";
+import { Info, ScrollText, History, BarChart3 } from "lucide-react";
 
 // A sparkline is drawn server-side as plain SVG. The charts on /open pull in
 // recharts behind "use client", which is far too much JavaScript to put on the
@@ -232,54 +231,6 @@ export default async function Home() {
                 으로 부탁드립니다.
               </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* 카드사 심사는 비회원이 메인 페이지에서 상품과 가격을 바로 확인할 수
-            있는지를 본다. 가격 없이 문의 창구만 있는 형태는 반려 사유다. */}
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="bg-secondary border-b-2 border-border">
-            <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
-              <Heart size={20} /> 후원
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-6 space-y-4">
-            <p className="text-muted-foreground text-base leading-relaxed">
-              웹사이트 호스팅은 계속 무료입니다. 후원해 주시면 커스텀 도메인,
-              데이터베이스, 방문자 현황 기능을 함께 쓰실 수 있습니다.
-            </p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="bg-background border border-border rounded p-3">
-                <div className="text-xl font-bold text-foreground tabular-nums">
-                  월 {PLAN_AMOUNTS.month.toLocaleString("ko-KR")}원
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  정기 후원, 매월 자동 결제
-                </p>
-              </div>
-              <div className="bg-background border border-border rounded p-3">
-                <div className="text-xl font-bold text-foreground tabular-nums">
-                  연 {PLAN_AMOUNTS.year.toLocaleString("ko-KR")}원
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  정기 후원, 매년 자동 결제
-                </p>
-              </div>
-              <div className="bg-background border border-border rounded p-3">
-                <div className="text-xl font-bold text-foreground tabular-nums">
-                  {ONE_TIME_YEAR_AMOUNT.toLocaleString("ko-KR")}원
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  한 번만 결제, 1년 이용
-                </p>
-              </div>
-            </div>
-            <Link
-              href="/support"
-              className="text-primary text-sm font-medium hover:underline"
-            >
-              후원 안내 및 판매 정책 보기 →
-            </Link>
           </CardContent>
         </Card>
 
