@@ -17,6 +17,11 @@ import { Badge } from "@/components/ui/badge";
 const ONE_TIME_YEARS = 1;
 const ONE_TIME_AMOUNT = 12000;
 
+// Toss reports a closed payment window through failUrl with the same shape as a
+// real failure. These two codes mean the supporter backed out, so they get the
+// neutral notice rather than an error.
+const USER_CANCELED_CODES = new Set(["PAY_PROCESS_CANCELED", "USER_CANCEL"]);
+
 type SubscriptionInfo = {
   status: string;
   billingInterval: string;
@@ -75,8 +80,18 @@ export default function SupportCard({
           ? `${untilLabel}부터 정기 후원이 시작됩니다.`
           : "정기 후원이 예약되었습니다.",
       );
-    } else if (support === "failed") toast.error("후원 처리에 실패했습니다.");
-    else if (support === "canceled") toast("후원이 취소되었습니다.");
+    } else if (support === "failed") {
+      // Toss appends code and message to failUrl; the confirm callbacks pass
+      // their own message the same way. Show what actually went wrong -- a
+      // rejected card number is something the supporter can act on.
+      const code = params.get("code");
+      const message = params.get("message");
+      if (code && USER_CANCELED_CODES.has(code)) {
+        toast("후원이 취소되었습니다.");
+      } else {
+        toast.error(message || "후원 처리에 실패했습니다.");
+      }
+    } else if (support === "canceled") toast("후원이 취소되었습니다.");
     router.replace("/support");
   }, [params, router, untilLabel]);
 
@@ -106,7 +121,7 @@ export default function SupportCard({
       await payment.requestBillingAuth({
         method: "CARD",
         successUrl: `${window.location.origin}/account/subscription/callback`,
-        failUrl: `${window.location.origin}/account?support=canceled`,
+        failUrl: `${window.location.origin}/support?support=failed`,
       });
       // requestBillingAuth redirects the browser; control resumes on the callback page.
     } catch {
@@ -144,7 +159,7 @@ export default function SupportCard({
         orderId: data.orderId,
         orderName: data.orderName,
         successUrl: `${window.location.origin}/account/donation/callback`,
-        failUrl: `${window.location.origin}/account?support=canceled`,
+        failUrl: `${window.location.origin}/support?support=failed`,
       });
       // requestPayment redirects the browser; control resumes on the callback page.
     } catch {

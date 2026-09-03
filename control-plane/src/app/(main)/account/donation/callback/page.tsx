@@ -19,7 +19,7 @@ function Callback() {
 
     // Toss omits these on cancel/failure.
     if (!paymentKey || !orderId || !amount) {
-      router.replace("/account?support=canceled");
+      router.replace("/support?support=canceled");
       return;
     }
 
@@ -41,7 +41,9 @@ function Callback() {
             return;
           }
           if (res.status !== 503) {
-            router.replace("/account?support=failed");
+            const query = new URLSearchParams({ support: "failed" });
+            if (data.message) query.set("message", data.message);
+            router.replace(`/support?${query}`);
             return;
           }
           setMessage(data.message);
