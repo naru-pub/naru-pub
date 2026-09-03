@@ -3,6 +3,7 @@ import { Heart, ReceiptText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SupportPerks } from "@/components/SupportPerks";
 import { SupportPolicy } from "@/components/SupportPolicy";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
@@ -27,9 +28,11 @@ function SignedOutSupportCard() {
       </CardHeader>
       <CardContent className="p-6 space-y-4">
         <p className="text-sm text-muted-foreground">
-          나루는 후원으로 굴러가는 작은 인디웹 서비스입니다. 후원해 주시면 커스텀
-          도메인, 데이터베이스, 방문자 현황 기능을 쓰실 수 있습니다 🌱
+          나루는 후원으로 굴러가는 작은 인디웹 서비스입니다. 후원해 주시면 아래
+          기능을 쓰실 수 있습니다 🌱
         </p>
+
+        <SupportPerks />
 
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">정기 후원</p>

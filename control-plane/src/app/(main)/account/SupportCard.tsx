@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SupportPerks } from "@/components/SupportPerks";
 
 // 카드사 심사는 서비스 제공기간이 1년을 넘는 상품을 허용하지 않으므로, 일회성
 // 후원은 1년치 한 건만 판매한다. 서버(MAX_PURCHASABLE_ONE_TIME_YEARS)가 같은
@@ -231,9 +232,11 @@ export default function SupportCard({
         <div className="text-sm text-muted-foreground space-y-2">
           <p>
             나루는 후원으로 굴러가는 작은 인디웹 서비스입니다. 후원해 주시면
-            커스텀 도메인, 데이터베이스, 방문자 현황 기능을 쓰실 수 있습니다 🌱
+            아래 기능을 쓰실 수 있습니다 🌱
           </p>
         </div>
+
+        <SupportPerks />
 
         {comp ? (
           <div className="bg-green-500/5 border-2 border-green-500 p-3 text-sm text-green-700 dark:text-green-500">
