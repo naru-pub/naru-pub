@@ -2,6 +2,7 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { DataError, jsonBody, sameOrigin } from "./validation";
 import { userHasFeature } from "@/lib/entitlements";
+import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import {
   approveAuthorization,
   authorizationInput,
@@ -89,6 +90,9 @@ export async function ownerAuthRequest(request: Request, action: string) {
     if (!user || !session) throw new DataError(401, "Sign in required.");
     if (!(await userHasFeature(user.id, "database")))
       throw new DataError(403, "Database access is not enabled for this site.");
+    // Registering a client or authorizing a website is the owner wiring their
+    // site up to the database; listing what already exists is not.
+    if (request.method !== "GET") noteSupporterFeatureUse(user.id, "database");
     if (action === "clients" && request.method === "GET") {
       const clients = await db
         .selectFrom("site_data_clients")

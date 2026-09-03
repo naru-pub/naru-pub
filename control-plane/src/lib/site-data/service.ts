@@ -16,6 +16,7 @@ import { COMPARISONS, filters } from "./filters";
 import { sorting, decodeCursor, encodeCursor } from "./pagination";
 import { tokenScope, limitPublicCreate } from "./owner-auth";
 import { previewFeatureAccess, userHasFeature } from "@/lib/entitlements";
+import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 
 export type DataCommand = {
   site: string;
@@ -115,6 +116,9 @@ export async function executeData(command: DataCommand) {
     const preview = previewFeatureAccess(!!owner.supporter_comp, "database");
     if (!(preview ?? (await userHasFeature(owner.id, "database"))))
       throw new DataError(403, "Database access is not enabled for this site.");
+    // Reads happen on every visitor pageview of a site that uses the SDK; a
+    // write is the owner's own data actually living in 나루.
+    if (command.method !== "GET") noteSupporterFeatureUse(owner.id, "database");
     const allowedIds = command.bearer
       ? await tokenScope(
           tx,
@@ -392,6 +396,9 @@ export async function executeBatch(command: DataCommand) {
     const preview = previewFeatureAccess(!!owner.supporter_comp, "database");
     if (!(preview ?? (await userHasFeature(owner.id, "database"))))
       throw new DataError(403, "Database access is not enabled for this site.");
+    // Reads happen on every visitor pageview of a site that uses the SDK; a
+    // write is the owner's own data actually living in 나루.
+    if (command.method !== "GET") noteSupporterFeatureUse(owner.id, "database");
     const allowedIds = command.bearer
       ? await tokenScope(
           tx,

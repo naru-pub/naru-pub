@@ -1,6 +1,9 @@
+import Link from "next/link";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollText } from "lucide-react";
 
+import { REFUND_WINDOW_DAYS } from "@/lib/refunds";
 import {
   MAX_PURCHASABLE_ONE_TIME_YEARS,
   ONE_TIME_YEAR_AMOUNT,
@@ -12,7 +15,8 @@ const krw = (amount: number) => `${amount.toLocaleString("ko-KR")}원`;
 // 카드사 심사는 무형재화의 판매 정책 — 상품 가격, 서비스 제공기간, 환불정책 —
 // 이 구매 페이지에서 비회원에게도 그대로 보이는지를 확인한다. 문구를 고칠
 // 때는 실제 동작(정기 결제 취소는 기간 만료까지 유지, 환불은 후원자 기능을
-// 즉시 종료)과 어긋나지 않게 해야 한다.
+// 즉시 종료)과 어긋나지 않게 해야 한다. 7일·미사용 조건은 lib/refunds의
+// REFUND_WINDOW_DAYS와 refundEligibility가 그대로 집행한다.
 export function SupportPolicy() {
   return (
     <Card className="rounded-none bg-card border-2 border-border shadow-lg">
@@ -65,8 +69,8 @@ export function SupportPolicy() {
             </li>
           </ul>
           <p className="text-muted-foreground">
-            후원자 전용 기능은 결제가 완료된 직후 바로 사용할 수 있으며, 한
-            번의 결제로 제공되는 기간은 최대 1년입니다.
+            후원자 전용 기능은 결제가 완료된 직후 바로 사용할 수 있으며, 한 번의
+            결제로 제공되는 기간은 최대 1년입니다.
           </p>
         </section>
 
@@ -74,8 +78,11 @@ export function SupportPolicy() {
           <h3 className="font-bold text-foreground">환불정책</h3>
           <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
             <li>
-              결제일로부터 7일 이내에 후원자 전용 기능을 사용하지 않으셨다면
-              전액 환불해 드립니다.
+              결제일로부터 {REFUND_WINDOW_DAYS}일 이내에 후원자 전용 기능을
+              사용하지 않으셨다면 전액 환불해 드립니다. 결제 내역에서 직접
+              신청하시면 바로 처리됩니다. 방문자 현황을 열어보신 것은 사용으로
+              세지 않으니, 후원이 값어치를 하는지 확인해 보셔도 환불 조건은
+              그대로 남습니다.
             </li>
             <li>
               환불이 완료되면 해당 결제로 제공된 후원자 전용 기능은 즉시
@@ -87,6 +94,8 @@ export function SupportPolicy() {
               정기 후원은 언제든지 취소할 수 있습니다. 취소하시면 다음 결제부터
               청구되지 않고, 이미 결제하신 기간은 만료일까지 그대로 이용하실 수
               있습니다. 이미 시작된 기간에 대한 일할 환불은 제공하지 않습니다.
+              환불이 이루어지면 정기 후원도 함께 취소되어 더 이상 결제되지
+              않습니다.
             </li>
             <li>
               나루의 장애나 서비스 중단으로 후원자 전용 기능을 이용하지 못한
@@ -98,7 +107,20 @@ export function SupportPolicy() {
         <section className="space-y-2">
           <h3 className="font-bold text-foreground">환불 및 문의 방법</h3>
           <p className="text-muted-foreground">
-            환불을 원하시면{" "}
+            환불은 로그인 후{" "}
+            <Link
+              href="/support/payments"
+              className="text-primary underline hover:text-primary/80"
+            >
+              결제 내역
+            </Link>
+            에서 해당 결제의 &lsquo;환불 신청&rsquo;을 누르시면 즉시 접수됩니다.
+            환불 대금은 결제하신 카드로 취소되며, 카드사에 따라 영업일 기준
+            3~5일이 더 걸릴 수 있습니다.
+          </p>
+          <p className="text-muted-foreground">
+            나루의 장애로 이용하지 못하신 경우처럼 위 조건에 해당하지 않는
+            환불이나 그 밖의 문의는{" "}
             <a
               href="mailto:hello@naru.pub"
               className="text-primary underline hover:text-primary/80"
@@ -106,8 +128,7 @@ export function SupportPolicy() {
               hello@naru.pub
             </a>{" "}
             으로 결제하신 계정의 아이디와 결제일을 알려주세요. 3영업일 이내에
-            처리해 드립니다. 환불 대금은 결제하신 카드로 취소되며, 카드사에 따라
-            영업일 기준 3~5일이 더 걸릴 수 있습니다.
+            답변드립니다.
           </p>
         </section>
       </CardContent>

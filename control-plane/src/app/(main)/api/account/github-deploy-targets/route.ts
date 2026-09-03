@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { userHasFeature } from "@/lib/entitlements";
+import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { assertJsonContentType } from "@/lib/utils";
 import { upsertGitHubDeployTarget } from "@/lib/deploy/siteDeploy";
 
@@ -75,6 +76,7 @@ export async function POST(request: NextRequest) {
           ? body.deleteRemovedFiles
           : undefined,
     });
+    noteSupporterFeatureUse(user.id, "github_deploys");
 
     return NextResponse.json({ success: true });
   } catch (error) {

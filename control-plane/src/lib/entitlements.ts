@@ -16,6 +16,15 @@ export const ALL_FEATURES: Feature[] = [
   "database",
 ];
 
+// Shown wherever a feature has to be named to a person — the refund screens and
+// the operator listing both spell out which 후원자 전용 기능 an account touched.
+export const FEATURE_LABELS: Record<Feature, string> = {
+  custom_domains: "커스텀 도메인",
+  github_deploys: "GitHub 배포",
+  analytics: "방문자 현황",
+  database: "데이터베이스",
+};
+
 export const PLAN_FEATURES: Record<string, Feature[]> = {
   supporter: ["custom_domains", "github_deploys", "analytics", "database"],
   // To add a richer tier later, add another plan key with its feature list.

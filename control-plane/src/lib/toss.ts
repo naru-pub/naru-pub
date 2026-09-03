@@ -180,6 +180,21 @@ export function confirmPayment(
   });
 }
 
+// Cancels a payment, refunding it in full. 나루 does not sell partial periods
+// back, so no cancelAmount is sent: Toss refunds the whole balance. Passing the
+// same idempotency key for a retry cancels once rather than twice.
+export function cancelPayment(params: {
+  paymentKey: string;
+  cancelReason: string;
+  idempotencyKey: string;
+}) {
+  const { paymentKey, cancelReason, idempotencyKey } = params;
+  return tossRequest<TossPaymentResult>(
+    `/v1/payments/${encodeURIComponent(paymentKey)}/cancel`,
+    { body: { cancelReason }, idempotencyKey },
+  );
+}
+
 export function getPaymentByOrderId(orderId: string) {
   return tossRequest<TossPaymentResult>(
     `/v1/payments/orders/${encodeURIComponent(orderId)}`,

@@ -284,6 +284,13 @@ export interface SiteDataFiles {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
+export interface SupporterFeatureUses {
+  user_id: number;
+  feature: string;
+  first_used_at: Generated<Timestamp>;
+  last_used_at: Generated<Timestamp>;
+}
+
 export interface DB {
   site_data_site_clients: { user_id: number; id: string };
   site_data_clients: SiteDataClients;
@@ -310,6 +317,7 @@ export interface DB {
   remote_actors: RemoteActors;
   sessions: Sessions;
   subscriptions: Subscriptions;
+  supporter_feature_uses: SupporterFeatureUses;
   user_keys: UserKeys;
   users: Users;
 }

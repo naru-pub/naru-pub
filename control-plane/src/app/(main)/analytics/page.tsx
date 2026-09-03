@@ -9,6 +9,7 @@ import TopPagesTable from "./top-pages-table";
 import TopReferrersTable from "./top-referrers-table";
 import UserAgentsTable from "./user-agents-table";
 import { userHasFeature } from "@/lib/entitlements";
+import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 
 async function getDailyPageviews(userId: number) {
   const thirtyDaysAgo = new Date();
@@ -224,6 +225,11 @@ export default async function AnalyticsPage() {
   if (!(await userHasFeature(user.id, "analytics"))) {
     redirect("/account");
   }
+
+  // Reading the dashboard is the whole of this feature, so rendering it is the
+  // only place its use can be recorded. It is deliberately not one of the
+  // REFUND_BLOCKING_FEATURES — looking at your own numbers takes nothing away.
+  noteSupporterFeatureUse(user.id, "analytics");
 
   const [dailyPageviews, topPages, topReferrers, userAgents, stats] =
     await Promise.all([

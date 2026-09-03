@@ -11,6 +11,7 @@ import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { s3Client } from "@/lib/utils";
 import { previewFeatureAccess, userHasFeature } from "@/lib/entitlements";
+import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { tokenScope } from "./owner-auth";
 import { DataError, name } from "./validation";
 
@@ -114,6 +115,9 @@ export async function executeMedia(command: MediaCommand) {
   const preview = previewFeatureAccess(!!owner.supporter_comp, "database");
   if (!(preview ?? (await userHasFeature(owner.id, "database"))))
     throw new DataError(403, "Database access is not enabled for this site.");
+  // Uploading or removing a file is the owner using the supporter storage;
+  // serving one back is a visitor reading their site.
+  if (command.method !== "GET") noteSupporterFeatureUse(owner.id, "database");
   const allowedIds = command.bearer
     ? await db
         .transaction()

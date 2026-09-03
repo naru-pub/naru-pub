@@ -1,9 +1,13 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft, ReceiptText } from "lucide-react";
 
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
+import { getSupporterFeatureUses } from "@/lib/feature-usage";
+import { refundEligibility, REFUND_WINDOW_DAYS } from "@/lib/refunds";
+import { RefundPaymentButton } from "@/components/RefundPaymentButton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -72,6 +76,21 @@ function paymentKind(row: {
   return "후원";
 }
 
+// 환불 신청을 받지 못하는 사유는 버튼 자리에 그대로 적어 준다. 왜 안 되는지
+// 모른 채 메일을 보내게 만들지 않기 위해서다.
+function refundBlockedLabel(reason: string) {
+  switch (reason) {
+    case "already_refunded":
+      return "환불 완료";
+    case "window_passed":
+      return `${REFUND_WINDOW_DAYS}일 경과`;
+    case "feature_used":
+      return "기능 사용함";
+    default:
+      return "-";
+  }
+}
+
 export default async function PaymentsPage() {
   const { user } = await validateRequest();
 
@@ -101,6 +120,21 @@ export default async function PaymentsPage() {
     .limit(100)
     .execute();
 
+  const featureUses = await getSupporterFeatureUses(user.id);
+  const now = new Date();
+  const refundState = new Map(
+    payments.map((payment) => [
+      payment.id,
+      refundEligibility({
+        status: payment.status,
+        paidAt: payment.paid_at,
+        refundedAmount: payment.refunded_amount,
+        featureUses,
+        now,
+      }),
+    ]),
+  );
+
   return (
     <div className="bg-background min-h-screen">
       <div className="max-w-5xl mx-auto p-6 space-y-6">
@@ -126,65 +160,114 @@ export default async function PaymentsPage() {
                 아직 결제 내역이 없습니다.
               </div>
             ) : (
+              // 결제 하나를 두 줄로 나눈다. 첫 줄은 한눈에 봐야 하는
+              // 것들(일시·종류·상태·금액·환불 신청), 둘째 줄은 필요할 때만 읽는
+              // 것들(이용 기간·환불액·주문번호). 좁은 화면에서 열을 숨기던
+              // 방식은 정작 주문번호처럼 문의할 때 필요한 값을 보이지 않게
+              // 만들어서, 열을 줄이고 줄을 늘리는 쪽으로 바꿨다.
               <Table className="table-auto">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="px-2 sm:px-4">일시</TableHead>
-                    <TableHead className="hidden px-2 sm:table-cell sm:px-4">
-                      종류
-                    </TableHead>
-                    <TableHead className="px-2 sm:px-4">상태</TableHead>
-                    <TableHead className="px-2 text-right sm:px-4">
+                    <TableHead className="px-3 sm:px-4">결제</TableHead>
+                    <TableHead className="px-3 sm:px-4">상태</TableHead>
+                    <TableHead className="px-3 text-right sm:px-4">
                       금액
                     </TableHead>
-                    <TableHead className="hidden px-2 text-right md:table-cell sm:px-4">
-                      환불
-                    </TableHead>
-                    <TableHead className="hidden px-2 lg:table-cell sm:px-4">
-                      이용 기간
-                    </TableHead>
-                    <TableHead className="hidden px-2 xl:table-cell sm:px-4">
-                      주문번호
+                    <TableHead className="px-3 text-right sm:px-4">
+                      환불 신청
                     </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {payments.map((payment) => (
-                    <TableRow key={payment.id}>
-                      <TableCell className="p-2 text-xs sm:p-4 sm:text-sm sm:whitespace-nowrap">
-                        {formatDate(payment.paid_at ?? payment.created_at)}
-                      </TableCell>
-                      <TableCell className="hidden p-2 sm:table-cell sm:p-4">
-                        {paymentKind(payment)}
-                      </TableCell>
-                      <TableCell className="p-2 sm:p-4">
-                        <Badge variant={statusVariant(payment.status)}>
-                          {statusLabel(payment.status, payment.refunded_amount)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="p-2 text-right whitespace-nowrap sm:p-4">
-                        {formatKrw(payment.amount)}
-                      </TableCell>
-                      <TableCell className="hidden p-2 text-right whitespace-nowrap md:table-cell sm:p-4">
-                        {payment.refunded_amount > 0
-                          ? formatKrw(payment.refunded_amount)
-                          : "-"}
-                      </TableCell>
-                      <TableCell className="hidden whitespace-nowrap p-2 text-muted-foreground lg:table-cell sm:p-4">
-                        {payment.period_start && payment.period_end
-                          ? `${formatDate(payment.period_start)} - ${formatDate(payment.period_end)}`
-                          : "-"}
-                      </TableCell>
-                      <TableCell className="hidden break-all p-2 font-mono text-xs text-muted-foreground xl:table-cell sm:p-4">
-                        {payment.order_id}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {payments.map((payment) => {
+                    const state = refundState.get(payment.id);
+                    return (
+                      <Fragment key={payment.id}>
+                        <TableRow className="border-b-0 hover:bg-transparent">
+                          <TableCell className="px-3 pt-3 pb-1 align-top sm:px-4">
+                            <div className="text-sm whitespace-nowrap">
+                              {formatDate(
+                                payment.paid_at ?? payment.created_at,
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {paymentKind(payment)}
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-3 pt-3 pb-1 align-top sm:px-4">
+                            <Badge variant={statusVariant(payment.status)}>
+                              {statusLabel(
+                                payment.status,
+                                payment.refunded_amount,
+                              )}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="px-3 pt-3 pb-1 text-right align-top whitespace-nowrap sm:px-4">
+                            {formatKrw(payment.amount)}
+                          </TableCell>
+                          <TableCell className="px-3 pt-3 pb-1 text-right align-top sm:px-4">
+                            {state?.eligible ? (
+                              <RefundPaymentButton
+                                paymentId={payment.id}
+                                confirmMessage={`${formatKrw(payment.amount)}을 전액 환불할까요? 환불하면 이 결제로 열린 후원자 전용 기능이 즉시 종료되고, 정기 후원 중이라면 자동 결제도 함께 취소됩니다.`}
+                                label="환불 신청"
+                              />
+                            ) : (
+                              <span className="text-xs whitespace-nowrap text-muted-foreground">
+                                {refundBlockedLabel(state?.reason ?? "")}
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell
+                            colSpan={4}
+                            className="px-3 pt-0 pb-3 text-xs text-muted-foreground sm:px-4"
+                          >
+                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                              {payment.period_start && payment.period_end ? (
+                                <span>
+                                  이용 기간 {formatDate(payment.period_start)} ~{" "}
+                                  {formatDate(payment.period_end)}
+                                </span>
+                              ) : null}
+                              {payment.refunded_amount > 0 ? (
+                                <span>
+                                  환불 {formatKrw(payment.refunded_amount)}
+                                  {payment.refunded_at
+                                    ? ` (${formatDate(payment.refunded_at)})`
+                                    : ""}
+                                </span>
+                              ) : null}
+                              <span className="font-mono break-all">
+                                {payment.order_id}
+                              </span>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      </Fragment>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}
           </CardContent>
         </Card>
+
+        <p className="text-sm text-muted-foreground">
+          결제일로부터 {REFUND_WINDOW_DAYS}일 이내에 후원자 전용 기능을 사용하지
+          않으셨다면 위에서 바로 전액 환불하실 수 있습니다. 환불하면 그 결제로
+          제공된 후원자 전용 기능은 즉시 종료되고, 정기 후원 중이라면 자동
+          결제도 함께 취소됩니다. 나루의 장애처럼 그 밖의 사유로 환불이
+          필요하시면{" "}
+          <a
+            href="mailto:hello@naru.pub"
+            className="text-primary underline hover:text-primary/80"
+          >
+            hello@naru.pub
+          </a>{" "}
+          으로 알려주세요.
+        </p>
       </div>
     </div>
   );
