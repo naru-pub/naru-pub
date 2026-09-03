@@ -29,10 +29,8 @@ function SignedOutSupportCard() {
       <CardContent className="p-6 space-y-4">
         <p className="text-sm text-muted-foreground">
           나루는 후원으로 굴러가는 작은 인디웹 서비스입니다. 후원해 주시면 아래
-          기능을 쓰실 수 있습니다 🌱
+          후원자 전용 기능을 쓰실 수 있습니다 🌱
         </p>
-
-        <SupportPerks />
 
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">정기 후원</p>
@@ -86,6 +84,7 @@ export default async function SupportPage() {
       <div className="bg-background min-h-screen">
         <div className="max-w-4xl mx-auto p-6 space-y-4">
           <SignedOutSupportCard />
+          <SupportPerks />
           <SupportPolicy />
         </div>
       </div>
@@ -124,6 +123,7 @@ export default async function SupportPage() {
           email={user.email}
           emailVerified={hasVerifiedEmail(user)}
         />
+        <SupportPerks />
         <SupportPolicy />
         <div className="flex justify-end">
           <Button asChild variant="outline">

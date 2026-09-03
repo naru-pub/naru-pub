@@ -1,6 +1,11 @@
+import { BadgeCheck } from "lucide-react";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
 // 후원으로 열리는 기능들을 한 줄씩 늘어놓는다. 첫 화면의 '사용 안내'와 같은
-// 행 스타일이되, /support 카드들의 두꺼운 테두리에 맞춘다. 여기 적힌 기능은
-// lib/entitlements의 PLAN_FEATURES.supporter와 일치해야 한다.
+// 행 스타일이되, /support 카드들의 두꺼운 테두리에 맞춘다. 결제 수단과 금액이
+// 묻히지 않도록 '나루 후원' 카드 안이 아니라 그 아래 별도 카드로 둔다. 여기
+// 적힌 기능은 lib/entitlements의 PLAN_FEATURES.supporter와 일치해야 한다.
 const PERKS = [
   {
     emoji: "🌐",
@@ -30,18 +35,28 @@ const PERKS = [
 
 export function SupportPerks() {
   return (
-    <div className="space-y-2 text-sm text-muted-foreground">
-      {PERKS.map((perk) => (
-        <div
-          key={perk.title}
-          className="border-2 border-border bg-background p-3"
-        >
-          <strong className="text-foreground">
-            {perk.emoji} {perk.title}:
-          </strong>{" "}
-          {perk.description}
+    <Card className="rounded-none bg-card border-2 border-border shadow-lg">
+      <CardHeader className="bg-secondary border-b-2 border-border">
+        <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
+          <BadgeCheck size={20} />
+          후원자 전용 기능
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-6">
+        <div className="space-y-2 text-sm text-muted-foreground">
+          {PERKS.map((perk) => (
+            <div
+              key={perk.title}
+              className="border-2 border-border bg-background p-3"
+            >
+              <strong className="text-foreground">
+                {perk.emoji} {perk.title}:
+              </strong>{" "}
+              {perk.description}
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
