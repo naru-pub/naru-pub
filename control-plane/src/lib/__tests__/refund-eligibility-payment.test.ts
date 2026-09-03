@@ -2,7 +2,6 @@ import { describe, expect, test } from "@jest/globals";
 import {
   refundEligibility,
   refundDeadline,
-  REFUND_BLOCKING_FEATURES,
   REFUND_WINDOW_DAYS,
 } from "@/lib/refunds";
 
@@ -14,12 +13,11 @@ const paid = (overrides: Partial<Parameters<typeof refundEligibility>[0]>) => ({
   status: "done",
   paidAt: PAID_AT,
   refundedAmount: 0,
-  featureUses: [],
   ...overrides,
 });
 
 describe("self-serve refund eligibility", () => {
-  test("allows an unused payment inside the window", () => {
+  test("allows a refund inside the window", () => {
     expect(refundEligibility(paid({ now: day(6) }))).toEqual({
       eligible: true,
       deadline: refundDeadline(PAID_AT),
@@ -40,43 +38,16 @@ describe("self-serve refund eligibility", () => {
     expect(result).toMatchObject({ eligible: false, reason: "window_passed" });
   });
 
-  // 사용하지 않으셨다면 — a supporter feature touched after paying consumes
-  // what the payment bought.
-  test("refuses when a supporter feature was used after paying", () => {
-    const result = refundEligibility(
-      paid({
-        now: day(2),
-        featureUses: [{ feature: "custom_domains", lastUsedAt: day(1) }],
-      }),
-    );
-    expect(result).toMatchObject({
-      eligible: false,
-      reason: "feature_used",
-      usedFeatures: ["custom_domains"],
-    });
-  });
-
-  // 방문자 현황은 열어보는 것이 전부라, 후원이 값어치를 하는지 확인한 것만으로
-  // 환불을 잃지 않는다.
-  test("still refunds after viewing 방문자 현황", () => {
-    const result = refundEligibility(
-      paid({
-        now: day(2),
-        featureUses: [{ feature: "analytics", lastUsedAt: day(1) }],
-      }),
-    );
-    expect(result.eligible).toBe(true);
-  });
-
-  // Usage from a previous, expired period says nothing about this payment.
-  test("ignores feature use from before the payment", () => {
-    const result = refundEligibility(
-      paid({
-        now: day(2),
-        featureUses: [{ feature: "database", lastUsedAt: day(-30) }],
-      }),
-    );
-    expect(result.eligible).toBe(true);
+  // 이유를 묻지 않는다는 것은 판정이 결제일 하나만 본다는 뜻이다. 사용 기록도,
+  // 후원 종류도, 금액도 묻지 않는다. 조건이 하나뿐이라는 것 자체가 약속이라,
+  // 입력이 늘어나면 이 테스트가 먼저 깨진다.
+  test("asks nothing but the date, the amount refunded and the status", () => {
+    expect(Object.keys(paid({ now: day(3) })).sort()).toEqual([
+      "now",
+      "paidAt",
+      "refundedAmount",
+      "status",
+    ]);
   });
 
   test("refuses a payment that was already refunded", () => {
@@ -93,31 +64,5 @@ describe("self-serve refund eligibility", () => {
     expect(
       refundEligibility(paid({ now: day(1), status: "pending", paidAt: null })),
     ).toMatchObject({ eligible: false, reason: "not_paid" });
-  });
-
-  test("names every refund-blocking feature used since the payment", () => {
-    const result = refundEligibility(
-      paid({
-        now: day(3),
-        featureUses: [
-          { feature: "custom_domains", lastUsedAt: day(2) },
-          { feature: "github_deploys", lastUsedAt: day(-1) },
-          { feature: "analytics", lastUsedAt: day(2) },
-          { feature: "database", lastUsedAt: day(1) },
-        ],
-      }),
-    );
-    expect(result).toMatchObject({
-      eligible: false,
-      usedFeatures: ["custom_domains", "database"],
-    });
-  });
-
-  test("blocks on what the payment actually handed over", () => {
-    expect(REFUND_BLOCKING_FEATURES).toEqual([
-      "custom_domains",
-      "github_deploys",
-      "database",
-    ]);
   });
 });

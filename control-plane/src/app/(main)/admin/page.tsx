@@ -5,7 +5,6 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { FEATURE_LABELS } from "@/lib/entitlements";
 import { getSupporterFeatureUsesForUsers } from "@/lib/feature-usage";
-import { blocksRefund } from "@/lib/refunds";
 import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
 import { RefundPaymentButton } from "@/components/RefundPaymentButton";
 import { Button } from "@/components/ui/button";
@@ -169,28 +168,19 @@ export default async function PaymentOperatorPage() {
                           </span>
                         );
                       }
-                      // 방문자 현황만 열어본 계정은 환불 조건이 그대로
-                      // 남는다. 운영자가 목록만 보고 "썼으니 환불 불가"로
-                      // 읽지 않도록 조건을 없애는 사용과 나눠서 적는다.
-                      const blocking = since.filter((use) =>
-                        blocksRefund(use.feature),
-                      );
-                      const label = (use: (typeof since)[number]) =>
-                        FEATURE_LABELS[use.feature] ?? use.feature;
+                      // 환불 판정에는 쓰지 않는다. 7일 안이면 사용 여부와
+                      // 관계없이 환불되므로, 이 칸은 운영자가 계정을 이해할
+                      // 때 보는 정보다.
                       return (
                         <span className="text-sm break-words">
-                          <span
-                            className={
-                              blocking.length
-                                ? undefined
-                                : "text-muted-foreground"
-                            }
-                          >
-                            {since.map(label).join(", ")}
-                          </span>
+                          {since
+                            .map(
+                              (use) =>
+                                FEATURE_LABELS[use.feature] ?? use.feature,
+                            )
+                            .join(", ")}
                           <span className="block text-xs text-muted-foreground">
                             마지막 {formatDate(since[0].lastUsedAt)}
-                            {blocking.length ? null : " · 환불 조건 유지"}
                           </span>
                         </span>
                       );

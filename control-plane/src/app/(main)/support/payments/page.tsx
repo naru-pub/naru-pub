@@ -5,7 +5,6 @@ import { ArrowLeft, ReceiptText } from "lucide-react";
 
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { getSupporterFeatureUses } from "@/lib/feature-usage";
 import { refundEligibility, REFUND_WINDOW_DAYS } from "@/lib/refunds";
 import { RefundPaymentButton } from "@/components/RefundPaymentButton";
 import { Button } from "@/components/ui/button";
@@ -84,8 +83,6 @@ function refundBlockedLabel(reason: string) {
       return "환불 완료";
     case "window_passed":
       return `${REFUND_WINDOW_DAYS}일 경과`;
-    case "feature_used":
-      return "기능 사용함";
     default:
       return "-";
   }
@@ -120,7 +117,6 @@ export default async function PaymentsPage() {
     .limit(100)
     .execute();
 
-  const featureUses = await getSupporterFeatureUses(user.id);
   const now = new Date();
   const refundState = new Map(
     payments.map((payment) => [
@@ -129,7 +125,6 @@ export default async function PaymentsPage() {
         status: payment.status,
         paidAt: payment.paid_at,
         refundedAmount: payment.refunded_amount,
-        featureUses,
         now,
       }),
     ]),
@@ -261,11 +256,10 @@ export default async function PaymentsPage() {
         </Card>
 
         <p className="text-sm text-muted-foreground">
-          결제일로부터 {REFUND_WINDOW_DAYS}일 이내에 후원자 전용 기능을 사용하지
-          않으셨다면 위에서 바로 전액 환불하실 수 있습니다. 환불하면 그 결제로
-          제공된 후원자 전용 기능은 즉시 종료되고, 정기 후원 중이라면 자동
-          결제도 함께 취소됩니다. 나루의 장애처럼 그 밖의 사유로 환불이
-          필요하시면{" "}
+          결제일로부터 {REFUND_WINDOW_DAYS}일 이내에는 이유를 묻지 않고 위에서
+          바로 전액 환불하실 수 있습니다. 환불하면 그 결제로 제공된 후원자 전용
+          기능은 즉시 종료되고, 정기 후원 중이라면 자동 결제도 함께 취소됩니다.
+          나루의 장애처럼 그 밖의 사유로 환불이 필요하시면{" "}
           <a
             href="mailto:hello@naru.pub"
             className="text-primary underline hover:text-primary/80"

@@ -15,7 +15,7 @@ const krw = (amount: number) => `${amount.toLocaleString("ko-KR")}원`;
 // 카드사 심사는 무형재화의 판매 정책 — 상품 가격, 서비스 제공기간, 환불정책 —
 // 이 구매 페이지에서 비회원에게도 그대로 보이는지를 확인한다. 문구를 고칠
 // 때는 실제 동작(정기 결제 취소는 기간 만료까지 유지, 환불은 후원자 기능을
-// 즉시 종료)과 어긋나지 않게 해야 한다. 7일·미사용 조건은 lib/refunds의
+// 즉시 종료)과 어긋나지 않게 해야 한다. 7일이라는 기간은 lib/refunds의
 // REFUND_WINDOW_DAYS와 refundEligibility가 그대로 집행한다.
 export function SupportPolicy() {
   return (
@@ -78,11 +78,10 @@ export function SupportPolicy() {
           <h3 className="font-bold text-foreground">환불정책</h3>
           <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
             <li>
-              결제일로부터 {REFUND_WINDOW_DAYS}일 이내에 후원자 전용 기능을
-              사용하지 않으셨다면 전액 환불해 드립니다. 결제 내역에서 직접
-              신청하시면 바로 처리됩니다. 방문자 현황을 열어보신 것은 사용으로
-              세지 않으니, 후원이 값어치를 하는지 확인해 보셔도 환불 조건은
-              그대로 남습니다.
+              결제일로부터 {REFUND_WINDOW_DAYS}일 이내에는 이유를 묻지 않고 전액
+              환불해 드립니다. 후원자 전용 기능을 이미 쓰셨더라도 괜찮습니다.
+              결제 내역에서 직접 신청하시면 바로 처리되며, 사유를 적으실 필요도
+              없습니다.
             </li>
             <li>
               환불이 완료되면 해당 결제로 제공된 후원자 전용 기능은 즉시
@@ -115,12 +114,13 @@ export function SupportPolicy() {
               결제 내역
             </Link>
             에서 해당 결제의 &lsquo;환불 신청&rsquo;을 누르시면 즉시 접수됩니다.
-            환불 대금은 결제하신 카드로 취소되며, 카드사에 따라 영업일 기준
-            3~5일이 더 걸릴 수 있습니다.
+            {REFUND_WINDOW_DAYS}일이 지나지 않았다면 묻는 것 없이 그 자리에서
+            처리됩니다. 환불 대금은 결제하신 카드로 취소되며, 카드사에 따라
+            영업일 기준 3~5일이 더 걸릴 수 있습니다.
           </p>
           <p className="text-muted-foreground">
-            나루의 장애로 이용하지 못하신 경우처럼 위 조건에 해당하지 않는
-            환불이나 그 밖의 문의는{" "}
+            {REFUND_WINDOW_DAYS}일이 지난 뒤의 환불이나, 나루의 장애로 이용하지
+            못하신 경우, 그 밖의 문의는{" "}
             <a
               href="mailto:hello@naru.pub"
               className="text-primary underline hover:text-primary/80"
