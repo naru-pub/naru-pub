@@ -4,7 +4,7 @@
 
 기능 묶음은 `lib/entitlements.ts`의 `PLAN_FEATURES`에 정의됩니다. 지금은 `supporter → [custom_domains, github_deploys, analytics]`입니다. 새 플랜은 키를 추가해 확장합니다.
 
-후원자 전용 설정은 `/domains`(커스텀 도메인)과 `/deploys`(GitHub 배포)에서 관리합니다. 결제/후원 흐름은 `/support`에 남겨둡니다.
+후원자 전용 설정은 `/domains`(커스텀 도메인)과 `/deploys`(GitHub 배포)에서 관리합니다. 결제/후원 흐름은 `/support`에 남겨둡니다. `/support`는 광고하지 않습니다 — 후원한 적 없는 방문자에게는 어디에도 보이지 않고, 카드사 심사관은 주소를 직접 받습니다. 다만 결제한 적이 있거나 지금 후원자인 계정에는 계정 메뉴에 '후원'이 뜹니다(`hasSupportRelationship`). 결제 내역·정기 후원 취소·환불 신청이 모두 그 아래에 있어서, 링크가 없으면 판매 정책에 적어 둔 환불 창구가 주소를 아는 사람에게만 열립니다.
 
 결제는 **Toss Payments 자동결제(빌링)** 입니다. 월 1,000원 / 연 10,000원.
 

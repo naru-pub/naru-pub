@@ -10,6 +10,7 @@ import {
   Github,
   Globe2,
   Globe,
+  Heart,
   Images,
   LogOut,
   Settings,
@@ -123,8 +124,11 @@ export function ExtensionsMenu({
 }
 
 // /support renders for a signed-out visitor so 카드사 심사 can read the 상품 and
-// 판매 정책, but nothing on the site links to it — a reviewer is given the URL to
-// type. /support/payments stays signed-in only. Nothing here points at either.
+// 판매 정책, but nothing advertises it — a reviewer is given the URL to type, and
+// a visitor who has never paid sees no 후원 anywhere. The one exception is the
+// 계정 menu below, which shows 후원 to accounts that already have a payment
+// relationship: 결제 내역, 정기 후원 취소 and 환불 신청 all live under /support,
+// and a refund route only the URL-savvy can reach is not a refund route.
 export function DocsMenu() {
   return (
     <DropdownMenu>
@@ -167,9 +171,12 @@ export function DocsMenu() {
 
 export function AccountMenu({
   loginName,
+  supporter,
   paymentOperator,
 }: {
   loginName: string;
+  /** Has paid before, or is a supporter now — see hasSupportRelationship. */
+  supporter: boolean;
   paymentOperator: boolean;
 }) {
   async function logout() {
@@ -204,6 +211,14 @@ export function AccountMenu({
             공개 설정
           </Link>
         </DropdownMenuItem>
+        {supporter && (
+          <DropdownMenuItem asChild>
+            <Link href="/support" className="flex items-center gap-2">
+              <Heart size={16} />
+              후원
+            </Link>
+          </DropdownMenuItem>
+        )}
         {paymentOperator && (
           <DropdownMenuItem asChild>
             <Link href="/admin" className="flex items-center gap-2">

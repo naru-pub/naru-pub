@@ -7,7 +7,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { getHomepageUrl } from "@/lib/utils";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
-import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
+import { hasSupportRelationship, PAYMENT_OPERATOR_USERS } from "@/lib/support";
 import { getUserFeatures, type Feature } from "@/lib/entitlements";
 import { AccountMenu, DocsMenu, ExtensionsMenu } from "@/components/NavMenus";
 
@@ -22,7 +22,12 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const { user } = await validateRequest();
-  const features = user ? await getUserFeatures(user.id) : new Set<Feature>();
+  const [features, supportRelationship] = user
+    ? await Promise.all([
+        getUserFeatures(user.id),
+        hasSupportRelationship(user.id),
+      ])
+    : [new Set<Feature>(), false];
 
   return (
     <html lang="ko" suppressHydrationWarning>
@@ -73,6 +78,7 @@ export default async function RootLayout({
                         />
                         <AccountMenu
                           loginName={user.loginName}
+                          supporter={supportRelationship}
                           paymentOperator={PAYMENT_OPERATOR_USERS.has(
                             user.loginName,
                           )}
