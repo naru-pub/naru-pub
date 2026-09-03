@@ -120,23 +120,27 @@ describe("order ids", () => {
   });
 
   // 전화로 불러 줄 번호라 철자를 되물을 글자가 하나도 없어야 한다.
-  test("is digits in three groups, with nothing to spell out", () => {
+  test("is a date and digits, with nothing to spell out", () => {
     for (let i = 0; i < 100; i++) {
-      expect(newOrderId()).toMatch(/^\d{6}-\d{4}-\d{4}$/);
+      expect(newOrderId()).toMatch(/^\d{4}-\d{2}-\d{2}-\d{4}-\d{4}$/);
     }
   });
 
-  // 앞자리가 KST 결제일이라, 겹칠 수 있는 범위가 하루로 좁아지고 전화로
-  // 결제일을 한 번 더 맞춰볼 수 있다.
+  // 날짜를 날짜로 읽을 수 있어야 전화로 한 번 더 맞춰볼 수 있다. KST 기준이라
+  // UTC로 찍으면 하루가 어긋난다.
   test("opens with the KST date of the payment", () => {
     // 2026-09-04 00:30 KST — the UTC day before, so a UTC prefix would differ.
-    expect(newOrderId(new Date("2026-09-03T15:30:00Z"))).toMatch(/^260904-/);
-    expect(newOrderId(new Date("2026-09-03T14:30:00Z"))).toMatch(/^260903-/);
+    expect(newOrderId(new Date("2026-09-03T15:30:00Z"))).toMatch(
+      /^2026-09-04-/,
+    );
+    expect(newOrderId(new Date("2026-09-03T14:30:00Z"))).toMatch(
+      /^2026-09-03-/,
+    );
   });
 
   test("keeps a leading zero rather than shortening the id", () => {
     const ids = Array.from({ length: 2000 }, () => newOrderId());
-    expect(ids.every((id) => id.length === 16)).toBe(true);
+    expect(ids.every((id) => id.length === 20)).toBe(true);
   });
 
   test("does not repeat", () => {

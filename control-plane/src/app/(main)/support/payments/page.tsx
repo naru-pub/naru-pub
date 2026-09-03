@@ -240,8 +240,8 @@ export default async function PaymentsPage() {
                                 </span>
                               ) : null}
                               {/* 전화로 불러 주는 번호라 중간에 끊기면 안
-                                  된다. 열여섯 자로 고정이라 끊지 않아도 한
-                                  줄에 들어간다. */}
+                                  된다. 스무 자로 고정이라 끊지 않아도 한 줄에
+                                  들어간다. */}
                               <span className="whitespace-nowrap">
                                 주문번호{" "}
                                 <span className="font-mono tracking-wide">
