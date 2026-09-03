@@ -99,10 +99,10 @@ export function SupportPolicy() {
           <p className="text-muted-foreground">
             환불을 원하시면{" "}
             <a
-              href="mailto:hi@naru.pub"
+              href="mailto:hello@naru.pub"
               className="text-primary underline hover:text-primary/80"
             >
-              hi@naru.pub
+              hello@naru.pub
             </a>{" "}
             으로 결제하신 계정의 아이디와 결제일을 알려주세요. 3영업일 이내에
             처리해 드립니다. 페이지 아래 사업자정보에 적힌 유선번호로 연락하셔도
