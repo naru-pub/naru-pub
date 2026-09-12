@@ -19,10 +19,10 @@ async function load(reset = false) {
     db ??= await connect();
     const page = await db.collection(guestbook ? "guestbook" : "posts").list({
       limit: 20,
-      ...(!guestbook && category ? { where: { category } } : {}),
+      where: category ? { category } : {},
       orderBy: "createdAt",
       direction: "desc",
-      ...(reset ? {} : cursor ? { pageToken: cursor } : {}),
+      pageToken: cursor,
     });
     if (reset) $("entries").replaceChildren();
     for (const doc of page.documents) {

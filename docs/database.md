@@ -143,14 +143,20 @@ Unversioned SDK URLs are not served. Existing `/sdk/naru-data.js` imports must b
 
 SDK versioning does not itself version the backend protocol. Version 1.0.0 uses `/api/data/:site`; preserve existing public CRUD behavior when extending it. Breaking server changes should introduce a separate API version.
 
-SDK 1.0.0 supports synchronous write validators through `schemas`, atomic owner writes through `owner.batch()`, upload progress/cancellation, and file metadata. A development control-plane override is accepted only for HTTP loopback origins:
+SDK 1.0.0 supports per-collection `parse`/`map` definitions, atomic owner writes through `owner.batch()`, upload progress/cancellation, and file metadata. A development control-plane override is accepted only for HTTP loopback origins:
 
 ```js
 const db = createDatabase({
   site: "your-login-name",
   controlPlaneOrigin: "http://localhost:3000",
-  schemas: {
-    posts: (post) => typeof post?.title === "string" && post.title.length > 0,
+  collections: {
+    posts: {
+      parse(post) {
+        if (typeof post?.title !== "string" || !post.title)
+          throw new TypeError("A post needs a title.");
+        return post;
+      },
+    },
   },
 });
 
@@ -160,7 +166,9 @@ await owner.batch([
 ]);
 ```
 
-Schema validators run before requests and are developer feedback, not a security boundary. Batch operations commit in one server transaction. `NaruDataError.code` provides stable codes including `UNREGISTERED_REDIRECT_URI`, `COLLECTION_NOT_AUTHORIZED`, and `OWNER_SESSION_EXPIRED`.
+Parsers run before full writes and are developer feedback, not a security boundary. Batch operations commit in one server transaction. `NaruDataError.code` provides stable codes including `UNREGISTERED_REDIRECT_URI`, `COLLECTION_NOT_AUTHORIZED`, and `OWNER_SESSION_EXPIRED`. An owner client reports a 401, its deadline passing, and sign-out through `onSessionChange`, with the deadline at `session.expiresAt`; applications do not need to catch `OWNER_SESSION_EXPIRED` separately.
+
+The former `schemas` option, per-handle `collection(name, { parse })` options, `serialize`, and `owner.expiresAt` were removed during 1.0.0 development. `createDatabase` and `collection` throw a `TypeError` naming the replacement rather than silently skipping validation.
 
 ## HTTP API
 
@@ -320,9 +328,13 @@ same bytes to everyone, so it is served with
 `Cache-Control: public, max-age=0, s-maxage=10` and the SDK lets the browser and
 any shared cache honour it. Anything carrying a credential, every write, and
 every error stays `no-store`, so an intermediary that ignores `Vary` can never
-replay one caller's authorized response to somebody else. Pass `fresh: true` on
-a read that must not see a stale copy — re-reading a list straight after your
-own write is the case that wants it.
+replay one caller's authorized response to somebody else.
+
+The SDK remembers every collection this browser writes — anonymous guestbook
+entries as well as owner edits, and writes whose response was lost — and reads
+that collection with `no-store` for the same ten seconds, so re-reading a list
+straight after your own write needs nothing extra. Pass `fresh: true` only when a
+read must not see a copy that is stale because of a write made somewhere else.
 
 That window is also the lag on a permission change: changing a collection from
 `world` to `admin` stops new reads immediately, but a shared cache may keep
@@ -384,11 +396,11 @@ Metadata timestamp ties use document ID in the last direction. JSON-field values
 
 Pass `nextPageToken` unchanged as `pageToken` with the same collection, ordering, and filters. Page tokens are opaque, query-bound continuation state: applications must not inspect or construct them. They preserve PostgreSQL timestamp precision and the last ID, remain usable after that document is deleted, and are bound to the collection's internal ID, every sort key and direction, and the canonical filter fingerprint. Mismatches and malformed tokens return 400. They are not credentials; read permissions are checked on every request. Changing page size is allowed.
 
-A null page token marks the end. Cache prior pages or their starting tokens for a Previous button. There are no page numbers or offsets. Use `includeTotal: true` when a page and its filtered total are both needed; use `count({ where })` when only the number is needed. Reset the token and displayed results when switching sort order or filters. Pagination is not a snapshot: newly inserted records before the token require a refresh; changing a sort value during traversal can skip or repeat a record.
+A null page token marks the end, and passing `null` as `pageToken` reads the first page, so a "load more" loop can hand `nextPageToken` straight back without special-casing it. Cache prior pages or their starting tokens for a Previous button. There are no page numbers or offsets. Use `includeTotal: true` when a page and its filtered total are both needed; use `count({ where })` when only the number is needed. Reset the token and displayed results when switching sort order or filters. Pagination is not a snapshot: newly inserted records before the token require a refresh; changing a sort value during traversal can skip or repeat a record.
 
 ## Define a collection once
 
-Use `collections` when an application has a domain model. `parse` validates and normalizes reads, `serialize` prepares writes, and `map` turns the document envelope into the value the UI consumes. Every handle, including owner handles and batches, shares the definition.
+Register validation once in `createDatabase({ collections })`; there is no per-handle alternative. `parse` validates and normalizes reads, and also checks `add`, `set` and batch `add`/`set` before any request (the JSON you pass is what is stored, not the parser's return value). `map` turns the parsed document envelope into the value the UI consumes. Patches, counts and deletes skip both. Every handle, including owner handles and batches, shares the definition.
 
 ```js
 const db = createDatabase({
@@ -396,12 +408,14 @@ const db = createDatabase({
   collections: {
     posts: {
       parse: parsePost,
-      serialize: ({ heading, ...post }) => ({ ...post, title: heading }),
       map: (document) => ({ id: document.id, ...document.data }),
     },
   },
 });
+const posts = await db.collection("posts").list(); // mapped values
 ```
+
+In TypeScript the return type of `parse` becomes the collection's document type; annotate `map`'s parameter (`(document: Document<Post>) => …`) to type its result. Unregistered collections accept an explicit type, `db.collection<Post>("posts")`.
 
 ## Cancel superseded reads
 

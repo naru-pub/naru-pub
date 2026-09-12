@@ -84,18 +84,16 @@ export interface RequestOptions {
   /**
    * 캐시를 건너뛰고 서버에 직접 묻습니다.
    *
-   * 누구나 읽을 수 있는 컬렉션을 로그인 없이 읽으면, 그 응답은 잠깐 동안 캐시될
+   * 누구나 읽을 수 있는 컬렉션을 로그인 없이 읽으면, 그 응답은 10초 동안 캐시될
    * 수 있습니다. 방문자가 많은 사이트에서 같은 목록을 사람 수만큼 데이터베이스에
-   * 묻지 않기 위해서입니다. 대신 방금 내가 쓴 것을 곧바로 다시 읽을 때는 조금
-   * 지난 목록이 올 수 있으므로, 그럴 때 `fresh: true`를 넘기세요.
+   * 묻지 않기 위해서입니다.
+   *
+   * 이 브라우저에서 방금 쓴 컬렉션은 로그인 여부와 상관없이 SDK가 그 10초 동안
+   * 알아서 캐시를 건너뛰므로, 내가 쓴 것을 다시 읽으려고 이 옵션을 넘길 필요는
+   * 없습니다. 다른 탭이나 기기에서 쓴 것을 곧바로 봐야 할 때만 쓰세요.
    *
    * 관리자 토큰으로 보내는 요청과 쓰기는 원래 캐시를 쓰지 않으므로 영향이
    * 없습니다.
-   *
-   * ```js
-   * await guestbook.add({ message });
-   * const page = await guestbook.list({ fresh: true });
-   * ```
    */
   fresh?: boolean;
 }
@@ -165,7 +163,8 @@ export interface RangeFilter<T extends string | number = string | number> {
   lte?: T;
 }
 
-/** 최상위 필드에 조건을 최대 5개까지 걸고 AND로 묶습니다. 스칼라 값은 정확히
+/** 최상위 필드에 조건을 최대 5개까지 걸고 AND로 묶습니다. 빈 객체 `{}`는 거르지
+ * 않는다는 뜻이라, 조건을 조립하다 아무것도 남지 않아도 그대로 넘기면 됩니다. 스칼라 값은 정확히
  * 같은지 보고, 비교 객체는 범위를 봅니다. 한 필드의 두 경계는 타입이 같아야
  * 합니다.
  *
@@ -270,8 +269,9 @@ export interface ListOptions<T = Json> extends QueryOptions<T> {
   /** 한 쪽에 담을 문서 수입니다. 기본값은 50이고, 지금 서버가 받는 최댓값은
    * 100입니다. 한도는 서버가 정하며 넘으면 서버가 400으로 거절합니다. */
   limit?: number;
-  /** 같은 컬렉션, 같은 정렬, 같은 필터에서 받은 페이지 토큰입니다. */
-  pageToken?: string;
+  /** 같은 컬렉션, 같은 정렬, 같은 필터에서 받은 페이지 토큰입니다. `null`은
+   * 첫 쪽이므로 앞선 쪽의 `nextPageToken`을 그대로 넘기면 됩니다. */
+  pageToken?: string | null;
   /** 참이면 같은 필터의 전체 개수를 응답의 `total`에 함께 받습니다. */
   includeTotal?: boolean;
 }
@@ -280,11 +280,12 @@ export interface ListOptions<T = Json> extends QueryOptions<T> {
  * 컬렉션 하나를 가리키는 손잡이입니다. `Database.collection`에서 얻으며,
  * 손잡이를 만드는 것만으로는 요청이 일어나지 않습니다.
  *
- * `T`는 저장하려는 문서의 형태입니다. 쓰기의 타입을 잡아 주고 읽기에도 그대로
- * 적용되지만, 서버는 이를 검사하지 않습니다. `T`를 바꾸기 전에 저장한 문서는
- * 예전 형태 그대로 돌아옵니다.
+ * `T`는 저장하려는 문서의 형태이고 `M`은 읽어서 돌려받는 값입니다.
+ * `createDatabase`의 `collections`에 등록한 `parse`와 `map`에서 추론되며,
+ * 등록하지 않으면 `T`는 검사되지 않는 약속일 뿐입니다. 서버는 이를 검사하지
+ * 않습니다.
  */
-export interface Collection<T = Json, M = Document<T>, W = T> {
+export interface Collection<T = Json, M = Document<T>> {
   /**
    * ID로 문서 하나를 가져옵니다.
    *
@@ -295,7 +296,7 @@ export interface Collection<T = Json, M = Document<T>, W = T> {
    * 한 쪽을 가져옵니다.
    *
    * 컬렉션 끝에 이르면 `nextPageToken`이 `null`입니다. 그 값을 그대로 `pageToken`으로
-   * 넘기되 `where`, `orderBy`, `direction`은 똑같이 유지하세요. 커서는 그것을
+   * 넘기면 되고, `null`은 첫 쪽이라는 뜻입니다. 이때 `where`, `orderBy`, `direction`은 똑같이 유지하세요. 커서는 그것을
    * 만든 질의에 묶여 있어서, 필터가 달라지면 400으로 거부됩니다. 쪽 크기는
    * 중간에 바꿔도 됩니다.
    *
@@ -303,11 +304,11 @@ export interface Collection<T = Json, M = Document<T>, W = T> {
    * 문서는 처음부터 다시 읽어야 보입니다.
    *
    * ```js
-   * let pageToken;
+   * let pageToken = null;
    * do {
    *   const page = await posts.list({ limit: 20, pageToken });
    *   render(page.documents);
-   *   pageToken = page.nextPageToken ?? undefined;
+   *   pageToken = page.nextPageToken;
    * } while (pageToken);
    * ```
    */
@@ -343,23 +344,25 @@ export interface Collection<T = Json, M = Document<T>, W = T> {
    * 서버가 매긴 UUID로 문서를 새로 만듭니다.
    *
    * 새로 만들기만 하므로 기존 문서를 덮어쓰지 않습니다. 읽기 권한도 필요 없어서,
-   * 아무도 목록을 볼 수 없는 컬렉션에도 방명록을 만들 수 있습니다.
+   * 아무도 목록을 볼 수 없는 컬렉션에도 방명록을 만들 수 있습니다. 등록한
+   * `parse`가 요청 전에 문서를 검사합니다.
    */
-  add(data: W, options?: RequestOptions): Promise<Written>;
+  add(data: T, options?: RequestOptions): Promise<Written>;
   /**
    * 문서 전체를 바꾸고, 없으면 새로 만듭니다.
    *
    * 합치기가 아니라 교체입니다. `data`에 없는 필드는 사라집니다. 문서의 일부만
    * 바꾸려면 `Collection.update`를 쓰세요. 교체해도 `createdAt`은 남습니다.
+   * 등록한 `parse`가 요청 전에 문서를 검사합니다.
    */
   set(
     id: string,
-    data: W,
+    data: T,
     options?: RequestOptions & Conditional,
   ): Promise<Written>;
   /** 얕은 합치기입니다. 패치에 있는 필드가 저장된 필드를 대신하고, `unset`에
    * 적은 이름은 지워집니다. 문서가 이미 있고 JSON 객체를 담고 있어야 합니다.
-   * 패치는 조각이라 문서 전체를 보는 schemas 검사기는 실행되지 않습니다.
+   * 패치는 조각이라 문서 전체를 보는 `parse`는 실행되지 않습니다.
    *
    * 합치기는 한 겹까지입니다. 패치 안의 중첩 객체는 저장된 중첩 객체에 섞이지
    * 않고 통째로 대신합니다.
@@ -389,45 +392,88 @@ export interface Collection<T = Json, M = Document<T>, W = T> {
  * 묶음 쓰기와 미디어 라이브러리는 여기 없습니다. 둘 다 관리자 토큰이 있어야
  * 하므로, 익명 클라이언트에 달려 있어 봐야 거절만 돌려받습니다.
  * `completeOwnerSignIn()`이 돌려주는 OwnerDatabase에서 쓰세요. */
-export interface Database {
-  /** T만 지정하면 읽은 값을 검증하지 않습니다. parse를 지정하면 반환 타입에서
-   * T를 추론하고 get, list, all로 읽는 각 문서의 data에 실행합니다. */
-  collection<T = Json, M = Document<T>, W = T>(
-    name: string,
-    options?: CollectionOptions<T, M, W>,
-  ): Collection<T, M, W>;
+export interface Database<C extends CollectionDefinitions = {}> {
+  /** 등록한 컬렉션은 `parse`와 `map`에서 타입을 추론하고 읽기와 쓰기에 둘을
+   * 실행합니다. 검사와 변환은 여기가 아니라 `createDatabase`의 `collections`에
+   * 한 번 등록하므로, 관리자 클라이언트도 같은 규칙을 씁니다. */
+  collection<N extends Extract<keyof C, string>>(
+    name: N,
+  ): Collection<DefinedData<C[N]>, DefinedDocument<C[N]>>;
+  /** 등록하지 않은 컬렉션입니다. `T`는 검사되지 않는 타입 표시입니다. */
+  collection<T = Json>(name: string): Collection<T>;
 }
 
-/** 선택적인 읽기 검사입니다. 서버의 스키마나 쓰기 검사를 바꾸지 않습니다. */
-export interface CollectionOptions<T, M = Document<T>, W = T> {
+/** 동기 함수가 돌려줄 수 있는 값입니다. `then`이 있는 값, 곧 Promise는
+ * 빠집니다. */
+export type Synchronous =
+  | void
+  | null
+  | undefined
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | (object & { then?: never });
+
+/**
+ * 컬렉션 하나를 읽고 쓰는 규칙입니다. 서버의 스키마나 쓰기 검사를 바꾸지
+ * 않습니다.
+ *
+ * TypeScript에서는 `parse`의 반환 타입이 컬렉션의 문서 타입이 됩니다. `map`의
+ * 인자는 추론되지 않으니 `Document<Post>`처럼 적어 주세요.
+ *
+ * ```js
+ * const db = createDatabase({
+ *   site: "alice",
+ *   collections: {
+ *     posts: {
+ *       parse(data) {
+ *         if (typeof data?.title !== "string") throw new TypeError("제목이 없습니다.");
+ *         return data;
+ *       },
+ *       map: (document) => ({ ...document.data, id: document.id }),
+ *     },
+ *   },
+ * });
+ * const post = await db.collection("posts").get("hello"); // post.title
+ * ```
+ */
+export interface CollectionDefinition {
   /** JSON을 검사한 뒤 사용할 값을 반환하는 동기 함수입니다. 검사에 실패하면
    * 오류를 던지세요. false나 undefined도 정상 반환값이며 실패 신호가 아닙니다.
-   * 반환값이 문서의 data가 되고 ID, 시각, 버전은 서버 값 그대로 유지됩니다.
    *
-   * 오류나 Promise를 반환하면 DOCUMENT_VALIDATION_FAILED 오류가 납니다.
-   * 오류의 collection, documentId, cause에서 실패 위치와 원인을 확인하세요.
-   * list와 all은 한 쪽을 전부 검사한 뒤 반환하므로 잘못된 문서를 건너뛰지 않습니다.
-   * count와 쓰기에는 실행되지 않습니다. 변환된 값도 저장하려면 JSON이어야 합니다.
+   * `get`, `list`, `all`이 읽은 각 문서의 data에 실행하고, 반환값이 문서의 data가
+   * 됩니다. ID, 시각, 버전은 서버 값 그대로입니다. 읽기에서 오류를 던지거나
+   * Promise를 반환하면 DOCUMENT_VALIDATION_FAILED 오류가 납니다. 오류의
+   * collection, documentId, cause에서 실패 위치와 원인을 확인하세요. list와
+   * all은 한 쪽을 전부 검사한 뒤 반환하므로 잘못된 문서를 건너뛰지 않습니다.
    *
-   * ```ts
-   * const posts = db.collection("posts", {
-   *   parse(data) {
-   *     if (!data || typeof data !== "object" || Array.isArray(data) ||
-   *         typeof data.title !== "string") throw new Error("title must be a string");
-   *     return { title: data.title };
-   *   },
-   * });
-   * const post = await posts.get("hello"); // post.data.title: string
-   * ```
-   */
-  parse?: (
-    data: Json,
-  ) => T & (T extends PromiseLike<unknown> ? never : unknown);
-  /** 완성된 쓰기 값을 저장할 JSON으로 바꾸는 동기 함수입니다. */
-  serialize?: (data: W) => Json;
-  /** parse 뒤의 문서와 서버 메타데이터를 애플리케이션 값으로 바꿉니다. */
-  map?: (document: Document<T>) => M;
+   * `add`, `set`과 묶음의 `add`, `set`은 요청 전에 같은 함수로 문서를 검사하고,
+   * 던진 오류를 그대로 전달합니다. 반환값은 저장되지 않고 넘긴 JSON이 그대로
+   * 저장됩니다. 조각인 `update`, 그리고 `count`와 `delete`에는 실행되지 않습니다. */
+  parse?(data: Json): Synchronous;
+  /** parse 뒤의 문서와 서버 메타데이터를 애플리케이션 값으로 바꾸는 동기
+   * 함수입니다. 읽기에만 실행됩니다. */
+  map?(document: Document<never>): Synchronous;
 }
+
+/** 컬렉션 이름마다 하나씩 등록하는 규칙입니다. */
+export type CollectionDefinitions = { [name: string]: CollectionDefinition };
+
+/** 규칙의 `parse`가 만드는 값이며, `parse`가 없으면 Json입니다. */
+export type DefinedData<D> = D extends {
+  parse(data: Json): infer T;
+}
+  ? T
+  : Json;
+
+/** 규칙의 `map`이 만드는 값이며, `map`이 없으면 문서입니다. */
+export type DefinedDocument<D> = D extends {
+  map(document: never): infer M;
+}
+  ? M
+  : Document<DefinedData<D>>;
 
 /** `OwnerDatabase.batch`에 담기는 작업 하나입니다. 문서 하나를 다루는 메서드와
  * 짝을 이루되 컬렉션을 작업마다 적으므로, 한 묶음이 여러 컬렉션에 걸칠 수
@@ -524,8 +570,8 @@ export interface FileListOptions extends RequestOptions {
   /** 한 쪽에 담을 파일 수입니다. 기본값은 50이고, 지금 서버가 받는 최댓값은
    * 100입니다. 한도는 서버가 정하며 넘으면 서버가 400으로 거절합니다. */
   limit?: number;
-  /** 같은 정렬, 같은 필터에서 받은 페이지 토큰입니다. */
-  pageToken?: string;
+  /** 같은 정렬, 같은 필터에서 받은 페이지 토큰입니다. `null`은 첫 쪽입니다. */
+  pageToken?: string | null;
 }
 
 /** 관리자 세션에서만 닿을 수 있는 미디어 라이브러리입니다. */
@@ -665,15 +711,26 @@ export interface FileStore {
  * 토큰은 탭 안에서만 사는 `sessionStorage`에 있고, 그 페이지의 어떤 스크립트든
  * 읽을 수 있습니다. 편집 페이지에는 외부 스크립트를 두지 마세요.
  */
-export interface OwnerDatabase extends Database {
-  /** 관리자 세션이 끝나는 시각(최대 24시간)이며 유닉스 밀리초입니다. */
-  expiresAt: number;
-  /** 현재 관리자 세션 상태. 401, 만료, 로그아웃이 즉시 반영됩니다. */
+export interface OwnerDatabase<
+  C extends CollectionDefinitions = {},
+> extends Database<C> {
+  /** 현재 관리자 세션 상태. 401, 만료, 로그아웃이 즉시 반영됩니다.
+   * `expiresAt`은 세션이 끝나는 시각(최대 24시간)이며 유닉스 밀리초입니다. */
   readonly session: Readonly<{
     status: "active" | "expired" | "signed-out";
     expiresAt: number;
   }>;
-  /** 현재 상태를 즉시 한 번 알리고 이후 변경을 구독합니다. */
+  /** 현재 상태를 즉시 한 번 알리고 이후 변경을 구독합니다.
+   *
+   * 401 응답, 만료 시각 도달, 로그아웃을 모두 여기서 알리므로 세션이 끝났는지
+   * 따로 확인하거나 `OWNER_SESSION_EXPIRED` 오류를 따로 잡을 필요가 없습니다.
+   *
+   * ```js
+   * owner.onSessionChange(({ status }) => {
+   *   if (status !== "active") hideAdminTools();
+   * });
+   * ```
+   */
   onSessionChange(
     listener: (session: OwnerDatabase["session"]) => void,
   ): () => void;
@@ -720,24 +777,22 @@ export const CONTROL_PLANE_ORIGIN: "https://naru.pub";
  * ```
  *
  * @throws `site`가 올바른 로그인 이름이 아니거나, `controlPlaneOrigin`이
- * `https://naru.pub`도 HTTP 루프백 출처도 아니거나, `schemas`가 함수를 담은
- * 객체가 아니면 TypeError.
+ * `https://naru.pub`도 HTTP 루프백 출처도 아니거나, `collections`가 `parse`와
+ * `map` 함수만 담은 규칙의 객체가 아니면 TypeError.
  */
-export function createDatabase(options: {
+export function createDatabase<C extends CollectionDefinitions = {}>(options: {
   /** 사이트의 나루 로그인 이름입니다. `내-로그인-이름.naru.pub`의 앞부분입니다. */
   site: string;
   /** 개발용 우회 설정입니다. HTTP 루프백 출처만 받습니다. */
   controlPlaneOrigin?: string;
-  /** 컬렉션에 쓰기 전에 실행되는 동기 검사기입니다. false를 돌려주거나 오류를
-   * 던지면 그 문서를 거부합니다. 반환값은 boolean 또는 undefined여야 하며,
-   * Promise와 다른 반환값은 요청 전에 TypeError로 거부합니다.
-   * 클라이언트를 만들 때 직접 정의된 함수 속성을 검사하고 복사합니다.
-   * 상속된 속성은 무시하고 getter와 함수가 아닌 속성은 거부합니다.
-   * 이후 원본 schemas를 바꿔도 이미 만든 클라이언트에는 영향을 주지 않습니다. */
-  schemas?: Record<string, (data: Json) => boolean | void>;
-  /** 컬렉션별 읽기 검사, 쓰기 직렬화, 문서 변환을 한 번 등록합니다. */
-  collections?: Record<string, CollectionOptions<any, any, any>>;
-}): Database & {
+  /** 컬렉션별 검사와 변환을 한 번 등록합니다. 공개 클라이언트와 관리자
+   * 클라이언트가 함께 씁니다.
+   *
+   * 클라이언트를 만들 때 직접 정의된 속성을 검사하고 복사합니다. 상속된 속성은
+   * 무시하고 getter와 함수가 아닌 속성은 거부합니다. 이후 원본을 바꿔도 이미
+   * 만든 클라이언트에는 영향을 주지 않습니다. */
+  collections?: C & CollectionDefinitions;
+}): Database<C> & {
   /** 화면을 전환합니다. 등록해 둔 콜백 페이지에서 completeOwnerSignIn()을
    * 부르세요.
    *
@@ -768,5 +823,7 @@ export function createDatabase(options: {
    * 만료 시각이 늘어나지는 않으며, 갱신 토큰도 없습니다. 세션이 끝나면 다시
    * 로그인해야 합니다. 동시에 호출하면 첫 호출의 요청 옵션을 공유합니다.
    * 취소나 시간 초과로 토큰 교환에 실패하면 다시 로그인하세요. */
-  completeOwnerSignIn(options?: RequestOptions): Promise<OwnerDatabase | null>;
+  completeOwnerSignIn(
+    options?: RequestOptions,
+  ): Promise<OwnerDatabase<C> | null>;
 };

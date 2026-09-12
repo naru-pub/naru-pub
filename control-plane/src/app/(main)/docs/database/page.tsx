@@ -297,14 +297,17 @@ export default function DatabaseDocs() {
                         "count({ where })",
                         "조건에 맞는 문서 개수를 서버에서 계산 → 숫자",
                       ],
-                      ["add(data)", "서버 ID로 새 문서 생성 → { id, version }"],
+                      [
+                        "add(data)",
+                        "서버 ID로 새 문서 생성 → { id, version, createdAt, updatedAt }",
+                      ],
                       [
                         "set(id, data, { ifVersion })",
-                        "지정 ID로 생성 또는 전체 교체 → { id, version }",
+                        "지정 ID로 생성 또는 전체 교체 → { id, version, createdAt, updatedAt }",
                       ],
                       [
                         "update(id, patch, { unset, ifVersion })",
-                        "지정한 필드만 병합하고 unset에 적은 필드는 삭제 → { id, version }. 문서가 없으면 404",
+                        "지정한 필드만 병합하고 unset에 적은 필드는 삭제 → { id, version, createdAt, updatedAt }. 문서가 없으면 404",
                       ],
                       [
                         "delete(id, { ifVersion })",
@@ -429,7 +432,10 @@ const mine = await db.collection("posts").list({
               </p>
               <p>
                 <code>nextPageToken</code>가 <code>null</code>이면 마지막
-                페이지입니다. 이전 페이지는 페이지 내용이나 시작 커서를 저장해
+                페이지입니다. <code>pageToken</code>에 <code>null</code>을
+                넘기면 첫 페이지를 읽으므로, 받은 값을 가르지 않고 그대로 다시
+                넘기면 됩니다. <code>where: {"{}"}</code>도 필터가 없다는
+                뜻입니다. 이전 페이지는 페이지 내용이나 시작 커서를 저장해
                 구현할 수 있습니다. 페이지 번호와 offset은 제공하지 않습니다.
                 목록과 개수가 함께 필요하면 <code>includeTotal: true</code>,
                 개수만 필요하면 <code>count()</code>를 쓰세요. 모든 문서를
@@ -524,7 +530,7 @@ try {
                   호출하고, 반환받은 관리자 클라이언트로 문서를 저장합니다.
                 </li>
               </ol>
-              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\n\nasync function login() {\n  await db.signInAsOwner({\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts", "drafts"],\n  });\n}\n\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
+              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\nowner?.onSessionChange(({ status }) => {\n  if (status !== "active") owner = null;\n});\n\nasync function login() {\n  await db.signInAsOwner({\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts", "drafts"],\n  });\n}\n\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
               <p>
                 콜백은 본인 나루 사이트 또는 활성화된 인증 도메인의 HTTPS
                 주소여야 합니다. 쿼리·해시·와일드카드는 사용할 수 없습니다.
@@ -537,9 +543,12 @@ try {
                 같은 관리자 페이지를 새로고침해도 복원합니다. 자동 갱신은 없으며
                 새로고침하거나 요청해도 만료 시각은 늘어나지 않습니다. 서버는 매
                 요청마다 권한과 폐기 여부를 확인합니다.
-                <code>owner.expiresAt</code>은 최대 24시간인 관리자 토큰의 만료
-                시각입니다(Unix 밀리초). 나루 로그인 세션이 먼저 만료되면 관리자
-                세션도 종료됩니다.
+                <code>owner.session.expiresAt</code>은 최대 24시간인 관리자
+                토큰의 만료 시각입니다(Unix 밀리초). 나루 로그인 세션이 먼저
+                만료되면 관리자 세션도 종료됩니다. 401 응답, 만료 시각 도달,
+                로그아웃은 모두 <code>owner.onSessionChange()</code>로
+                알려지므로, 여기서 관리자 화면을 접으면 요청마다 만료를 따로
+                확인하지 않아도 됩니다.
               </p>
               <p>
                 제어판에서 관리자 페이지마다 ‘관리자 토큰 유효 시간’을
@@ -585,27 +594,25 @@ try {
               <Code>{`const image = await owner.files.upload(fileInput.files[0], {
   signal: abortController.signal,
   onProgress: ({ loaded, total }) => showProgress(loaded / total),
-  metadata: { altText: "설명", references: [{ collection: "posts", id: "hello" }] },
+  metadata: { altText: "설명", postId: "hello" },
 });
 await owner.collection("posts").set("hello", {
   title: "안녕하세요",
   coverImage: image.url,
 });
 
-// metadata는 목록에도 함께 돌아오므로, 어떤 글의 이미지인지 되짚어
-// 글을 지울 때 남은 파일을 함께 정리할 수 있습니다.
-const files = await owner.files.list();
-const mine = files.filter((file) =>
-  file.metadata?.references?.some((reference) => reference.id === "hello"),
-);
-for (const file of mine) await owner.files.delete(file.id);
+// metadata의 최상위 스칼라 값은 서버가 거를 수 있으므로, 글을 지울 때
+// 라이브러리를 통째로 받지 않고 그 글의 이미지만 찾아 정리합니다.
+const { files } = await owner.files.list({ where: { postId: "hello" } });
+for (const file of files) await owner.files.delete(file.id);
 
 const { bytes, maxBytes, count } = await owner.files.usage();`}</Code>
               <p>
                 <code>metadata</code>에 넣은 값은 <code>files.list()</code>와{" "}
-                <code>files.get()</code>에 그대로 돌아옵니다. 어떤 문서가 그
-                파일을 쓰는지 적어 두면, 문서를 삭제할 때 딸린 파일도 함께 지워
-                저장 용량이 새는 것을 막을 수 있습니다.{" "}
+                <code>files.get()</code>에 그대로 돌아오고, 최상위 스칼라 값은{" "}
+                <code>files.list({"{ where }"})</code>로 서버에서 거를 수
+                있습니다. 어떤 문서가 그 파일을 쓰는지 적어 두면, 문서를 삭제할
+                때 딸린 파일도 함께 지워 저장 용량이 새는 것을 막을 수 있습니다.{" "}
                 <code>files.usage()</code>는 현재 사용량과 한도를 알려줍니다.
               </p>
               <h3 className="text-lg font-semibold">원자적 batch와 검증</h3>
@@ -614,14 +621,25 @@ const { bytes, maxBytes, count } = await owner.files.usage();`}</Code>
                 한 트랜잭션으로 처리합니다. 하나라도 실패하면 모두 취소되므로,
                 <code>ifVersion</code>이 어긋난 항목 하나가 앞선 저장까지 함께
                 되돌립니다.
-                <code>createDatabase()</code>의 <code>schemas</code>에는 요청 전
-                실행할 동기 검증 함수를 지정할 수 있습니다. 클라이언트 검증은
-                개발 편의 기능이며 보안 경계가 아닙니다.
+                <code>createDatabase()</code>의 <code>collections</code>에
+                컬렉션마다 동기 함수 <code>parse</code>를 한 번 등록하면, 읽은
+                문서를 검사·정리하고 <code>add</code>·<code>set</code>과 batch의
+                같은 작업도 요청 전에 검사합니다. 오류를 던지면 거부됩니다.{" "}
+                <code>map</code>은 읽은 문서를 화면에서 쓸 값으로 바꿉니다. 공개
+                클라이언트와 관리자 클라이언트가 같은 규칙을 쓰며, 클라이언트
+                검증은 개발 편의 기능이지 보안 경계가 아닙니다.
               </p>
               <Code>{`const db = createDatabase({
   site: "내-로그인-이름",
-  schemas: {
-    posts: (post) => typeof post?.title === "string" && post.title.length > 0,
+  collections: {
+    posts: {
+      parse(post) {
+        if (typeof post?.title !== "string" || !post.title)
+          throw new TypeError("제목을 입력하세요.");
+        return post;
+      },
+      map: (document) => ({ ...document.data, id: document.id }),
+    },
   },
 });
 

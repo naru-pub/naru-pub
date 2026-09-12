@@ -28,7 +28,7 @@
         site: "sdk-browser-test",
       }).completeOwnerSignIn();
       output.textContent =
-        owner?.expiresAt === Number(reloadDeadline)
+        owner?.session.expiresAt === Number(reloadDeadline)
           ? "PASS actual page reload restores the original deadline"
           : "FAIL page reload changed or lost the deadline";
     } finally {
@@ -68,14 +68,14 @@
       const db = createDatabase({ site: "sdk-browser-test" });
       const owner = await db.completeOwnerSignIn();
       check(
-        owner.expiresAt === expiresAt,
+        owner.session.expiresAt === expiresAt,
         "native sessionStorage restores exact expiry",
       );
       const restored = await createDatabase({
         site: "sdk-browser-test",
       }).completeOwnerSignIn();
       check(
-        restored.expiresAt === expiresAt,
+        restored.session.expiresAt === expiresAt,
         "new SDK instance preserves session deadline",
       );
       const calls = [];
@@ -166,7 +166,12 @@
         return Response.json(
           options.method === "DELETE"
             ? { success: true }
-            : { id: "one", version: 3 },
+            : {
+                id: "one",
+                version: 3,
+                createdAt: "2026-01-01T00:00:00Z",
+                updatedAt: "2026-01-01T00:00:00Z",
+              },
         );
       };
       await owner

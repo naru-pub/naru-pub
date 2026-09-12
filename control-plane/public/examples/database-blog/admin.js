@@ -48,7 +48,7 @@ function updateUI() {
   for (const id of ["title", "body", "category"]) $(id).readOnly = busy;
   $("manage-list").disabled = busy || !owner;
   $("auth").textContent = owner
-    ? `관리자 로그인됨 · ${new Date(owner.expiresAt).toLocaleTimeString("ko-KR")}까지`
+    ? `관리자 로그인됨 · ${new Date(owner.session.expiresAt).toLocaleTimeString("ko-KR")}까지`
     : "글을 관리하려면 사이트 소유자로 로그인하세요.";
   $("editing").textContent =
     state.kind === "posts"
@@ -72,7 +72,6 @@ async function run(action) {
   try {
     await action();
   } catch (e) {
-    if (e.status === 401) owner = null;
     message(errorMessage(e));
   } finally {
     busy = false;
@@ -101,7 +100,7 @@ async function loadList(reset = true) {
     limit: 20,
     orderBy: "updatedAt",
     direction: "desc",
-    ...(cursor ? { pageToken: cursor } : {}),
+    pageToken: cursor,
   });
   for (const doc of page.documents) {
     const row = element("div", "", "manage-row");
@@ -149,13 +148,19 @@ async function refreshAfterWrite(notice) {
     await loadList(true);
     message(notice);
   } catch (e) {
-    if (e.status === 401) owner = null;
     message(`${notice} 목록 갱신에 실패했습니다. ${errorMessage(e)}`);
   }
 }
 try {
   db = await connect();
   owner = await db.completeOwnerSignIn();
+  // A 401, the deadline passing and signing out all end up here, so no request
+  // has to check for an expired session itself.
+  owner?.onSessionChange(({ status }) => {
+    if (status === "active") return;
+    owner = null;
+    updateUI();
+  });
   message(
     owner ? "승인되었습니다. 공개 글과 비공개 초안을 관리할 수 있습니다." : "",
   );
@@ -261,18 +266,15 @@ $("post-form").addEventListener("submit", (event) => {
     if (!$("title").value.trim() || !$("body").value.trim())
       throw new Error("제목과 본문을 입력하세요.");
     saveLocal();
-    const result = await publishPost(owner, state.id, data(), state.hasDraft);
+    await publishPost(owner, state.id, data(), state.hasDraft);
     state.kind = "posts";
-    state.hasDraft = !!result.cleanupError;
+    state.hasDraft = false;
     dirty = false;
     saveLocal();
     $("view-post").href = `./post.html?id=${encodeURIComponent(state.id)}`;
     $("view-post").hidden = false;
-    if (result.cleanupError?.status === 401) owner = null;
     await refreshAfterWrite(
-      result.cleanupError
-        ? `글은 공개되었지만 비공개 초안 삭제에 실패했습니다. 같은 글을 다시 저장해 정리를 재시도하거나 초안 목록에서 삭제하세요. ${errorMessage(result.cleanupError)}`
-        : "공개 글을 저장했습니다. 계속 편집하거나 새 글을 작성할 수 있습니다.",
+      "공개 글을 저장했습니다. 계속 편집하거나 새 글을 작성할 수 있습니다.",
     );
   });
 });

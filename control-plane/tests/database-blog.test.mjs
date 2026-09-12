@@ -177,14 +177,14 @@ test("admin preserves draft across login, retries same ID, fails closed on expir
   assert.equal(requested.collections.join(), "posts,drafts");
   const writes = [];
   let failure = new Error("response lost");
-  const owner = {
-    expiresAt: Date.now() + 600000,
+  const owner = fakeOwner({
     async batch(operations) {
       const operation = operations[0];
       writes.push({ id: operation.id, data: operation.data });
+      if (failure?.status === 401) owner.expire();
       if (failure) throw failure;
     },
-  };
+  });
   const after = await page(
     "admin",
     { completeOwnerSignIn: async () => owner },
@@ -209,12 +209,12 @@ test("admin preserves draft across login, retries same ID, fails closed on expir
 });
 test("admin clears local authorization when server revocation fails", async () => {
   const app = await page("admin", {
-    completeOwnerSignIn: async () => ({
-      expiresAt: Date.now() + 600000,
-      signOut: async () => {
-        throw new Error("offline");
-      },
-    }),
+    completeOwnerSignIn: async () =>
+      fakeOwner({
+        signOut: async () => {
+          throw new Error("offline");
+        },
+      }),
   });
   await app.fire("logout", "click");
   assert.equal(app.$("publish").disabled, true);
@@ -247,7 +247,7 @@ test("malformed draft does not prevent owner callback completion", async () => {
     {
       completeOwnerSignIn: async () => {
         completed = true;
-        return { expiresAt: Date.now() + 600000 };
+        return fakeOwner();
       },
     },
     new Map([["naru:blog-draft:example:/blog/admin.html", "invalid JSON"]]),
@@ -286,9 +286,27 @@ test("category changes reset the cursor and preserve filters on subsequent pages
   assert.equal(calls[3].where.category, "일상");
   app.$("filter-category").value = "";
   await app.fire("filter-form", "submit");
-  assert.equal(calls[4].where, undefined);
+  assert.equal(Object.keys(calls[4].where).length, 0);
   assert.equal(calls[4].pageToken, undefined);
 });
+// Stands in for the SDK's owner session: a 401 ends it and tells listeners.
+function fakeOwner(methods = {}) {
+  const listeners = new Set();
+  const owner = {
+    session: { status: "active", expiresAt: Date.now() + 600000 },
+    onSessionChange(listener) {
+      listeners.add(listener);
+      listener(owner.session);
+      return () => listeners.delete(listener);
+    },
+    expire() {
+      owner.session = { ...owner.session, status: "expired" };
+      for (const listener of listeners) listener(owner.session);
+    },
+    ...methods,
+  };
+  return owner;
+}
 function editorBackend() {
   const rows = { posts: new Map(), drafts: new Map() },
     calls = [];
@@ -299,8 +317,7 @@ function editorBackend() {
     setFailure(fn) {
       failure = fn;
     },
-    owner: {
-      expiresAt: Date.now() + 600000,
+    owner: fakeOwner({
       async batch(operations) {
         for (const operation of operations) {
           const error = failure?.(operation.type, operation.collection);
@@ -348,7 +365,7 @@ function editorBackend() {
           },
         };
       },
-    },
+    }),
   };
 }
 test("server drafts survive publication failure; retry publishes same ID before cleanup", async () => {

@@ -83,14 +83,10 @@ posts.get("one", { timeoutMs: "1s" });
 // @ts-expect-error A controller is not a signal.
 posts.list({ signal: new AbortController() });
 
-createDatabase({
-  site: "alice",
-  schemas: { posts: () => true, notes: () => {} },
-});
-// @ts-expect-error Validators must finish synchronously.
-createDatabase({ site: "alice", schemas: { posts: async () => true } });
-// @ts-expect-error Validator results are boolean or undefined.
-createDatabase({ site: "alice", schemas: { posts: () => "valid" } });
+// @ts-expect-error Write validators moved into collections.<name>.parse.
+createDatabase({ site: "alice", schemas: { posts: () => true } });
+// @ts-expect-error Parsing is registered once, not per handle.
+db.collection("posts", { parse: () => ({ title: "hello" }) });
 
 // Query fields, equality values and range domains follow the collection type.
 // @ts-expect-error Misspelled field.
@@ -158,6 +154,7 @@ import type {
   BatchOperation,
   Written,
   OwnerDatabase,
+  Json,
 } from "../public/sdk/1.0.0/naru-data.js";
 const query: QueryOptions<Post> = {
   where: { title: "hello" },
@@ -227,37 +224,102 @@ const broadList: ListOptions = {
 };
 db.collection("loose").list(broadList);
 
-const parsedPosts = db.collection("posts", {
-  parse(data) {
-    if (
-      !data ||
-      typeof data !== "object" ||
-      Array.isArray(data) ||
-      typeof data.title !== "string"
-    )
-      throw new Error("invalid title");
-    return { title: data.title };
+const registered = createDatabase({
+  site: "alice",
+  collections: {
+    posts: {
+      parse(data) {
+        if (
+          !data ||
+          typeof data !== "object" ||
+          Array.isArray(data) ||
+          typeof data.title !== "string"
+        )
+          throw new Error("invalid title");
+        return { title: data.title };
+      },
+    },
+    cards: {
+      parse: (data): Post => data as unknown as Post,
+      map: (document: Document<Post>) => ({
+        ...document.data,
+        id: document.id,
+      }),
+    },
+    flags: { parse: () => false },
   },
 });
+const parsedPosts = registered.collection("posts");
 parsedPosts.get("one").then((document) => {
   const title: string = document.data.title;
   // @ts-expect-error Parser output determines the document type.
   document.data.missing;
 });
 parsedPosts.list({ where: { title: "hello" }, orderBy: "data.title" });
+parsedPosts.add({ title: "hello" });
+// @ts-expect-error Writes take the parsed shape.
+parsedPosts.add({ heading: "hello" });
 // @ts-expect-error Inferred fields constrain queries too.
 parsedPosts.count({ where: { title: 42 } });
-// @ts-expect-error Parser output must match an explicitly supplied type.
-db.collection<Post>("posts", { parse: () => ({ title: "hello" }) });
-// @ts-expect-error Asynchronous parsers are unsupported.
-db.collection("posts", { parse: async () => ({ title: "hello" }) });
-// @ts-expect-error Promise-returning functions are unsupported too.
-db.collection("posts", { parse: () => Promise.resolve({ title: "hello" }) });
-db.collection("flags", { parse: () => false })
+registered
+  .collection("cards")
+  .list({ pageToken: null })
+  .then(({ documents }) => {
+    // map output replaces the document, with server metadata folded in.
+    const id: string = documents[0].id;
+    const published: boolean = documents[0].published;
+  });
+registered
+  .collection("flags")
   .get("one")
   .then((document) => {
     const flag: boolean = document.data;
   });
+// Unregistered names on a registered client stay untyped JSON.
+registered
+  .collection("other")
+  .get("one")
+  .then((document) => {
+    const data: Json = document.data;
+  });
+registered.completeOwnerSignIn().then((admin) => {
+  if (!admin) return;
+  // The owner client carries the same registry.
+  admin
+    .collection("cards")
+    .get("one")
+    .then((card) => {
+      const title: string = card.title;
+    });
+  const deadline: number = admin.session.expiresAt;
+  // @ts-expect-error The deadline lives on session.
+  admin.expiresAt;
+});
+createDatabase({
+  site: "alice",
+  // @ts-expect-error Asynchronous parsers are unsupported.
+  collections: { posts: { parse: async () => ({ title: "hello" }) } },
+});
+createDatabase({
+  site: "alice",
+  // @ts-expect-error Promise-returning functions are unsupported too.
+  collections: { posts: { parse: () => Promise.resolve({ title: "hello" }) } },
+});
+createDatabase({
+  site: "alice",
+  // @ts-expect-error Writes store the application's JSON, so there is no serializer.
+  collections: { posts: { serialize: () => ({}) } },
+});
+createDatabase({
+  site: "alice",
+  collections: {
+    posts: {
+      parse: (data): Post => data as unknown as Post,
+      // @ts-expect-error An unannotated map has no document type to read from.
+      map: (document) => document.data.title,
+    },
+  },
+});
 
 // Untyped collections may remove arbitrary top-level JSON fields.
 db.collection("schemaless").update("one", {}, { unset: ["legacy"] });

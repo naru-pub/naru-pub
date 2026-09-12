@@ -68,26 +68,47 @@ function requestScope({ signal, timeoutMs = 30000, fresh } = {}) {
     },
   };
 }
+// Validates request options and rejects an already-cancelled call, for work that
+// has no single request of its own to scope.
+function precheck(options) {
+  const scope = requestScope(options);
+  try {
+    scope.check();
+  } finally {
+    scope.close();
+  }
+}
+const ID = /^[a-zA-Z0-9_-]{1,64}$/;
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const object = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
-const idValue = (value) =>
-  typeof value === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value);
+const idValue = (value) => typeof value === "string" && ID.test(value);
+const countValue = (value) => Number.isSafeInteger(value) && value >= 0;
+const loopback = (url) =>
+  url.protocol === "http:" &&
+  ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+// An owner token is opaque, and never outlives the day the server grants.
+const credentialsValue = (accessToken, expiresAt) =>
+  typeof accessToken === "string" &&
+  TOKEN.test(accessToken) &&
+  Number.isFinite(expiresAt) &&
+  expiresAt > Date.now() &&
+  expiresAt <= Date.now() + DAY_MS + 60000;
 const timestamp = (value) =>
   typeof value === "string" && Number.isFinite(Date.parse(value));
-const versioned = (value) =>
+// Writes carry the stamps they produced, so a caller rendering what it just
+// saved never has to invent a timestamp from the browser clock.
+const written = (value) =>
   object(value) &&
   idValue(value.id) &&
   Number.isSafeInteger(value.version) &&
   value.version > 0 &&
   timestamp(value.createdAt) &&
   timestamp(value.updatedAt);
-// Writes carry the stamps they produced, so a caller rendering what it just
-// saved never has to invent a timestamp from the browser clock.
-const written = versioned;
-const documentValue = (value) =>
-  versioned(value) && Object.hasOwn(value, "data");
+const documentValue = (value) => written(value) && Object.hasOwn(value, "data");
 const fileValue = (value) =>
-  versioned(value) &&
+  written(value) &&
   value.status === "ready" &&
   typeof value.name === "string" &&
   typeof value.contentType === "string" &&
@@ -95,78 +116,57 @@ const fileValue = (value) =>
   value.size > 0 &&
   typeof value.url === "string" &&
   Object.hasOwn(value, "metadata");
-const success = (value) => object(value) && value.success === true;
 const cursorValue = (value) =>
   value === null || (typeof value === "string" && value.length > 0);
-const usageValue = (value) =>
-  object(value) &&
-  ["bytes", "count", "pending", "maxBytes"].every(
-    (key) => Number.isSafeInteger(value[key]) && value[key] >= 0,
-  );
+// Every call knows the envelope it asked for; these are those envelopes.
+const EXPECT = {
+  written,
+  success: (result) => result.success === true,
+  document: (result) => documentValue(result.document),
+  page: (result) =>
+    Array.isArray(result.documents) &&
+    result.documents.every(documentValue) &&
+    cursorValue(result.nextPageToken) &&
+    (result.total === undefined || countValue(result.total)),
+  count: (result) => countValue(result.count),
+  file: (result) => fileValue(result.file),
+  filePage: (result) =>
+    Array.isArray(result.files) &&
+    result.files.every(fileValue) &&
+    cursorValue(result.nextPageToken),
+  usage: (result) =>
+    object(result.usage) &&
+    ["bytes", "count", "pending", "maxBytes"].every((key) =>
+      countValue(result.usage[key]),
+    ),
+  uploadAuthorization(result) {
+    let upload;
+    try {
+      upload = new URL(result.uploadUrl);
+    } catch {
+      return false;
+    }
+    return (
+      object(result.file) &&
+      idValue(result.file.id) &&
+      result.file.status === "pending" &&
+      result.method === "PUT" &&
+      object(result.headers) &&
+      Object.values(result.headers).every(
+        (value) => typeof value === "string",
+      ) &&
+      !upload.username &&
+      !upload.password &&
+      (upload.protocol === "https:" || loopback(upload))
+    );
+  },
+};
 function invalidResponse(status) {
   return new NaruDataError(
     status,
     "Invalid response from the database.",
     "INVALID_RESPONSE",
   );
-}
-function validateResponse(url, method, body, result, status) {
-  const path = url.pathname.split("/").slice(4);
-  let valid;
-  if (path[0] === "_batch") {
-    valid =
-      Array.isArray(result.results) &&
-      result.results.length === body.operations.length &&
-      result.results.every((item, index) =>
-        body.operations[index].type === "delete"
-          ? success(item)
-          : written(item),
-      );
-  } else if (path[0] === "_files") {
-    if (method === "DELETE") valid = success(result);
-    else if (method === "POST" && path.length === 1) {
-      let upload;
-      try {
-        upload = new URL(result.uploadUrl);
-      } catch {
-        /* invalid */
-      }
-      valid =
-        object(result.file) &&
-        idValue(result.file.id) &&
-        result.file.status === "pending" &&
-        result.method === "PUT" &&
-        object(result.headers) &&
-        Object.values(result.headers).every(
-          (value) => typeof value === "string",
-        ) &&
-        upload &&
-        !upload.username &&
-        !upload.password &&
-        (upload.protocol === "https:" ||
-          (upload.protocol === "http:" &&
-            ["localhost", "127.0.0.1", "[::1]"].includes(upload.hostname)));
-    } else if (path.length > 1) valid = fileValue(result.file);
-    else if (url.searchParams.get("usage") === "1")
-      valid = usageValue(result.usage);
-    else
-      valid =
-        Array.isArray(result.files) &&
-        result.files.every(fileValue) &&
-        cursorValue(result.nextPageToken);
-  } else if (method === "DELETE") valid = success(result);
-  else if (method !== "GET") valid = written(result);
-  else if (path.length > 1) valid = documentValue(result.document);
-  else if (url.searchParams.get("count") === "1")
-    valid = Number.isSafeInteger(result.count) && result.count >= 0;
-  else
-    valid =
-      Array.isArray(result.documents) &&
-      result.documents.every(documentValue) &&
-      cursorValue(result.nextPageToken) &&
-      (result.total === undefined ||
-        (Number.isSafeInteger(result.total) && result.total >= 0));
-  if (!valid) throw invalidResponse(status);
 }
 // Reject values JSON.stringify would silently discard or coerce.
 function validateJson(value, ancestors = new Set()) {
@@ -399,31 +399,78 @@ async function downscaleImage(file, settings, onResize) {
     bitmap.close?.();
   }
 }
+// fetch cannot report upload progress, so a caller that asked for it gets an
+// XMLHttpRequest bound to the same cancellation scope.
+function putWithProgress(authorization, file, scope, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const abort = () => {
+      xhr.abort();
+      finish(reject, scope.signal.reason);
+    };
+    const finish = (settle, value) => {
+      scope.signal.removeEventListener("abort", abort);
+      xhr.onload = xhr.onerror = xhr.onabort = xhr.upload.onprogress = null;
+      settle(value);
+    };
+    try {
+      xhr.open(authorization.method, authorization.uploadUrl);
+      for (const [key, value] of Object.entries(authorization.headers))
+        xhr.setRequestHeader(key, value);
+      xhr.upload.onprogress = (event) => {
+        try {
+          onProgress({
+            loaded: event.loaded,
+            total: event.lengthComputable ? event.total : file.size,
+            phase: "uploading",
+          });
+        } catch (error) {
+          finish(reject, error);
+          xhr.abort();
+        }
+      };
+      xhr.onload = () =>
+        finish(resolve, {
+          ok: xhr.status >= 200 && xhr.status < 300,
+          status: xhr.status,
+          url: xhr.responseURL,
+        });
+      xhr.onerror = () =>
+        finish(reject, new TypeError("Network request failed."));
+      xhr.onabort = () =>
+        finish(reject, new DOMException("Upload aborted.", "AbortError"));
+      scope.signal.addEventListener("abort", abort, { once: true });
+      scope.check();
+      xhr.send(file);
+    } catch (error) {
+      finish(reject, error);
+    }
+  });
+}
 const segment = (value) => {
-  if (typeof value !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(value))
+  if (!idValue(value))
     throw new TypeError("Invalid collection or document ID.");
   return encodeURIComponent(value);
 };
-// Conditional writes travel in the URL: DELETE has no body, and intermediaries
-// are free to drop one.
-const condition = (ifVersion) =>
-  ifVersion === undefined ? "" : `?ifVersion=${checkVersion(ifVersion)}`;
 const checkVersion = (value) => {
   if (!Number.isInteger(value) || value < 0)
     throw new TypeError("ifVersion must be a non-negative integer.");
   return value;
 };
-const checkPatch = (patch) => {
-  if (!patch || typeof patch !== "object" || Array.isArray(patch))
+// Conditional writes travel in the URL: DELETE has no body, and intermediaries
+// are free to drop one.
+const condition = (ifVersion) =>
+  ifVersion === undefined ? "" : `?ifVersion=${checkVersion(ifVersion)}`;
+// A patch is a fragment, so whole-document parsers cannot judge it.
+function patchBody(patch, unset) {
+  if (!object(patch))
     throw new TypeError("A merge patch must be a plain object.");
-  return patch;
-};
-const checkUnset = (unset) => {
+  validateJson(patch);
+  if (unset === undefined) return { data: patch };
   if (!Array.isArray(unset) || unset.some((key) => typeof key !== "string"))
     throw new TypeError("unset must be an array of field names.");
-  return unset;
-};
-const FIELD = /^[a-zA-Z0-9_-]{1,64}$/;
+  return { data: patch, unset };
+}
 // Known today. Anything else is passed through for the server to accept or
 // refuse rather than rejected here: this file is versioned and, once frozen,
 // a closed list would mean a client that can never use a filter the server
@@ -439,19 +486,18 @@ const isScalar = (value) =>
   typeof value === "boolean" ||
   (typeof value === "number" && Number.isFinite(value));
 // Mirrors the server's rules so mistakes surface before a round trip. The
-// server revalidates; this never widens what the server will accept.
-function filterJson(where) {
-  if (!where || typeof where !== "object" || Array.isArray(where))
+// server revalidates; this never widens what the server will accept. An empty
+// filter is no filter, so it is left off the request entirely.
+function filterParameter(where) {
+  if (where === undefined) return undefined;
+  if (!object(where))
     throw new TypeError("where must be an object of filters.");
-  let predicates = 0;
-  for (const [field, value] of Object.entries(where)) {
-    if (!FIELD.test(field))
-      throw new TypeError(`Invalid filter field ${field}.`);
-    if (isScalar(value)) {
-      predicates += 1;
-      continue;
-    }
-    if (!value || typeof value !== "object" || Array.isArray(value))
+  const fields = Object.entries(where);
+  if (!fields.length) return undefined;
+  for (const [field, value] of fields) {
+    if (!ID.test(field)) throw new TypeError(`Invalid filter field ${field}.`);
+    if (isScalar(value)) continue;
+    if (!object(value))
       throw new TypeError(
         "Filter values must be scalars or a comparison object.",
       );
@@ -463,10 +509,7 @@ function filterJson(where) {
         throw new TypeError("Filter operators must be short lowercase names.");
       // Only the operators this version knows have a checkable bound shape.
       // An unrecognized one is the server's to judge.
-      if (!COMPARISONS.includes(operator)) {
-        predicates += 1;
-        continue;
-      }
+      if (!COMPARISONS.includes(operator)) continue;
       if (
         !(
           typeof bound === "string" ||
@@ -476,15 +519,11 @@ function filterJson(where) {
         throw new TypeError("Range bounds must be strings or finite numbers.");
       if (typeof bound !== typeof bounds[0][1])
         throw new TypeError("Range bounds on one field must share a type.");
-      predicates += 1;
     }
   }
-  // The count itself is the server's limit to set, and it may raise it.
-  if (!predicates)
-    throw new TypeError("A filter needs at least one predicate.");
   return JSON.stringify(where);
 }
-function queryOptions({ orderBy, direction } = {}, fields = ORDER_FIELDS) {
+function checkOrder({ orderBy, direction } = {}, fields) {
   const validPair = (pair) =>
     Array.isArray(pair) &&
     pair.length === 2 &&
@@ -505,7 +544,9 @@ function queryOptions({ orderBy, direction } = {}, fields = ORDER_FIELDS) {
       );
     if (direction !== undefined)
       throw new TypeError("Do not combine direction with multi-field orderBy.");
-  } else if (
+    return;
+  }
+  if (
     orderBy !== undefined &&
     (typeof orderBy !== "string" || !fields.test(orderBy))
   )
@@ -514,51 +555,40 @@ function queryOptions({ orderBy, direction } = {}, fields = ORDER_FIELDS) {
         ? "orderBy must be id, createdAt, updatedAt or data.<field>."
         : "orderBy must be id, createdAt or updatedAt.",
     );
-  if (
-    !Array.isArray(orderBy) &&
-    direction !== undefined &&
-    direction !== "asc" &&
-    direction !== "desc"
-  )
+  if (direction !== undefined && direction !== "asc" && direction !== "desc")
     throw new TypeError("direction must be asc or desc.");
 }
-function listOptions(options = {}, fields = ORDER_FIELDS) {
-  queryOptions(options, fields);
+/** One page request, spelled the same way for documents and for files. */
+function pageParameters(options = {}, fields) {
+  checkOrder(options, fields);
+  const { limit, pageToken, includeTotal, orderBy, direction } = options;
   // No upper bound here on purpose. The server caps the page size and says so
   // in its error; a ceiling baked into a frozen client would be one this SDK
   // could never be told about again.
-  if (
-    options.limit !== undefined &&
-    (!Number.isInteger(options.limit) || options.limit < 1)
-  )
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1))
     throw new TypeError("limit must be a positive integer.");
+  // null is what the last page hands back, so passing it straight through
+  // means the first page instead of a special case at every call site.
   if (
-    options.pageToken !== undefined &&
-    (typeof options.pageToken !== "string" || options.pageToken.length === 0)
+    pageToken !== undefined &&
+    pageToken !== null &&
+    (typeof pageToken !== "string" || pageToken.length === 0)
   )
-    throw new TypeError("pageToken must be a non-empty string.");
-}
-/** One page request, spelled the same way for documents and for files. */
-function pageParameters(options, fields) {
-  listOptions(options, fields);
+    throw new TypeError("pageToken must be a non-empty string or null.");
+  if (includeTotal !== undefined && typeof includeTotal !== "boolean")
+    throw new TypeError("includeTotal must be a boolean.");
   const parameters = new URLSearchParams();
-  if (options.where !== undefined)
-    parameters.set("where", filterJson(options.where));
-  if (options.orderBy !== undefined)
+  const where = filterParameter(options.where);
+  if (where !== undefined) parameters.set("where", where);
+  if (orderBy !== undefined)
     parameters.set(
       "orderBy",
-      Array.isArray(options.orderBy)
-        ? JSON.stringify(options.orderBy)
-        : options.orderBy,
+      Array.isArray(orderBy) ? JSON.stringify(orderBy) : orderBy,
     );
-  if (options.direction !== undefined)
-    parameters.set("direction", options.direction);
-  parameters.set("limit", String(options.limit ?? 50));
-  if (options.pageToken !== undefined)
-    parameters.set("pageToken", options.pageToken);
-  if (options.includeTotal === true) parameters.set("includeTotal", "1");
-  else if (options.includeTotal !== undefined && options.includeTotal !== false)
-    throw new TypeError("includeTotal must be a boolean.");
+  if (direction !== undefined) parameters.set("direction", direction);
+  parameters.set("limit", String(limit ?? 50));
+  if (pageToken) parameters.set("pageToken", pageToken);
+  if (includeTotal) parameters.set("includeTotal", "1");
   return parameters;
 }
 // `all()` reads like a loop over an array and is not one: each page is a
@@ -578,7 +608,7 @@ function walkLimit(max) {
 // Walking every page is the same job whichever collection is being walked: keep
 // asking until the cursor runs out, and refuse to loop on a repeated one.
 async function* walk(readPage, key, { max, ...options } = {}) {
-  let pageToken;
+  let pageToken = null;
   let walked = 0;
   const ceiling = walkLimit(max);
   const seen = new Set();
@@ -593,14 +623,7 @@ async function* walk(readPage, key, { max, ...options } = {}) {
       );
     if (nextPageToken !== null) seen.add(nextPageToken);
     for (const item of page[key]) {
-      if (options.signal?.aborted) {
-        const scope = requestScope(options);
-        try {
-          scope.check();
-        } finally {
-          scope.close();
-        }
-      }
+      if (options.signal?.aborted) precheck(options);
       if (walked >= ceiling)
         throw new NaruDataError(
           200,
@@ -612,8 +635,53 @@ async function* walk(readPage, key, { max, ...options } = {}) {
       walked += 1;
       yield item;
     }
-    pageToken = nextPageToken ?? undefined;
+    pageToken = nextPageToken;
   } while (pageToken);
+}
+const synchronous = (result, label) => {
+  if (
+    result !== null &&
+    result !== undefined &&
+    typeof result.then === "function"
+  ) {
+    // An async function may already have rejected. Observe that rejection
+    // while refusing it synchronously.
+    Promise.resolve(result).catch(() => {});
+    throw new TypeError(`${label} must return synchronously.`);
+  }
+  return result;
+};
+// Snapshot own data properties without executing registry getters. Later
+// mutations of the caller's registry must not change a client's definitions.
+function collectionDefinitions(collections) {
+  if (!object(collections))
+    throw new TypeError(
+      "collections must be an object of collection definitions.",
+    );
+  const definitions = new Map();
+  for (const name of Reflect.ownKeys(collections)) {
+    segment(name);
+    const descriptor = Object.getOwnPropertyDescriptor(collections, name);
+    if (!("value" in descriptor) || !object(descriptor.value))
+      throw new TypeError(
+        `Collection definition for ${name} must be an object.`,
+      );
+    const definition = {};
+    for (const key of Reflect.ownKeys(descriptor.value)) {
+      const member = Object.getOwnPropertyDescriptor(descriptor.value, key);
+      if (
+        (key !== "parse" && key !== "map") ||
+        !("value" in member) ||
+        typeof member.value !== "function"
+      )
+        throw new TypeError(
+          `Collection ${name} takes only parse and map functions.`,
+        );
+      definition[key] = member.value;
+    }
+    definitions.set(name, Object.freeze(definition));
+  }
+  return definitions;
 }
 const base64url = (bytes) =>
   btoa(String.fromCharCode(...bytes))
@@ -623,165 +691,66 @@ const base64url = (bytes) =>
 const random = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
 
 export const CONTROL_PLANE_ORIGIN = "https://naru.pub";
+// A public read may be answered by a shared cache for this long after a write.
+const PUBLIC_CACHE_MS = 10_000;
 export function createDatabase({
   site,
   controlPlaneOrigin = CONTROL_PLANE_ORIGIN,
-  schemas = {},
   collections = {},
+  ...unsupported
 }) {
   if (typeof site !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(site))
     throw new TypeError("A valid Naru site login name is required.");
   const base = new URL(controlPlaneOrigin);
-  if (
-    base.origin !== CONTROL_PLANE_ORIGIN &&
-    !(
-      base.protocol === "http:" &&
-      ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname)
-    )
-  )
+  if (base.origin !== CONTROL_PLANE_ORIGIN && !loopback(base))
     throw new TypeError(
       "controlPlaneOrigin must be https://naru.pub or an HTTP loopback origin.",
     );
+  if (Object.hasOwn(unsupported, "schemas"))
+    throw new TypeError(
+      "schemas is no longer supported. Validate documents with collections: { name: { parse } }.",
+    );
+  const definitions = collectionDefinitions(collections);
   const root = `${base.origin}/api/data/${encodeURIComponent(site)}`;
   const storageKey = `naru:owner:${base.origin}:${site}`;
-  // An owner write can leave a ten-second public response in a shared cache.
-  // Keep this browser's reads fresh for that same window so an editor does not
-  // have to remember fresh:true after every mutation.
-  const recentlyWritten = new Map();
-  const freshUntil = (collectionName) =>
-    (recentlyWritten.get(collectionName) ?? 0) > Date.now();
-  const noteWrite = (url, body) => {
-    const path = new URL(url).pathname.slice(new URL(root).pathname.length + 1);
-    const names =
-      path === "_batch"
-        ? [...new Set((body?.operations ?? []).map((item) => item.collection))]
-        : path && !path.startsWith("_")
-          ? [decodeURIComponent(path.split("/")[0])]
-          : [];
-    for (const name of names) recentlyWritten.set(name, Date.now() + 10_000);
-  };
-  if (!schemas || typeof schemas !== "object" || Array.isArray(schemas))
-    throw new TypeError("schemas must be an object of validator functions.");
-  // Snapshot own data properties without executing registry getters. Later
-  // mutations of the caller's registry must not change a client's validators.
-  const validators = new Map();
-  for (const name of Reflect.ownKeys(schemas)) {
-    segment(name);
-    const descriptor = Object.getOwnPropertyDescriptor(schemas, name);
-    if (!("value" in descriptor) || typeof descriptor.value !== "function")
-      throw new TypeError(`Schema for ${name} must be a function property.`);
-    validators.set(name, descriptor.value);
+  // A write can leave a ten-second public response in a shared cache. Keep this
+  // browser's reads of that collection fresh for the same window, whoever
+  // wrote, so nobody has to remember fresh:true after a mutation.
+  const writtenUntil = new Map();
+  const recentlyWritten = (name) => (writtenUntil.get(name) ?? 0) > Date.now();
+  // Parsers judge whole documents on the way in as well as the way out, so a
+  // page cannot store what it would refuse to read back.
+  function prepareDocument(collectionName, data) {
+    validateJson(data);
+    const parse = definitions.get(collectionName)?.parse;
+    if (parse) {
+      synchronous(parse(data), `parse for ${collectionName}`);
+      // A parser can mutate its argument; keep the lossless JSON contract.
+      validateJson(data);
+    }
+    return data;
   }
-  if (
-    !collections ||
-    typeof collections !== "object" ||
-    Array.isArray(collections)
-  )
-    throw new TypeError(
-      "collections must be an object of collection definitions.",
-    );
-  const definitions = new Map();
-  for (const name of Reflect.ownKeys(collections)) {
-    segment(name);
-    const descriptor = Object.getOwnPropertyDescriptor(collections, name);
-    if (
-      !("value" in descriptor) ||
-      !descriptor.value ||
-      typeof descriptor.value !== "object" ||
-      Array.isArray(descriptor.value)
-    )
-      throw new TypeError(
-        `Collection definition for ${name} must be an object.`,
-      );
-    const definition = {};
-    for (const key of ["parse", "serialize", "map"]) {
-      const member = Object.getOwnPropertyDescriptor(descriptor.value, key);
-      if (member === undefined) continue;
-      if (!("value" in member) || typeof member.value !== "function")
-        throw new TypeError(`${key} for ${name} must be a function property.`);
-      definition[key] = member.value;
-    }
-    definitions.set(name, Object.freeze(definition));
-  }
-  const synchronous = (result, label) => {
-    if (
-      result !== null &&
-      result !== undefined &&
-      typeof result.then === "function"
-    ) {
-      Promise.resolve(result).catch(() => {});
-      throw new TypeError(`${label} must return synchronously.`);
-    }
-    return result;
-  };
-  function validateDocument(collectionName, data, serializer) {
-    let prepared = data;
-    const definition = definitions.get(collectionName);
-    const write = serializer ?? definition?.serialize;
-    if (write) {
-      prepared = synchronous(write(data), `serialize for ${collectionName}`);
-    }
-    validateJson(prepared);
-    const validator = validators.get(collectionName);
-    if (validator !== undefined) {
-      const result = validator(prepared);
-      if (result !== undefined && typeof result !== "boolean") {
-        if (result !== null && typeof result.then === "function") {
-          // An async validator may already have rejected. Observe that rejection
-          // while rejecting the write synchronously, before any request is sent.
-          Promise.resolve(result).catch(() => {});
-        }
-        throw new TypeError(
-          `Schema for ${collectionName} must return a boolean or undefined synchronously.`,
-        );
-      }
-      if (result === false)
-        throw new TypeError(
-          `Document does not match the ${collectionName} schema.`,
-        );
-    } else if (definition?.parse) {
-      try {
-        synchronous(definition.parse(prepared), `parse for ${collectionName}`);
-      } catch (cause) {
-        if (cause !== null && typeof cause === "object" && "then" in cause) {
-          // An async validator may already have rejected. Observe that rejection
-          // while rejecting the write synchronously, before any request is sent.
-          Promise.resolve(cause).catch(() => {});
-        }
-        throw cause;
-      }
-    }
-    // Validators and converters can mutate their argument; retain the lossless
-    // JSON contract after they run.
-    validateJson(prepared);
-    return prepared;
-  }
-  async function request(url, method = "GET", body, token, options) {
+  async function request(
+    url,
+    { method = "GET", body, token, options, expect, collections = [] } = {},
+  ) {
     const scope = requestScope(options);
     try {
       scope.check();
       // Serialize before awaiting so later caller mutations cannot change the write.
       const serialized = body === undefined ? undefined : JSON.stringify(body);
-      let response;
       // A public read is the same bytes for every caller, and the server marks
       // those responses cacheable; refusing the cache here would throw that
       // away and send every visitor's every read to the origin. Anything
       // carrying a credential, and anything that is not a read, still bypasses
-      // the cache entirely — as does a caller that asks for `fresh`, which is
-      // what a read immediately after one's own write wants.
-      const requestUrl = new URL(url);
-      const relative = requestUrl.pathname.slice(
-        new URL(root).pathname.length + 1,
-      );
-      const collectionName =
-        relative && !relative.startsWith("_")
-          ? decodeURIComponent(relative.split("/")[0])
-          : undefined;
+      // the cache entirely — as does a caller that asks for `fresh`, and a read
+      // of a collection this browser has just written.
       const cacheable =
         method === "GET" &&
         !token &&
         !options?.fresh &&
-        !freshUntil(collectionName);
+        !collections.some(recentlyWritten);
+      let response;
       try {
         response = await fetch(url, {
           method,
@@ -830,57 +799,45 @@ export function createDatabase({
             : `Database request failed (HTTP ${response.status}).`,
           typeof result?.code === "string" ? result.code : undefined,
         );
-      if (!object(result)) throw invalidResponse(response.status);
-      if (String(url).startsWith(`${root}/`))
-        validateResponse(
-          new URL(url),
-          method,
-          serialized === undefined ? undefined : JSON.parse(serialized),
-          result,
-          response.status,
-        );
-      if (token && method !== "GET")
-        noteWrite(
-          url,
-          serialized === undefined ? undefined : JSON.parse(serialized),
-        );
+      if (!object(result) || (expect && !expect(result)))
+        throw invalidResponse(response.status);
       return result;
     } finally {
       scope.close();
+      // Also after a failure: a timed-out write may still have landed.
+      if (method !== "GET")
+        for (const name of collections)
+          writtenUntil.set(name, Date.now() + PUBLIC_CACHE_MS);
     }
   }
   // Batching and the media library both require an owner token, so an
   // anonymous client does not carry methods that could only ever be refused.
   function client(getToken = () => undefined, unauthorized = () => {}, owner) {
-    const send = async (url, method, body, options) => {
+    const send = async (url, init) => {
       try {
-        return await request(url, method, body, getToken(), options);
+        return await request(url, { ...init, token: getToken() });
       } catch (error) {
         if (error.status === 401) unauthorized();
         throw error;
       }
     };
     const api = {
-      collection(collectionName, options = {}) {
+      collection(collectionName, ...rest) {
         const path = `${root}/${segment(collectionName)}`;
-        if (!options || typeof options !== "object" || Array.isArray(options))
-          throw new TypeError("collection options must be an object.");
-        const definition = definitions.get(collectionName) ?? {};
-        const { parse, serialize, map } = { ...definition, ...options };
-        if (parse !== undefined && typeof parse !== "function")
-          throw new TypeError("parse must be a synchronous function.");
-        if (serialize !== undefined && typeof serialize !== "function")
-          throw new TypeError("serialize must be a synchronous function.");
-        if (map !== undefined && typeof map !== "function")
-          throw new TypeError("map must be a synchronous function.");
+        if (rest[0] !== undefined)
+          throw new TypeError(
+            "Register parse and map once in createDatabase({ collections }) instead of per handle.",
+          );
+        const { parse, map } = definitions.get(collectionName) ?? {};
+        const names = [collectionName];
         const readDocument = (document) => {
+          if (!parse && !map) return document;
           try {
-            const data =
-              parse === undefined
-                ? document.data
-                : synchronous(parse(document.data), "parse");
+            const data = parse
+              ? synchronous(parse(document.data), "parse")
+              : document.data;
             const parsed = { ...document, data };
-            return map === undefined ? parsed : synchronous(map(parsed), "map");
+            return map ? synchronous(map(parsed), "map") : parsed;
           } catch (cause) {
             const error = new NaruDataError(
               200,
@@ -894,23 +851,30 @@ export function createDatabase({
           }
         };
         const list = (options = {}) =>
-          send(
-            `${path}?${pageParameters(options, ORDER_FIELDS)}`,
-            "GET",
-            undefined,
+          send(`${path}?${pageParameters(options, ORDER_FIELDS)}`, {
             options,
-          ).then((page) => ({
+            expect: EXPECT.page,
+            collections: names,
+          }).then((page) => ({
             ...page,
-            ...(parse === undefined && map === undefined
-              ? {}
-              : { documents: page.documents.map(readDocument) }),
+            documents: page.documents.map(readDocument),
           }));
+        const write = (suffix, method, body, options) =>
+          send(`${path}${suffix}`, {
+            method,
+            body,
+            options,
+            expect: method === "DELETE" ? EXPECT.success : EXPECT.written,
+            collections: names,
+          });
         return {
           async get(id, options) {
-            return readDocument(
-              (await send(`${path}/${segment(id)}`, "GET", undefined, options))
-                .document,
-            );
+            const result = await send(`${path}/${segment(id)}`, {
+              options,
+              expect: EXPECT.document,
+              collections: names,
+            });
+            return readDocument(result.document);
           },
           list,
           async count(options = {}) {
@@ -922,46 +886,43 @@ export function createDatabase({
             )
               throw new TypeError("count does not take orderBy or direction.");
             const parameters = new URLSearchParams();
-            if (options.where !== undefined)
-              parameters.set("where", filterJson(options.where));
+            const where = filterParameter(options.where);
+            if (where !== undefined) parameters.set("where", where);
             parameters.set("count", "1");
-            return (
-              await send(`${path}?${parameters}`, "GET", undefined, options)
-            ).count;
+            const result = await send(`${path}?${parameters}`, {
+              options,
+              expect: EXPECT.count,
+              collections: names,
+            });
+            return result.count;
           },
           all(options = {}) {
             return walk(list, "documents", options);
           },
           add(data, options) {
-            const prepared = validateDocument(collectionName, data, serialize);
-            return send(path, "POST", { data: prepared }, options);
+            const prepared = prepareDocument(collectionName, data);
+            return write("", "POST", { data: prepared }, options);
           },
           set(id, data, { ifVersion, ...options } = {}) {
-            const prepared = validateDocument(collectionName, data, serialize);
-            return send(
-              `${path}/${segment(id)}${condition(ifVersion)}`,
+            const prepared = prepareDocument(collectionName, data);
+            return write(
+              `/${segment(id)}${condition(ifVersion)}`,
               "PUT",
               { data: prepared },
               options,
             );
           },
           update(id, patch, { ifVersion, unset, ...options } = {}) {
-            // A patch is a fragment, so whole-document schemas cannot judge it.
-            validateJson(patch);
-            checkPatch(patch);
-            return send(
-              `${path}/${segment(id)}${condition(ifVersion)}`,
+            return write(
+              `/${segment(id)}${condition(ifVersion)}`,
               "PATCH",
-              {
-                data: patch,
-                ...(unset === undefined ? {} : { unset: checkUnset(unset) }),
-              },
+              patchBody(patch, unset),
               options,
             );
           },
           delete(id, { ifVersion, ...options } = {}) {
-            return send(
-              `${path}/${segment(id)}${condition(ifVersion)}`,
+            return write(
+              `/${segment(id)}${condition(ifVersion)}`,
               "DELETE",
               undefined,
               options,
@@ -979,63 +940,63 @@ export function createDatabase({
       if (!Array.isArray(operations) || !operations.length)
         throw new TypeError("Batch requires at least one operation.");
       const snapshot = operations.map((operation) => {
-        if (
-          !operation ||
-          typeof operation !== "object" ||
-          Array.isArray(operation)
-        )
-          throw new TypeError("Invalid batch operation.");
-        const collection = operation.collection;
+        if (!object(operation)) throw new TypeError("Invalid batch operation.");
+        const { type, collection } = operation;
         segment(collection);
-        if (operation.type === "add") {
+        if (type === "add") {
           if (operation.id !== undefined)
             throw new TypeError("add assigns the document ID itself.");
           if (operation.ifVersion !== undefined)
             throw new TypeError("add cannot take ifVersion.");
-          const data = validateDocument(collection, operation.data);
-          return { type: "add", collection, data };
+          const data = prepareDocument(collection, operation.data);
+          return { type, collection, data };
         }
         segment(operation.id);
-        const base = { collection, id: operation.id };
+        const target = { collection, id: operation.id };
         if (operation.ifVersion !== undefined)
-          base.ifVersion = checkVersion(operation.ifVersion);
-        if (operation.type === "set") {
-          const data = validateDocument(collection, operation.data);
-          return { ...base, type: "set", data };
-        }
-        if (operation.type === "update") {
-          // A patch is a fragment, so whole-document schemas cannot judge it.
-          validateJson(operation.data);
-          checkPatch(operation.data);
+          target.ifVersion = checkVersion(operation.ifVersion);
+        if (type === "set")
           return {
-            ...base,
-            type: "update",
-            data: operation.data,
-            ...(operation.unset === undefined
-              ? {}
-              : { unset: checkUnset(operation.unset) }),
+            ...target,
+            type,
+            data: prepareDocument(collection, operation.data),
           };
-        }
-        if (operation.type !== "delete")
-          throw new TypeError(
-            "Batch operations must be add, set, update or delete.",
-          );
-        return { ...base, type: "delete" };
+        if (type === "update")
+          return {
+            ...target,
+            type,
+            ...patchBody(operation.data, operation.unset),
+          };
+        if (type === "delete") return { ...target, type };
+        throw new TypeError(
+          "Batch operations must be add, set, update or delete.",
+        );
       });
-      return send(`${root}/_batch`, "POST", { operations: snapshot }, options);
-    };
-    const fileList = (options = {}) =>
-      send(
-        `${root}/_files?${pageParameters(options, FILE_ORDER_FIELDS)}`,
-        "GET",
-        undefined,
+      return send(`${root}/_batch`, {
+        method: "POST",
+        body: { operations: snapshot },
         options,
-      );
+        expect: (result) =>
+          Array.isArray(result.results) &&
+          result.results.length === snapshot.length &&
+          result.results.every((item, index) =>
+            snapshot[index].type === "delete"
+              ? EXPECT.success(item)
+              : written(item),
+          ),
+        collections: [...new Set(snapshot.map((item) => item.collection))],
+      });
+    };
+    const filePath = (id) => `${root}/_files/${segment(id)}`;
+    const fileList = (options = {}) =>
+      send(`${root}/_files?${pageParameters(options, FILE_ORDER_FIELDS)}`, {
+        options,
+        expect: EXPECT.filePage,
+      });
     api.files = {
       async get(id, options) {
-        return (
-          await send(`${root}/_files/${segment(id)}`, "GET", undefined, options)
-        ).file;
+        return (await send(filePath(id), { options, expect: EXPECT.file }))
+          .file;
       },
       list: fileList,
       all(options = {}) {
@@ -1044,8 +1005,12 @@ export function createDatabase({
       async usage(options) {
         // A quota readout is one aggregate row; asking for it never pages the
         // library the way sharing the listing response used to.
-        return (await send(`${root}/_files?usage=1`, "GET", undefined, options))
-          .usage;
+        return (
+          await send(`${root}/_files?usage=1`, {
+            options,
+            expect: EXPECT.usage,
+          })
+        ).usage;
       },
       async upload(
         source,
@@ -1088,10 +1053,9 @@ export function createDatabase({
         let authorization;
         try {
           scope.check();
-          authorization = await send(
-            `${root}/_files`,
-            "POST",
-            {
+          authorization = await send(`${root}/_files`, {
+            method: "POST",
+            body: {
               name:
                 typeof file.name === "string" && file.name
                   ? file.name
@@ -1100,74 +1064,21 @@ export function createDatabase({
               size: file.size,
               metadata,
             },
-            transferOptions,
-          );
+            options: transferOptions,
+            expect: EXPECT.uploadAuthorization,
+          });
           scope.check();
-          let response;
-          if (onProgress && typeof XMLHttpRequest !== "undefined") {
-            response = await new Promise((resolve, reject) => {
-              const xhr = new XMLHttpRequest();
-              const abort = () => {
-                xhr.abort();
-                finish(reject, scope.signal.reason);
-              };
-              const finish = (settle, value) => {
-                scope.signal.removeEventListener("abort", abort);
-                xhr.onload =
-                  xhr.onerror =
-                  xhr.onabort =
-                  xhr.upload.onprogress =
-                    null;
-                settle(value);
-              };
-              try {
-                xhr.open(authorization.method, authorization.uploadUrl);
-                for (const [key, value] of Object.entries(
-                  authorization.headers,
-                ))
-                  xhr.setRequestHeader(key, value);
-                xhr.upload.onprogress = (event) => {
-                  try {
-                    onProgress({
-                      loaded: event.loaded,
-                      total: event.lengthComputable ? event.total : file.size,
-                      phase: "uploading",
-                    });
-                  } catch (error) {
-                    finish(reject, error);
-                    xhr.abort();
-                  }
-                };
-                xhr.onload = () =>
-                  finish(resolve, {
-                    ok: xhr.status >= 200 && xhr.status < 300,
-                    status: xhr.status,
-                    url: xhr.responseURL,
-                  });
-                xhr.onerror = () =>
-                  finish(reject, new TypeError("Network request failed."));
-                xhr.onabort = () =>
-                  finish(
-                    reject,
-                    new DOMException("Upload aborted.", "AbortError"),
-                  );
-                scope.signal.addEventListener("abort", abort, { once: true });
-                scope.check();
-                xhr.send(file);
-              } catch (error) {
-                finish(reject, error);
-              }
-            });
-          } else {
-            response = await fetch(authorization.uploadUrl, {
-              method: authorization.method,
-              headers: authorization.headers,
-              credentials: "omit",
-              redirect: "error",
-              body: file,
-              signal: scope.signal,
-            });
-          }
+          const response =
+            onProgress && typeof XMLHttpRequest !== "undefined"
+              ? await putWithProgress(authorization, file, scope, onProgress)
+              : await fetch(authorization.uploadUrl, {
+                  method: authorization.method,
+                  headers: authorization.headers,
+                  credentials: "omit",
+                  redirect: "error",
+                  body: file,
+                  signal: scope.signal,
+                });
           scope.check();
           // XMLHttpRequest follows redirects silently, where the fetch path
           // refuses them outright. Bytes that ended up on another host did not
@@ -1187,14 +1098,13 @@ export function createDatabase({
               response.status,
               `File upload failed (HTTP ${response.status}).`,
             );
-          return (
-            await send(
-              `${root}/_files/${segment(authorization.file.id)}`,
-              "PUT",
-              {},
-              transferOptions,
-            )
-          ).file;
+          const finalized = await send(filePath(authorization.file.id), {
+            method: "PUT",
+            body: {},
+            options: transferOptions,
+            expect: EXPECT.file,
+          });
+          return finalized.file;
         } catch (cause) {
           let error = cause;
           try {
@@ -1213,12 +1123,11 @@ export function createDatabase({
             error.fileId = authorization.file.id;
             // Cleanup gets its own bounded request, independent of cancellation.
             try {
-              await send(
-                `${root}/_files/${segment(error.fileId)}`,
-                "DELETE",
-                undefined,
-                { timeoutMs: 10000 },
-              );
+              await send(filePath(error.fileId), {
+                method: "DELETE",
+                options: { timeoutMs: 10000 },
+                expect: EXPECT.success,
+              });
             } catch (cleanupError) {
               error.cleanupError = cleanupError;
             }
@@ -1231,27 +1140,20 @@ export function createDatabase({
       async update(id, patch, { ifVersion, unset, ...options } = {}) {
         // Only the metadata is mutable: the bytes, their type and their size
         // were fixed when the upload was authorized and verified.
-        validateJson(patch);
-        checkPatch(patch);
-        return (
-          await send(
-            `${root}/_files/${segment(id)}${condition(ifVersion)}`,
-            "PATCH",
-            {
-              data: patch,
-              ...(unset === undefined ? {} : { unset: checkUnset(unset) }),
-            },
-            options,
-          )
-        ).file;
+        const result = await send(`${filePath(id)}${condition(ifVersion)}`, {
+          method: "PATCH",
+          body: patchBody(patch, unset),
+          options,
+          expect: EXPECT.file,
+        });
+        return result.file;
       },
       delete(id, options) {
-        return send(
-          `${root}/_files/${segment(id)}`,
-          "DELETE",
-          undefined,
+        return send(filePath(id), {
+          method: "DELETE",
           options,
-        );
+          expect: EXPECT.success,
+        });
       },
     };
     return api;
@@ -1262,6 +1164,12 @@ export function createDatabase({
   // The transaction is keyed by the callback that will read it back, not by the
   // page that started it: two callbacks on one origin sign in independently.
   const pendingKey = (redirectUri) => `${storageKey}:pending:${redirectUri}`;
+  const revoke = (token, options) =>
+    request(`${base.origin}/api/data-auth/revoke`, {
+      method: "POST",
+      token,
+      options,
+    });
   let activeOwner = null;
   let completing = null;
   function ownerClient(saved, key) {
@@ -1269,10 +1177,7 @@ export function createDatabase({
     const expiresAt = saved.expiresAt;
     let status = "active";
     const listeners = new Set();
-    const notify = () => {
-      const snapshot = Object.freeze({ status, expiresAt });
-      for (const listener of listeners) listener(snapshot);
-    };
+    const snapshot = () => Object.freeze({ status, expiresAt });
     const expire = () => {
       if (status === "active") clear("expired");
     };
@@ -1284,7 +1189,8 @@ export function createDatabase({
       clearTimeout(expiryTimer);
       if (status !== nextStatus) {
         status = nextStatus;
-        notify();
+        const session = snapshot();
+        for (const listener of listeners) listener(session);
       }
       if (activeOwner === owner) activeOwner = null;
       // An older client must not erase a newer sign-in on the same page.
@@ -1320,10 +1226,9 @@ export function createDatabase({
         () => clear("expired"),
         true,
       ),
-      expiresAt,
       get session() {
-        if (status === "active" && Date.now() >= expiresAt) expire();
-        return Object.freeze({ status, expiresAt });
+        if (Date.now() >= expiresAt) expire();
+        return snapshot();
       },
       onSessionChange(listener) {
         if (typeof listener !== "function")
@@ -1335,21 +1240,13 @@ export function createDatabase({
       async signOut(options) {
         const current = token;
         clear("signed-out");
-        if (current)
-          await request(
-            `${base.origin}/api/data-auth/revoke`,
-            "POST",
-            undefined,
-            current,
-            options,
-          );
+        if (current) await revoke(current, options);
       },
     };
     return owner;
   }
   function restoreOwner() {
-    if (activeOwner && activeOwner.expiresAt > Date.now()) return activeOwner;
-    activeOwner = null;
+    if (activeOwner?.session.status === "active") return activeOwner;
     const key = sessionKey();
     let saved;
     try {
@@ -1358,12 +1255,9 @@ export function createDatabase({
       /* malformed */
     }
     if (
-      !saved ||
-      !/^[A-Za-z0-9_-]{43}$/.test(saved.accessToken) ||
-      saved.redirectUri !== callbackHref() ||
-      !Number.isFinite(saved.expiresAt) ||
-      saved.expiresAt <= Date.now() ||
-      saved.expiresAt > Date.now() + 24 * 60 * 60 * 1000 + 60000
+      !object(saved) ||
+      !credentialsValue(saved.accessToken, saved.expiresAt) ||
+      saved.redirectUri !== callbackHref()
     ) {
       try {
         window.sessionStorage.removeItem(key);
@@ -1419,9 +1313,8 @@ export function createDatabase({
           }).toString();
           try {
             clientId = (
-              await request(discovery.href, "GET", undefined, undefined, {
-                signal: scope.signal,
-                timeoutMs: 0,
+              await request(discovery.href, {
+                options: { signal: scope.signal, timeoutMs: 0 },
               })
             ).clientId;
           } catch (error) {
@@ -1483,12 +1376,7 @@ export function createDatabase({
     },
   };
   async function complete(options) {
-    const scope = requestScope(options);
-    try {
-      scope.check();
-    } finally {
-      scope.close();
-    }
+    precheck(options);
     const url = new URL(window.location.href);
     if (!url.searchParams.has("code") && !url.searchParams.has("error"))
       return restoreOwner();
@@ -1521,28 +1409,22 @@ export function createDatabase({
       );
     }
     if (error) throw new NaruDataError(403, "Owner sign-in was denied.");
-    const result = await request(
-      `${base.origin}/api/data-auth/token`,
-      "POST",
-      {
+    const result = await request(`${base.origin}/api/data-auth/token`, {
+      method: "POST",
+      body: {
         code,
         verifier: pending.verifier,
         clientId: pending.clientId,
         redirectUri: pending.redirectUri,
       },
-      undefined,
       options,
-    );
+    });
     if (
-      !result ||
-      !/^[A-Za-z0-9_-]{43}$/.test(result.accessToken) ||
+      !credentialsValue(result.accessToken, result.expiresAt) ||
       result.tokenType !== "Bearer" ||
       !Number.isInteger(result.expiresIn) ||
       result.expiresIn <= 0 ||
-      result.expiresIn > 24 * 60 * 60 ||
-      !Number.isFinite(result.expiresAt) ||
-      result.expiresAt <= Date.now() ||
-      result.expiresAt > Date.now() + 24 * 60 * 60 * 1000 + 60000
+      result.expiresIn > DAY_MS / 1000
     )
       throw new NaruDataError(502, "Invalid owner token response.");
     const credentials = {
@@ -1556,12 +1438,7 @@ export function createDatabase({
     } catch (error) {
       // If persistence fails, do not leave a newly issued token active unnecessarily.
       try {
-        await request(
-          `${base.origin}/api/data-auth/revoke`,
-          "POST",
-          undefined,
-          result.accessToken,
-        );
+        await revoke(result.accessToken);
       } catch {}
       throw error;
     }

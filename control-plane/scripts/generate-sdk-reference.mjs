@@ -273,15 +273,25 @@ const KINDS = {
 };
 
 async function member(child) {
-  const signature = child.signatures?.[0];
-  const text = signature
-    ? `${child.name}${renderTypeParameters(signature)}(${renderParameters(signature)}): ${renderType(signature.type)}`
+  // Overloads are one member with several call shapes; showing only the first
+  // would hide the others from the reader entirely.
+  const signatures = child.signatures ?? [];
+  const text = signatures.length
+    ? signatures
+        .map(
+          (signature) =>
+            `${child.name}${renderTypeParameters(signature)}(${renderParameters(signature)}): ${renderType(signature.type)}`,
+        )
+        .join(";\n")
     : `${child.name}${child.flags?.isOptional ? "?" : ""}: ${renderType(child.type)}`;
+  const overloads = signatures.slice(1).map((signature) => docs(signature));
+  const own = docs(child);
   return {
     name: child.name,
     optional: Boolean(child.flags?.isOptional),
     signature: await printMember(text),
-    ...docs(child),
+    summary: [own, ...overloads].flatMap((part) => part.summary),
+    throws: [own, ...overloads].flatMap((part) => part.throws),
   };
 }
 
@@ -310,7 +320,7 @@ async function entry(child) {
       ...base,
       signature: await printEntry(
         kind,
-        `${child.name}(${renderParameters(signature)}): ${renderType(signature.type)}`,
+        `${child.name}${renderTypeParameters(signature)}(${renderParameters(signature)}): ${renderType(signature.type)}`,
       ),
       parameters: (signature.parameters ?? []).map((parameter) => ({
         name: parameter.name,

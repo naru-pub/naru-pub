@@ -258,7 +258,7 @@ integration("SDK and data API contract", () => {
     const second = await feed.list({
       ...query,
       limit: 2,
-      pageToken: first.nextPageToken!,
+      pageToken: first.nextPageToken,
     });
     expect(second.documents.map((d) => d.id)).toEqual(["post_2"]);
     expect(second.nextPageToken).toBeNull();
@@ -270,7 +270,7 @@ integration("SDK and data API contract", () => {
       feed.list({
         ...query,
         where: { visible: false },
-        pageToken: first.nextPageToken!,
+        pageToken: first.nextPageToken,
       }),
     ).rejects.toMatchObject({ status: 400 });
   });
@@ -325,18 +325,24 @@ integration("SDK and data API contract", () => {
     const raw = publicDb.collection("raw");
     await raw.set("a", { title: "valid" });
     await raw.set("b", { title: 42 });
-    const parsed = publicDb.collection("raw", {
-      parse(data) {
-        if (
-          !data ||
-          typeof data !== "object" ||
-          Array.isArray(data) ||
-          typeof data.title !== "string"
-        )
-          throw new Error("title must be a string");
-        return { title: data.title.toUpperCase() };
+    const parsed = createDatabase({
+      site: "alice",
+      controlPlaneOrigin: origin,
+      collections: {
+        raw: {
+          parse(data) {
+            if (
+              !data ||
+              typeof data !== "object" ||
+              Array.isArray(data) ||
+              typeof data.title !== "string"
+            )
+              throw new Error("title must be a string");
+            return { title: data.title.toUpperCase() };
+          },
+        },
       },
-    });
+    }).collection("raw");
     expect((await parsed.get("a")).data).toEqual({ title: "VALID" });
     const failure = {
       code: "DOCUMENT_VALIDATION_FAILED",
@@ -377,7 +383,7 @@ integration("SDK and data API contract", () => {
     expect(first.nextPageToken).toEqual(expect.any(String));
     const second = await owner.files.list({
       limit: 2,
-      pageToken: first.nextPageToken!,
+      pageToken: first.nextPageToken,
     });
     expect(second.files.map((file) => file.id)).toEqual(["file_1"]);
     expect(second.nextPageToken).toBeNull();
@@ -390,7 +396,7 @@ integration("SDK and data API contract", () => {
     await expect(
       owner.files.list({
         where: { postId: "other" },
-        pageToken: first.nextPageToken!,
+        pageToken: first.nextPageToken,
       }),
     ).rejects.toMatchObject({ status: 400 });
     const moved = await owner.files.update(

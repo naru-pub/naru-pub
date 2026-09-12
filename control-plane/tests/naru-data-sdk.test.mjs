@@ -302,7 +302,7 @@ test("owner sign-in discovers the registered site client when clientId is omitte
   }
 });
 
-test("schemas reject invalid writes and owner batch snapshots valid operations", async () => {
+test("parsers reject invalid writes and owner batch snapshots valid operations", async () => {
   const oldWindow = globalThis.window,
     oldFetch = globalThis.fetch;
   const browser = fakeBrowser();
@@ -329,7 +329,7 @@ test("schemas reject invalid writes and owner batch snapshots valid operations",
   try {
     const db = createDatabase({
       site: "alice",
-      schemas: { posts: (data) => typeof data.title === "string" },
+      collections: { posts: { parse: titled } },
     });
     assert.throws(() => db.collection("posts").set("bad", {}), TypeError);
     const owner = await db.completeOwnerSignIn();
@@ -337,6 +337,13 @@ test("schemas reject invalid writes and owner batch snapshots valid operations",
     await owner.batch([{ type: "set", collection: "posts", id: "one", data }]);
     data.title = "changed";
     assert.equal(JSON.parse(body).operations[0].data.title, "hello");
+    assert.throws(
+      () =>
+        owner.batch([
+          { type: "set", collection: "posts", id: "one", data: {} },
+        ]),
+      TypeError,
+    );
     await owner.batch([
       {
         type: "update",
@@ -375,7 +382,7 @@ test("schemas reject invalid writes and owner batch snapshots valid operations",
       { type: "replace", collection: "posts", id: "one", data },
     ])
       assert.throws(() => owner.batch([operation]), TypeError);
-    // A patch is a fragment, so the whole-document schema must not judge it.
+    // A patch is a fragment, so the whole-document parser must not judge it.
     await owner.batch([
       { type: "update", collection: "posts", id: "one", data: { body: "x" } },
     ]);
@@ -384,6 +391,12 @@ test("schemas reject invalid writes and owner batch snapshots valid operations",
     globalThis.fetch = oldFetch;
   }
 });
+
+function titled(data) {
+  if (typeof data?.title !== "string")
+    throw new TypeError("title must be a string");
+  return data;
+}
 
 test("controlPlaneOrigin accepts loopback development only", () => {
   assert.doesNotThrow(() =>
@@ -596,9 +609,10 @@ test("SDK serializes range filters and rejects unsupported comparisons", async (
       },
     });
     assert.equal(calls.length, 3);
-    // A filter with no predicate at all still cannot mean anything.
-    assert.throws(() => posts.list({ where: {} }), TypeError);
-    assert.equal(calls.length, 3);
+    // An empty filter is no filter, not a malformed one.
+    await posts.list({ where: {} });
+    assert.equal(calls.length, 4);
+    assert.equal(calls[3].searchParams.has("where"), false);
   } finally {
     globalThis.fetch = original;
   }
@@ -691,8 +705,8 @@ test("merge patches and conditional writes travel as PATCH and ifVersion", async
   try {
     const posts = createDatabase({
       site: "alice",
-      // A schema judges whole documents, so a fragment must not be checked.
-      schemas: { posts: (data) => typeof data?.title === "string" },
+      // A parser judges whole documents, so a fragment must not be checked.
+      collections: { posts: { parse: titled } },
       baseUrl: "https://naru.pub",
     }).collection("posts");
     await posts.update("one", { body: "text" }, { unset: ["legacy"] });
@@ -720,7 +734,7 @@ test("merge patches and conditional writes travel as PATCH and ifVersion", async
       () => posts.update("one", { a: 1 }, { unset: "a" }),
       TypeError,
     );
-    // The whole-document schema still guards set().
+    // The whole-document parser still guards set().
     assert.throws(() => posts.set("one", { title: 1 }), TypeError);
     assert.equal(calls.length, 3);
   } finally {
@@ -774,7 +788,8 @@ test("one token restores after reload without network calls and retains its orig
     const restored = await createDatabase({
       site: "alice",
     }).completeOwnerSignIn();
-    assert.equal(restored.expiresAt, deadline);
+    assert.equal(restored.session.expiresAt, deadline);
+    assert.equal(restored.expiresAt, undefined);
     await restored.collection("posts").list();
     assert.equal(
       calls[0].options.headers.Authorization,
@@ -1517,59 +1532,90 @@ test("authentication accepts cancellation without navigating or consuming a call
   }
 });
 
-test("schema registries validate own properties eagerly without invoking getters", () => {
-  for (const schemas of [
+test("collection registries validate own properties eagerly without invoking getters", () => {
+  for (const collections of [
     null,
     [],
     { posts: undefined },
     { posts: true },
-    { "bad/name": () => true },
-    { [Symbol("posts")]: () => true },
+    { posts: { parse: true } },
+    { posts: { map: "yes" } },
+    // serialize was folded into writing the application's own JSON.
+    { posts: { serialize: () => ({}) } },
+    { "bad/name": {} },
+    { [Symbol("posts")]: {} },
   ])
-    assert.throws(() => createDatabase({ site: "alice", schemas }), TypeError);
+    assert.throws(
+      () => createDatabase({ site: "alice", collections }),
+      TypeError,
+    );
   let invoked = false;
-  assert.throws(
-    () =>
-      createDatabase({
-        site: "alice",
-        schemas: {
-          get posts() {
-            invoked = true;
-            return () => true;
-          },
+  for (const collections of [
+    {
+      get posts() {
+        invoked = true;
+        return {};
+      },
+    },
+    {
+      posts: {
+        get parse() {
+          invoked = true;
+          return () => ({});
         },
-      }),
-    TypeError,
-  );
+      },
+    },
+  ])
+    assert.throws(
+      () => createDatabase({ site: "alice", collections }),
+      TypeError,
+    );
   assert.equal(invoked, false);
   const hidden = Object.defineProperty({}, "posts", { value: false });
   assert.throws(
-    () => createDatabase({ site: "alice", schemas: hidden }),
+    () => createDatabase({ site: "alice", collections: hidden }),
     TypeError,
+  );
+  // The removed options say where their replacement lives instead of being
+  // silently ignored, which would let unvalidated writes through.
+  assert.throws(
+    () => createDatabase({ site: "alice", schemas: { posts: () => true } }),
+    /collections/,
+  );
+  assert.throws(
+    () =>
+      createDatabase({ site: "alice" }).collection("posts", { parse: titled }),
+    /createDatabase/,
   );
 });
 
-test("schemas ignore inherited names and retain a snapshot of own validators", async () => {
+test("registries ignore inherited names and retain a snapshot of own definitions", async () => {
   const oldFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => Response.json(writtenFixture());
-    const schemas = Object.create({
-      posts: () => {
-        throw new Error("inherited validator ran");
+    const refuse = () => {
+      throw new TypeError("refused");
+    };
+    const collections = Object.create({
+      posts: {
+        parse: () => {
+          throw new Error("inherited parser ran");
+        },
       },
     });
-    schemas.notes = () => false;
-    const db = createDatabase({ site: "alice", schemas });
-    schemas.notes = () => true;
+    collections.notes = { parse: refuse };
+    const db = createDatabase({ site: "alice", collections });
+    collections.notes = { parse: () => ({}) };
+    collections.notes.parse = () => ({});
     await db.collection("posts").add({});
     await db.collection("constructor").add({});
     await db.collection("toString").add({});
     assert.throws(() => db.collection("notes").add({}), TypeError);
     const own = Object.create(null);
-    own.constructor = () => false;
+    own.constructor = { parse: refuse };
     assert.throws(
       () =>
-        createDatabase({ site: "alice", schemas: own })
+        createDatabase({ site: "alice", collections: own })
           .collection("constructor")
           .add({}),
       TypeError,
@@ -1579,7 +1625,7 @@ test("schemas ignore inherited names and retain a snapshot of own validators", a
   }
 });
 
-test("full writes reject asynchronous and invalid schema results before sending", async () => {
+test("full writes reject asynchronous and throwing parsers before sending", async () => {
   const oldFetch = globalThis.fetch,
     oldWindow = globalThis.window;
   try {
@@ -1589,30 +1635,28 @@ test("full writes reject asynchronous and invalid schema results before sending"
       requests++;
       return Response.json(writtenFixture());
     };
-    for (const validator of [
-      async () => false,
+    for (const parse of [
+      async () => ({}),
       async () => {
         throw new Error("async validation failed");
       },
-      () => Promise.resolve(true),
+      () => Promise.resolve({}),
       () => ({
         then(resolve) {
-          resolve(false);
+          resolve({});
         },
       }),
-      () => null,
-      () => "yes",
-      () => 1,
-      function* () {
-        yield true;
-      },
       (data) => {
         data.lost = undefined;
+        return data;
+      },
+      () => {
+        throw new TypeError("refused");
       },
     ]) {
       const db = createDatabase({
         site: "alice",
-        schemas: { posts: validator },
+        collections: { posts: { parse } },
       });
       const posts = db.collection("posts");
       assert.throws(() => posts.add({}), TypeError);
@@ -1632,21 +1676,24 @@ test("full writes reject asynchronous and invalid schema results before sending"
           TypeError,
         );
     }
-    // Give rejected async validators time to report any unhandled rejection.
+    // Give rejected async parsers time to report any unhandled rejection.
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(requests, 0);
-    for (const validator of [() => true, () => undefined])
-      await createDatabase({ site: "alice", schemas: { posts: validator } })
+    // A parser's return value is the read shape; any synchronous value passes.
+    for (const parse of [() => ({}), () => undefined, () => false])
+      await createDatabase({ site: "alice", collections: { posts: { parse } } })
         .collection("posts")
         .add({});
-    const failure = new Error("schema detail");
+    const failure = new Error("parser detail");
     assert.throws(
       () =>
         createDatabase({
           site: "alice",
-          schemas: {
-            posts: () => {
-              throw failure;
+          collections: {
+            posts: {
+              parse: () => {
+                throw failure;
+              },
             },
           },
         })
@@ -1660,11 +1707,11 @@ test("full writes reject asynchronous and invalid schema results before sending"
   }
 });
 
-test("optional read parsers infer usable data without changing server metadata or raw handles", async () => {
+test("registered read parsers shape data without changing server metadata", async () => {
   const oldFetch = globalThis.fetch,
     oldWindow = globalThis.window;
   try {
-    const owner = await restoreTestOwner();
+    await restoreTestOwner();
     const stored = documentFixture("one", { title: "hello", legacy: true });
     globalThis.fetch = async () =>
       Response.json({
@@ -1672,14 +1719,23 @@ test("optional read parsers infer usable data without changing server metadata o
         documents: [stored],
         nextPageToken: null,
       });
-    for (const db of [createDatabase({ site: "alice" }), owner]) {
-      let calls = 0;
-      const posts = db.collection("posts", {
-        parse: (data) => {
-          calls++;
-          return { title: data.title.toUpperCase() };
+    let calls = 0;
+    const db = createDatabase({
+      site: "alice",
+      collections: {
+        posts: {
+          parse: (data) => {
+            calls++;
+            return { title: data.title.toUpperCase() };
+          },
         },
-      });
+      },
+    });
+    // The owner client shares the registry of the database it signed in from.
+    const owner = await db.completeOwnerSignIn();
+    for (const client of [db, owner]) {
+      calls = 0;
+      const posts = client.collection("posts");
       assert.deepEqual(await posts.get("one"), {
         ...stored,
         data: { title: "HELLO" },
@@ -1691,24 +1747,31 @@ test("optional read parsers infer usable data without changing server metadata o
       for await (const document of posts.all()) values.push(document.data);
       assert.deepEqual(values, [{ title: "HELLO" }]);
       assert.equal(calls, 3);
+      // Unregistered collections come back exactly as stored.
       assert.deepEqual(
-        (await db.collection("posts").get("one")).data,
+        (await client.collection("notes").get("one")).data,
         stored.data,
       );
-      for (const value of [false, null, undefined])
-        assert.equal(
-          (await db.collection("posts", { parse: () => value }).get("one"))
-            .data,
-          value,
-        );
     }
+    for (const value of [false, null, undefined])
+      assert.equal(
+        (
+          await createDatabase({
+            site: "alice",
+            collections: { posts: { parse: () => value } },
+          })
+            .collection("posts")
+            .get("one")
+        ).data,
+        value,
+      );
   } finally {
     globalThis.fetch = oldFetch;
     globalThis.window = oldWindow;
   }
 });
 
-test("collection definitions parse, map and serialize every handle and batch", async () => {
+test("collection definitions parse and map every handle and guard batches", async () => {
   const oldFetch = globalThis.fetch,
     oldWindow = globalThis.window;
   try {
@@ -1735,9 +1798,6 @@ test("collection definitions parse, map and serialize every handle and batch", a
             if (typeof data?.title !== "string") throw new Error("bad post");
             return { title: data.title.toUpperCase() };
           },
-          serialize(post) {
-            return { title: post.heading };
-          },
           map(document) {
             return {
               id: document.id,
@@ -1753,22 +1813,30 @@ test("collection definitions parse, map and serialize every handle and batch", a
       heading: "HELLO",
       version: 1,
     });
-    await db.collection("posts").set("one", { heading: "saved" });
+    assert.deepEqual((await db.collection("posts").list()).documents, [
+      { id: "one", heading: "HELLO", version: 1 },
+    ]);
+    // Writes store the JSON given, not the parser's normalized read shape.
+    await db.collection("posts").set("one", { title: "saved" });
     assert.deepEqual(JSON.parse(calls.at(-1).init.body), {
       data: { title: "saved" },
     });
     const owner = await db.completeOwnerSignIn();
     await owner.batch([
-      {
-        type: "set",
-        collection: "posts",
-        id: "two",
-        data: { heading: "batched" },
-      },
+      { type: "set", collection: "posts", id: "two", data: { title: "b" } },
     ]);
     assert.deepEqual(JSON.parse(calls.at(-1).init.body).operations[0].data, {
-      title: "batched",
+      title: "b",
     });
+    const before = calls.length;
+    assert.throws(
+      () =>
+        owner.batch([
+          { type: "set", collection: "posts", id: "two", data: { heading: 1 } },
+        ]),
+      /bad post/,
+    );
+    assert.equal(calls.length, before);
   } finally {
     globalThis.fetch = oldFetch;
     globalThis.window = oldWindow;
@@ -1779,12 +1847,17 @@ test("read parser failures identify the document and reject the entire failing p
   const oldFetch = globalThis.fetch;
   try {
     const failure = new Error("title must be a string");
-    const posts = createDatabase({ site: "alice" }).collection("posts", {
-      parse: (data) => {
-        if (typeof data.title !== "string") throw failure;
-        return data;
+    const posts = createDatabase({
+      site: "alice",
+      collections: {
+        posts: {
+          parse: (data) => {
+            if (typeof data.title !== "string") throw failure;
+            return data;
+          },
+        },
       },
-    });
+    }).collection("posts");
     const good = documentFixture("good", { title: "hello" }),
       bad = documentFixture("bad", { title: 42 });
     const check = (error) => {
@@ -1821,13 +1894,16 @@ test("read parser failures identify the document and reject the entire failing p
   }
 });
 
-test("read parsers reject async results and invalid configuration without masking transport errors", async () => {
+test("read parsers reject async results without masking transport errors", async () => {
   const oldFetch = globalThis.fetch;
   try {
-    const db = createDatabase({ site: "alice" });
-    assert.throws(() => db.collection("posts", { parse: true }), TypeError);
     globalThis.fetch = async () =>
       Response.json({ document: documentFixture("one", {}) });
+    const reader = (parse) =>
+      createDatabase({
+        site: "alice",
+        collections: { posts: { parse } },
+      }).collection("posts");
     for (const parse of [
       async () => ({}),
       async () => {
@@ -1840,7 +1916,7 @@ test("read parsers reject async results and invalid configuration without maskin
       }),
     ])
       await assert.rejects(
-        db.collection("posts", { parse }).get("one"),
+        reader(parse).get("one"),
         (error) =>
           error.code === "DOCUMENT_VALIDATION_FAILED" &&
           error.documentId === "one" &&
@@ -1848,10 +1924,8 @@ test("read parsers reject async results and invalid configuration without maskin
       );
     await new Promise((resolve) => setImmediate(resolve));
     let invoked = false;
-    const posts = db.collection("posts", {
-      parse: () => {
-        invoked = true;
-      },
+    const posts = reader(() => {
+      invoked = true;
     });
     for (const [response, code] of [
       [
@@ -1869,19 +1943,21 @@ test("read parsers reject async results and invalid configuration without maskin
   }
 });
 
-test("read parsers are handle-local and do not run for counts or writes", async () => {
+test("parsers run for reads and full writes, never for counts, patches or deletes", async () => {
   const oldFetch = globalThis.fetch;
   try {
-    const options = {
-      parse: () => {
-        throw new Error("read only");
+    const seen = [];
+    const posts = createDatabase({
+      site: "alice",
+      collections: {
+        posts: {
+          parse: (data) => {
+            seen.push(data);
+            return data;
+          },
+        },
       },
-    };
-    const posts = createDatabase({ site: "alice" }).collection(
-      "posts",
-      options,
-    );
-    options.parse = () => true;
+    }).collection("posts");
     globalThis.fetch = async (_url, options) =>
       Response.json(
         options.method === "DELETE"
@@ -1889,17 +1965,17 @@ test("read parsers are handle-local and do not run for counts or writes", async 
           : {
               ...writtenFixture(),
               count: 2,
-              document: documentFixture("one", {}),
+              document: documentFixture("one", { read: true }),
             },
       );
     assert.equal(await posts.count(), 2);
-    await posts.add({});
-    await posts.set("one", {});
-    await posts.update("one", {});
+    await posts.update("one", { patch: true });
     await posts.delete("one");
-    await assert.rejects(posts.get("one"), {
-      code: "DOCUMENT_VALIDATION_FAILED",
-    });
+    assert.deepEqual(seen, []);
+    await posts.add({ added: true });
+    await posts.set("one", { set: true });
+    await posts.get("one");
+    assert.deepEqual(seen, [{ added: true }, { set: true }, { read: true }]);
   } finally {
     globalThis.fetch = oldFetch;
   }
@@ -2551,5 +2627,73 @@ test("a callback completes on a page that carries its own query string", async (
   } finally {
     globalThis.window = oldWindow;
     globalThis.fetch = oldFetch;
+  }
+});
+
+test("an empty filter and a null page token both mean no constraint", async () => {
+  const original = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    urls.push(new URL(url));
+    return Response.json({ documents: [], nextPageToken: null, count: 0 });
+  };
+  try {
+    const posts = createDatabase({ site: "alice" }).collection("posts");
+    await posts.list({ where: {}, pageToken: null });
+    await posts.count({ where: {} });
+    for (const url of urls) {
+      assert.equal(url.searchParams.has("where"), false);
+      assert.equal(url.searchParams.has("pageToken"), false);
+    }
+    // Feeding a finished page's token straight back reads the first page.
+    const page = await posts.list();
+    await posts.list({ pageToken: page.nextPageToken });
+    assert.equal(urls.at(-1).searchParams.has("pageToken"), false);
+    for (const pageToken of ["", 0, false])
+      assert.throws(() => posts.list({ pageToken }), TypeError);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("any write, signed in or not, makes this browser's reads of that collection fresh", async () => {
+  const oldFetch = globalThis.fetch,
+    oldNow = Date.now;
+  let now = oldNow();
+  Date.now = () => now;
+  try {
+    const calls = [];
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url: new URL(url), options });
+      return options.method === "GET"
+        ? Response.json({ documents: [], nextPageToken: null })
+        : Response.json(writtenFixture());
+    };
+    const db = createDatabase({ site: "alice" });
+    const guestbook = db.collection("guestbook");
+    await guestbook.add({ message: "hi" });
+    await guestbook.list();
+    await db.collection("posts").list();
+    assert.equal(calls[1].options.cache, "no-store");
+    assert.equal(calls[2].options.cache, "default");
+    now += 10_001;
+    await guestbook.list();
+    assert.equal(calls[3].options.cache, "default");
+    // A write that never got an answer may still have landed.
+    globalThis.fetch = async () => {
+      throw new TypeError("offline");
+    };
+    await assert.rejects(guestbook.add({ message: "again" }), {
+      code: "REQUEST_FAILED",
+    });
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url: new URL(url), options });
+      return Response.json({ documents: [], nextPageToken: null });
+    };
+    await guestbook.list();
+    assert.equal(calls.at(-1).options.cache, "no-store");
+  } finally {
+    globalThis.fetch = oldFetch;
+    Date.now = oldNow;
   }
 });
