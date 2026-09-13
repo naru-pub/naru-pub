@@ -390,12 +390,14 @@ integration("SDK and data API contract", () => {
     if (authorized?.ok) {
       const body = await authorized.json();
       expect(Object.keys(body).sort()).toEqual(["headers", "id", "uploadUrl"]);
-      const stored = await sql<{
-        metadata: unknown;
-      }>`select metadata from site_data_files where id = ${body.id}`.execute(
+      const columns = await sql<{
+        column_name: string;
+      }>`select column_name from information_schema.columns where table_name = 'site_data_files'`.execute(
         db,
       );
-      expect(stored.rows[0].metadata).toEqual({});
+      expect(columns.rows.map((row) => row.column_name)).not.toContain(
+        "metadata",
+      );
     }
   });
 

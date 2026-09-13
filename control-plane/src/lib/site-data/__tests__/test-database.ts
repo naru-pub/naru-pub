@@ -45,6 +45,10 @@ import {
   down as fileVersionDown,
 } from "@/migrations/1788944200000_add_site_data_file_version";
 import {
+  up as dropFileMetadataUp,
+  down as dropFileMetadataDown,
+} from "@/migrations/1789273289882_drop_site_data_file_metadata";
+import {
   up as featureUseUp,
   down as featureUseDown,
 } from "@/migrations/1788473207664_add_supporter_feature_uses";
@@ -74,10 +78,12 @@ export async function setupTestDatabase() {
   await fileMetadataUp(db);
   await versionUp(db);
   await fileVersionUp(db);
+  await dropFileMetadataUp(db);
   await featureUseUp(db);
 }
 export async function teardownTestDatabase() {
   await featureUseDown(db);
+  await dropFileMetadataDown(db);
   await fileVersionDown(db);
   await versionDown(db);
   await fileMetadataDown(db);
