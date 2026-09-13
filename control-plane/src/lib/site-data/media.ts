@@ -54,6 +54,7 @@ type MediaCommand = {
   pageToken?: string;
   limit?: number;
   usage?: boolean;
+  where?: unknown;
 };
 /** Newest first is what a media library is for, and the only order offered. */
 const MEDIA_SORT = sorting("createdAt", "desc");
@@ -155,6 +156,10 @@ export async function executeMedia(command: MediaCommand) {
     // own library screen shows one; website tokens are not offered it.
     if (command.usage && command.adminUserId !== undefined)
       return { usage: await readUsage() };
+    // Refused rather than ignored: a caller that still filters by what a file
+    // belongs to would otherwise get the whole library back, and delete it.
+    if (command.where !== undefined)
+      throw new DataError(400, "Files cannot be filtered.");
     const limit = command.limit ?? 50;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new DataError(400, "Limit must be 1–100.");

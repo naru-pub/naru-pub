@@ -360,6 +360,13 @@ integration("SDK and data API contract", () => {
     });
     expect(second.files.map((file) => file.id)).toEqual(["file_1"]);
     expect(second.nextPageToken).toBeNull();
+    // Filtering by what a file belongs to is refused, never ignored: an old
+    // page that deletes "this post's files" must not get every file back.
+    await expect(
+      (owner.files.list as (options: object) => Promise<unknown>)({
+        where: { postId: "hello" },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
     // The quota readout is the control panel's alone.
     const usage = await nativeFetch(`${origin}/api/data/alice/_files?usage=1`, {
       headers: { Origin: origin, Authorization: `Bearer ${accessToken}` },

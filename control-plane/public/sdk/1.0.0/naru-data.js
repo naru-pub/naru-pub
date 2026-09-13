@@ -249,9 +249,9 @@ function owner(context, token, expiresAt) {
       return result.results;
     },
     files: Object.freeze({
-      list({ limit, pageToken, signal } = {}) {
-        return send(`${root}/_files${query({ limit, pageToken })}`, {
-          signal,
+      list(options = {}) {
+        return send(`${root}/_files${query(options)}`, {
+          signal: options.signal,
           touches: [],
         });
       },

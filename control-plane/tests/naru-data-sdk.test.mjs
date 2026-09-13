@@ -635,9 +635,13 @@ test("the media library pages newest first and deletes by ID", async () => {
     await owner.files.list({ limit: 100, pageToken: "next" });
     assert.equal(calls[0].url.searchParams.get("limit"), "100");
     assert.equal(calls[0].url.searchParams.get("pageToken"), "next");
-    // Files are not looked up by what they belong to.
+    // A filter is sent as given, for the server to refuse, never dropped:
+    // a caller filtering by owner would otherwise act on every file.
     await owner.files.list({ where: { postId: "hello" } });
-    assert.equal(calls[1].url.search, "");
+    assert.equal(
+      calls[1].url.searchParams.get("where"),
+      JSON.stringify({ postId: "hello" }),
+    );
     assert.equal(await owner.files.delete("f1"), undefined);
     assert.equal(calls[2].url.pathname, "/api/data/alice/_files/f1");
   });
