@@ -22,15 +22,9 @@ type MediaFile = {
   name: string;
   contentType: string;
   size: number;
-  status: "ready";
   url: string;
-  version: number;
   createdAt: string;
   updatedAt: string;
-  metadata?: {
-    altText?: string;
-    postId?: string;
-  };
 };
 type Usage = {
   bytes: number;
@@ -61,14 +55,13 @@ async function api(path = "", method = "GET", body?: unknown) {
 
 function uploadToR2(
   url: string,
-  method: string,
   headers: Record<string, string>,
   file: File,
   onProgress: (value: number) => void,
 ) {
   return new Promise<void>((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open(method, url);
+    request.open("PUT", url);
     Object.entries(headers).forEach(([name, value]) =>
       request.setRequestHeader(name, value),
     );
@@ -171,12 +164,7 @@ export default function MediaLibrary() {
       { key, name: file.name, progress: 0, status: "uploading" },
     ]);
     let authorization:
-      | {
-          file: MediaFile;
-          uploadUrl: string;
-          method: string;
-          headers: Record<string, string>;
-        }
+      | { id: string; uploadUrl: string; headers: Record<string, string> }
       | undefined;
     try {
       const created = (await api("", "POST", {
@@ -185,19 +173,15 @@ export default function MediaLibrary() {
         size: file.size,
       })) as NonNullable<typeof authorization>;
       authorization = created;
-      await uploadToR2(
-        created.uploadUrl,
-        created.method,
-        created.headers,
-        file,
-        (progress) => updateUpload(key, { progress }),
+      await uploadToR2(created.uploadUrl, created.headers, file, (progress) =>
+        updateUpload(key, { progress }),
       );
-      await api("/" + created.file.id, "PUT", {});
+      await api("/" + created.id, "PUT", {});
       updateUpload(key, { progress: 100, status: "done" });
       await refresh();
     } catch (reason) {
       if (authorization)
-        void api("/" + authorization.file.id, "DELETE").catch(() => {});
+        void api("/" + authorization.id, "DELETE").catch(() => {});
       updateUpload(key, {
         status: "error",
         error:
@@ -224,18 +208,9 @@ export default function MediaLibrary() {
   }
 
   async function remove(file: MediaFile) {
-    // Applications record what a file belongs to in its metadata, and the SDK
-    // filters on those fields. Whatever they wrote there is worth repeating
-    // before the file goes away for good.
-    const postId =
-      typeof file.metadata?.postId === "string" ? file.metadata.postId : "";
     if (
       !window.confirm(
-        "'" +
-          file.name +
-          `'을 영구 삭제할까요?${
-            postId ? ` ${postId} 글에 속한 파일로 기록되어 있습니다.` : ""
-          } 이 URL을 사용하는 글의 이미지나 다운로드가 깨질 수 있습니다.`,
+        `'${file.name}'을 영구 삭제할까요? 이 URL을 사용하는 글의 이미지나 다운로드가 깨질 수 있습니다.`,
       )
     )
       return;

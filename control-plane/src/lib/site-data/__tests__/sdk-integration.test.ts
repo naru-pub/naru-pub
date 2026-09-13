@@ -165,7 +165,8 @@ integration("SDK and data API contract", () => {
         startedAt: Date.now(),
       }),
     );
-    site = { site: "alice", controlPlaneOrigin: origin };
+    // controlPlaneOrigin is a test-only hook, left out of the public types.
+    site = { site: "alice", controlPlaneOrigin: origin } as SiteOptions;
     owner = (await ownerSession(site))!;
     expect(location.href).toBe(redirectUri);
     accessToken = JSON.parse(storage.get(sessionKey)!).accessToken;
@@ -332,41 +333,63 @@ integration("SDK and data API contract", () => {
     });
   });
 
-  test("the media library pages newest first and filters on metadata", async () => {
+  test("the media library pages newest first", async () => {
     // Uploads need object storage; everything after the bytes land is database
     // work, and that is what the listing does.
     for (let index = 1; index <= 3; index++)
       await sql`insert into site_data_files
-        (id, user_id, object_key, original_name, content_type, size_bytes, status, metadata, created_at)
+        (id, user_id, object_key, original_name, content_type, size_bytes, status, created_at)
         values (${`file_${index}`}, ${ownerId}, ${`${ownerId}/file_${index}.png`}, ${`file_${index}.png`},
-          'image/png', ${index * 100}, 'ready', ${JSON.stringify({
-            postId: index === 3 ? "other" : "hello",
-          })}::jsonb, now() + ${sql.raw(`interval '${index} seconds'`)})`.execute(
+          'image/png', ${index * 100}, 'ready', now() + ${sql.raw(`interval '${index} seconds'`)})`.execute(
         db,
       );
     const first = await owner.files.list({ limit: 2 });
     expect(first.files.map((file) => file.id)).toEqual(["file_3", "file_2"]);
-    expect(first.files[0]).not.toHaveProperty("version");
-    expect(first.nextPageToken).toEqual(expect.any(String));
+    expect(Object.keys(first.files[0]).sort()).toEqual([
+      "contentType",
+      "createdAt",
+      "id",
+      "name",
+      "size",
+      "updatedAt",
+      "url",
+    ]);
     const second = await owner.files.list({
       limit: 2,
       pageToken: first.nextPageToken,
     });
     expect(second.files.map((file) => file.id)).toEqual(["file_1"]);
     expect(second.nextPageToken).toBeNull();
-    const matched = await owner.files.list({ where: { postId: "hello" } });
-    expect(matched.files.map((file) => file.id)).toEqual(["file_2", "file_1"]);
-    await expect(
-      owner.files.list({
-        where: { postId: "other" },
-        pageToken: first.nextPageToken,
-      }),
-    ).rejects.toMatchObject({ status: 400 });
     // The quota readout is the control panel's alone.
     const usage = await nativeFetch(`${origin}/api/data/alice/_files?usage=1`, {
       headers: { Origin: origin, Authorization: `Bearer ${accessToken}` },
     });
     expect(await usage.json()).not.toHaveProperty("usage");
+    // Uploads carry no metadata to find them by.
+    const authorized = await nativeFetch(`${origin}/api/data/alice/_files`, {
+      method: "POST",
+      headers: {
+        Origin: origin,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "a.png",
+        contentType: "image/png",
+        size: 1,
+        metadata: { postId: "hello" },
+      }),
+    }).catch(() => null);
+    if (authorized?.ok) {
+      const body = await authorized.json();
+      expect(Object.keys(body).sort()).toEqual(["headers", "id", "uploadUrl"]);
+      const stored = await sql<{
+        metadata: unknown;
+      }>`select metadata from site_data_files where id = ${body.id}`.execute(
+        db,
+      );
+      expect(stored.rows[0].metadata).toEqual({});
+    }
   });
 
   // Public reads are the request a site makes most, and letting a shared cache

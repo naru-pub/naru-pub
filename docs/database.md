@@ -63,7 +63,7 @@ A page served from `<login>.naru.pub` belongs to that site, so `collection(name)
 
 `get` returns `{ id, data, version, createdAt, updatedAt }`; a missing document throws a 404 error. `set` replaces the whole document or creates it if absent. `add` generates a UUID, without requiring read permission. `add` and `set` return `{ id, version, createdAt, updatedAt }`, so a caller rendering what it just saved uses the server's own timestamps rather than the browser clock. `delete` is idempotent and resolves with nothing. JSON null is stored as a value, not treated as deletion. Render user data with `textContent`, not `innerHTML`.
 
-SDK declarations are available alongside the module at `/sdk/1.0.0/naru-data.d.ts`. The SDK pins `https://naru.pub` as its control-plane origin, even when bundled/copied; `controlPlaneOrigin` accepts only HTTP loopback origins, for development.
+SDK declarations are available alongside the module at `/sdk/1.0.0/naru-data.d.ts`. The SDK pins `https://naru.pub` as its control-plane origin, even when bundled/copied. Naru's own tests point it at a loopback server through an undocumented `controlPlaneOrigin` option, which accepts nothing else.
 
 ## Website owner login
 
@@ -161,21 +161,21 @@ Public/website-token root: `/api/data/:site`. Control-plane root: `/api/account/
 | PUT    | `/_files/:id`                           | Owner-only finalize; verifies the stored bytes                      |
 | DELETE | `/_files/:id`                           | `{ success: true }`                                                 |
 
-A write result is `{ id, version, createdAt, updatedAt }`; `_batch` accepts `add`, `set` and `delete` operations and returns one result per operation in order, with `{ success: true }` for deletes. A list accepts `where` (URL-encoded JSON), `orderBy` (URL-encoded JSON array of one or two `[field, direction]` pairs), `limit`, `pageToken` and `includeTotal=1`. `/_files` accepts `limit`, `pageToken` and `where`, which filters the file's `metadata`; it always lists newest first. The public route does not accept `PATCH`.
+A write result is `{ id, version, createdAt, updatedAt }`; `_batch` accepts `add`, `set` and `delete` operations and returns one result per operation in order, with `{ success: true }` for deletes. A list accepts `where` (URL-encoded JSON), `orderBy` (URL-encoded JSON array of one or two `[field, direction]` pairs), `limit`, `pageToken` and `includeTotal=1`. `/_files` accepts `limit` and `pageToken` and always lists newest first. An upload authorization takes `{ name, contentType, size }` and returns `{ id, uploadUrl, headers }`: PUT the bytes to `uploadUrl` with those headers, then finalize with `PUT /_files/:id`. A file is `{ id, name, contentType, size, url, createdAt, updatedAt }`. The public route does not accept `PATCH`.
 
 All JSON request bodies require `Content-Type: application/json`. Errors return `{ error }` with an HTTP status (400 invalid input, 401 no admin session, 403 denied, 404 missing, 405 unsupported method, 409 duplicate/quota/conflict, 413 oversized, 415 wrong content type, 429 rate limit). Public preflight needs no authentication. Errors, writes, and authenticated reads are not cached; anonymous reads from `world`-readable collections may use the short shared cache described below.
 
 Owner authorization endpoints:
 
-| Endpoint                                     | Purpose                                                                                                                                           |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /database/authorize`                    | Login/consent UI; never issues a code on GET.                                                                                                     |
-| `GET /api/data-auth/discover`                | Discovers the public site Client ID for an exact registered callback and matching Origin.                                                         |
-| `POST /api/data-auth/authorize`              | Same-origin owner approval with `clientId`, `site`, `redirectUri`, `challenge`, `state`, `collections`; returns validated redirect URL.           |
-| `POST /api/data-auth/token`                  | Exchange JSON `{ code, verifier, clientId, redirectUri }` from the registered Origin; returns `{ accessToken, tokenType, expiresIn, expiresAt }`. |
-| `POST /api/data-auth/revoke`                 | Revoke the bearer token supplied in Authorization; requires its registered Origin.                                                                |
-| `GET/POST /api/account/database-clients`     | Same-origin owner registration listing/creation (`{ redirectUri, collections }`).                                                                 |
-| `PATCH/DELETE /api/account/database-clients` | Same-origin owner revoke-all/remove registration (`{ id }`).                                                                                      |
+| Endpoint                                     | Purpose                                                                                                                                 |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /database/authorize`                    | Login/consent UI; never issues a code on GET.                                                                                           |
+| `GET /api/data-auth/discover`                | Discovers the public site Client ID for an exact registered callback and matching Origin.                                               |
+| `POST /api/data-auth/authorize`              | Same-origin owner approval with `clientId`, `site`, `redirectUri`, `challenge`, `state`, `collections`; returns validated redirect URL. |
+| `POST /api/data-auth/token`                  | Exchange JSON `{ code, verifier, clientId, redirectUri }` from the registered Origin; returns `{ accessToken, expiresAt }`.             |
+| `POST /api/data-auth/revoke`                 | Revoke the bearer token supplied in Authorization; requires its registered Origin.                                                      |
+| `GET/POST /api/account/database-clients`     | Same-origin owner registration listing/creation (`{ redirectUri, collections }`).                                                       |
+| `PATCH/DELETE /api/account/database-clients` | Same-origin owner revoke-all/remove registration (`{ id }`).                                                                            |
 
 There are at most 20 registrations per site, 20 pending codes and 50 live tokens per registration. Expired grants are cleaned during authorization activity. Removing registrations/accounts/sessions cascades into their grants.
 
@@ -195,12 +195,11 @@ There are at most 20 registrations per site, 20 pending codes and 50 live tokens
 Owner sessions can upload files directly to the `naru-media` R2 bucket. The SDK
 obtains a ten-minute signed upload URL, sends the bytes directly to R2, and asks
 Naru to verify the stored size and content type before returning a ready file.
-Database documents should store `file.id` or `file.url`, not base64 data.
+Database documents should store `file.url`, not base64 data.
 
 ```js
 const image = await owner.files.upload(fileInput.files[0], {
   signal: abortController.signal,
-  metadata: { altText: "A pigeon", postId: "hello" },
 });
 await owner.collection("posts").set("hello", {
   title: "Hello",
@@ -208,13 +207,13 @@ await owner.collection("posts").set("hello", {
 });
 ```
 
-The library pages like a collection, newest first, and `where` filters on the
-top-level fields of each file's `metadata`. Storing what you will need to find a
-file by means the server does the finding; nothing has to walk the whole library.
+The library pages like a collection, newest first. Naru does not record which
+documents use a file: a page that uses a file stores its URL, and deleting a file
+is a deliberate act in the media library or through `owner.files.delete(id)`.
+Uploads that are no longer referenced stay until someone deletes them.
 
 ```js
-const { files } = await owner.files.list({ where: { postId: "hello" } });
-for (const file of files) await owner.files.delete(file.id);
+const { files, nextPageToken } = await owner.files.list({ limit: 50 });
 ```
 
 사이트 소유자는 **미디어 라이브러리**(`/media`)에서 파일을 끌어
@@ -227,7 +226,7 @@ document writes. Each file is limited to 25 MiB; each site is limited to 250
 MiB. JPEG, PNG, WebP, AVIF, GIF, supported audio, PDF, ZIP, and
 plain text are accepted. HTML and SVG are rejected. Public objects are served
 from the separately isolated `media.naru.pub` origin. Deleting a file removes
-both the R2 object and its metadata; deleting an account removes its media
+both the R2 object and its database row; deleting an account removes its media
 prefix. Upload authorizations that are not finalized, including ones whose
 transfer failed, are removed by the background cleanup after one hour.
 
@@ -359,7 +358,7 @@ Draft and public copies share an ID. Saving a private draft does not unpublish o
 
 `site_data_site_clients` stores one persistent ID per owner, independently of callback rows. Migration preserves callback rows as internal registration IDs, but invalidates all existing authorization codes and website access tokens. Old callback IDs are not accepted as public Client IDs. Each registered page retains its exact callback and collection IDs. Changing a callback URL or its collection permissions revokes all of its codes and access tokens, including when widening scope. Reducing its token lifetime also revokes them. Increasing only the lifetime preserves existing tokens with their original deadlines; pending codes retain the duration already approved. Saving an unchanged registration does not revoke access. Removing a callback cascades the same revocation; the website ID survives even when the last callback is removed.
 
-Every `/api/data-auth/token` exchange returns `{accessToken, tokenType: "Bearer", expiresIn, expiresAt}`. `expiresAt` is the fixed expiry in Unix milliseconds; the token lasts no longer than the configured page lifetime, consented duration, platform maximum, or approving Naru session, whichever ends first. `POST /api/data-auth/revoke` takes the bearer token and revokes it idempotently. The unpublished renewal tables and `/refresh` and `/end-session` endpoints have been removed; the existing access-token table is sufficient. Requests use explicit credentials and never ambient cookies.
+Every `/api/data-auth/token` exchange returns `{ accessToken, expiresAt }`; the token is sent as `Authorization: Bearer <accessToken>`. `expiresAt` is the fixed expiry in Unix milliseconds; the token lasts no longer than the configured page lifetime, consented duration, platform maximum, or approving Naru session, whichever ends first. `POST /api/data-auth/revoke` takes the bearer token and revokes it idempotently. The unpublished renewal tables and `/refresh` and `/end-session` endpoints have been removed; the existing access-token table is sufficient. Requests use explicit credentials and never ambient cookies.
 
 ### Configuring token lifetime
 

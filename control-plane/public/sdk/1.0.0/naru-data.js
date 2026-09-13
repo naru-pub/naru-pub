@@ -19,6 +19,7 @@ const PUBLIC_CACHE_MS = 10_000;
 
 // Where requests go. A page on alice.naru.pub belongs to the site alice, so
 // only custom domains and local development need to say which site they are.
+// controlPlaneOrigin is for Naru's own tests against a loopback server.
 function target({ site, controlPlaneOrigin = CONTROL_PLANE } = {}) {
   site ??= /^([a-z0-9-]+)\.naru\.pub$/.exec(
     globalThis.location?.hostname ?? "",
@@ -248,13 +249,13 @@ function owner(context, token, expiresAt) {
       return result.results;
     },
     files: Object.freeze({
-      list(options = {}) {
-        return send(`${root}/_files${query(options)}`, {
-          signal: options.signal,
+      list({ limit, pageToken, signal } = {}) {
+        return send(`${root}/_files${query({ limit, pageToken })}`, {
+          signal,
           touches: [],
         });
       },
-      async upload(source, { metadata = {}, signal } = {}) {
+      async upload(source, { signal } = {}) {
         const file = await shrink(source);
         const authorization = await send(`${root}/_files`, {
           method: "POST",
@@ -262,13 +263,12 @@ function owner(context, token, expiresAt) {
             name: file.name || "upload",
             contentType: file.type,
             size: file.size,
-            metadata,
           },
           signal,
           touches: [],
         });
         const upload = await fetch(authorization.uploadUrl, {
-          method: authorization.method,
+          method: "PUT",
           headers: authorization.headers,
           body: file,
           signal,
@@ -282,7 +282,7 @@ function owner(context, token, expiresAt) {
             `File upload failed (HTTP ${upload.status}).`,
           );
         const finished = await send(
-          `${root}/_files/${segment(authorization.file.id)}`,
+          `${root}/_files/${segment(authorization.id)}`,
           { method: "PUT", body: {}, signal, touches: [] },
         );
         return finished.file;

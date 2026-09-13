@@ -502,16 +502,13 @@ async function upload(file, images) {
           return new Response(null, { status: 200 });
         if (method === "POST")
           return Response.json({
-            file: { id: "f1", status: "pending" },
+            id: "f1",
             uploadUrl: "https://upload.example/signed",
-            method: "PUT",
             headers: { "Content-Type": "image/webp" },
           });
-        return Response.json({ file: { id: "f1", status: "ready" } });
+        return Response.json({ file: { id: "f1", url: "https://media" } });
       });
-      stored = await owner.files.upload(file, {
-        metadata: { postId: "hello" },
-      });
+      stored = await owner.files.upload(file);
     });
   } finally {
     images?.restore();
@@ -522,7 +519,7 @@ async function upload(file, images) {
 test("upload authorizes, sends the bytes straight to storage, then finalizes", async () => {
   const file = new File(["hello"], "note.txt", { type: "text/plain" });
   const { calls, stored, declared } = await upload(file);
-  assert.deepEqual(stored, { id: "f1", status: "ready" });
+  assert.deepEqual(stored, { id: "f1", url: "https://media" });
   assert.deepEqual(
     calls.map(({ method, url }) => [method, url.href]),
     [
@@ -535,7 +532,6 @@ test("upload authorizes, sends the bytes straight to storage, then finalizes", a
     name: "note.txt",
     contentType: "text/plain",
     size: 5,
-    metadata: { postId: "hello" },
   });
   assert.equal(calls[1].body, file);
   assert.equal(calls[1].headers.Authorization, undefined);
@@ -559,7 +555,6 @@ test("a large photo is shrunk to 2048px WebP before authorization", async () => 
     name: "IMG_1.webp",
     contentType: "image/webp",
     size: 1000,
-    metadata: { postId: "hello" },
   });
   assert.equal(calls[1].body.type, "image/webp");
 });
@@ -613,9 +608,8 @@ test("a failed transfer is reported and not finalized", async () => {
       url.host === "upload.example"
         ? new Response(null, { status: 403 })
         : Response.json({
-            file: { id: "f1" },
+            id: "f1",
             uploadUrl: "https://upload.example/signed",
-            method: "PUT",
             headers: {},
           }),
     );
@@ -627,7 +621,7 @@ test("a failed transfer is reported and not finalized", async () => {
   });
 });
 
-test("the media library lists by metadata and deletes by ID", async () => {
+test("the media library pages newest first and deletes by ID", async () => {
   await browser(async ({ calls, respond, storage }) => {
     saveSession(storage);
     const owner = await ownerSession();
@@ -638,12 +632,13 @@ test("the media library lists by metadata and deletes by ID", async () => {
           : { files: [], nextPageToken: null },
       ),
     );
-    await owner.files.list({ where: { postId: "hello" }, limit: 100 });
-    assert.deepEqual(JSON.parse(calls[0].url.searchParams.get("where")), {
-      postId: "hello",
-    });
+    await owner.files.list({ limit: 100, pageToken: "next" });
     assert.equal(calls[0].url.searchParams.get("limit"), "100");
+    assert.equal(calls[0].url.searchParams.get("pageToken"), "next");
+    // Files are not looked up by what they belong to.
+    await owner.files.list({ where: { postId: "hello" } });
+    assert.equal(calls[1].url.search, "");
     assert.equal(await owner.files.delete("f1"), undefined);
-    assert.equal(calls[1].url.pathname, "/api/data/alice/_files/f1");
+    assert.equal(calls[2].url.pathname, "/api/data/alice/_files/f1");
   });
 });

@@ -565,29 +565,19 @@ try {
               <p>
                 관리자 클라이언트의 <code>owner.files.upload(file)</code>은
                 브라우저에서 Naru Media로 파일을 직접 올리고, 확인된 공개 URL과
-                파일 ID를 반환합니다. 문서에는 base64 대신 이 URL이나 ID를
-                저장하세요. 파일 하나는 25 MiB, 사이트당 250 MiB까지 저장할 수
-                있습니다. HTML과 SVG는 허용하지 않습니다.
+                파일 ID를 반환합니다. 문서에는 base64 대신 이 URL을 저장하세요.
+                파일 하나는 25 MiB, 사이트당 250 MiB까지 저장할 수 있습니다.
+                HTML과 SVG는 허용하지 않습니다.
               </p>
-              <Code>{`const image = await owner.files.upload(fileInput.files[0], {
-  metadata: { altText: "설명", postId: "hello" },
-});
+              <Code>{`const image = await owner.files.upload(fileInput.files[0]);
 await owner.collection("posts").set("hello", {
   title: "안녕하세요",
   coverImage: image.url,
-});
-
-// metadata의 최상위 스칼라 값은 서버가 거를 수 있으므로, 글을 지울 때
-// 라이브러리를 통째로 받지 않고 그 글의 이미지만 찾아 정리합니다.
-const { files } = await owner.files.list({ where: { postId: "hello" } });
-for (const file of files) await owner.files.delete(file.id);`}</Code>
+});`}</Code>
               <p>
-                <code>metadata</code>에 넣은 값은 <code>files.list()</code>에
-                그대로 돌아오고, 최상위 스칼라 값은{" "}
-                <code>files.list({"{ where }"})</code>로 서버에서 거를 수
-                있습니다. 어떤 문서가 그 파일을 쓰는지 적어 두면, 문서를 삭제할
-                때 딸린 파일도 함께 지워 저장 용량이 새는 것을 막을 수 있습니다.
-                사용량은 제어판의 미디어 라이브러리에서 확인하세요.
+                나루는 어떤 글이 어떤 파일을 쓰는지 기록하지 않습니다. 글을
+                지워도 그 글의 이미지는 남으니, 필요 없어진 파일은 미디어
+                라이브러리에서 지우세요. 사용량도 그곳에서 확인할 수 있습니다.
               </p>
               <h3 className="text-lg font-semibold">원자적 batch</h3>
               <p>
@@ -613,9 +603,7 @@ for (const file of files) await owner.files.delete(file.id);`}</Code>
                 <code>UNREGISTERED_REDIRECT_URI</code>,
                 <code>COLLECTION_NOT_AUTHORIZED</code>,
                 <code>VERSION_CONFLICT</code>,<code>OWNER_SESSION_EXPIRED</code>
-                처럼 처리 가능한 안정적인 값이 들어갑니다. 로컬 개발에서는{" "}
-                <code>controlPlaneOrigin</code>에 HTTP localhost 또는 loopback
-                주소만 지정할 수 있습니다.
+                처럼 처리 가능한 안정적인 값이 들어갑니다.
               </p>
             </Section>
             <Section id="example" title="06 · 예제 블로그 설치">

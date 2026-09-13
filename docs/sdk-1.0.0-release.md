@@ -82,7 +82,7 @@ to an ephemeral loopback port.
 The published SDK sends real HTTP requests to the actual data/auth route handlers
 and PostgreSQL. No service or response mocks are used. Coverage includes JSON and
 server metadata, conditional writes, filtered cursor pagination and counts, owner
-batch results and rollback, optional read parsing, media listing/paging/metadata
+batch results and rollback, optional read parsing, media listing/paging
 filtering and patching, and token revocation. Browser
 Origin and sessionStorage are supplied by a small shim, and owner credentials are
 issued through the real authorization service during setup. This is a contract

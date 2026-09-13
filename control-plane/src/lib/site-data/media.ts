@@ -14,8 +14,6 @@ import { previewFeatureAccess, userHasFeature } from "@/lib/entitlements";
 import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { tokenScope } from "./owner-auth";
 import { DataError, name } from "./validation";
-import { filters } from "./filters";
-import { filterConditions } from "./service";
 import { decodeCursor, encodeCursor, sorting } from "./pagination";
 
 export const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
@@ -55,19 +53,10 @@ type MediaCommand = {
   body?: Record<string, unknown>;
   pageToken?: string;
   limit?: number;
-  where?: unknown;
   usage?: boolean;
 };
-export const MAX_MEDIA_METADATA_BYTES = 8192;
 /** Newest first is what a media library is for, and the only order offered. */
 const MEDIA_SORT = sorting("createdAt", "desc");
-function metadataInput(value: unknown) {
-  const metadata =
-    value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  if (Buffer.byteLength(JSON.stringify(metadata)) > MAX_MEDIA_METADATA_BYTES)
-    throw new DataError(413, "File metadata exceeds 8 KiB.");
-  return metadata;
-}
 
 function publicUrl(objectKey: string) {
   return `${mediaOrigin()}/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
@@ -78,8 +67,6 @@ function output(file: {
   original_name: string;
   content_type: string;
   size_bytes: number;
-  status: string;
-  metadata: unknown;
   created_at: Date | string;
   updated_at: Date | string;
 }) {
@@ -88,8 +75,6 @@ function output(file: {
     name: file.original_name,
     contentType: file.content_type,
     size: file.size_bytes,
-    status: file.status,
-    metadata: file.metadata,
     url: publicUrl(file.object_key),
     createdAt: file.created_at,
     updatedAt: file.updated_at,
@@ -113,18 +98,7 @@ function uploadInput(body: Record<string, unknown>) {
     Number(size) > MAX_MEDIA_FILE_BYTES
   )
     throw new DataError(413, "File must be between 1 byte and 25 MiB.");
-  const metadata =
-    body.metadata &&
-    typeof body.metadata === "object" &&
-    !Array.isArray(body.metadata)
-      ? body.metadata
-      : {};
-  return {
-    filename,
-    contentType,
-    size: Number(size),
-    metadata: metadataInput(body.metadata),
-  };
+  return { filename, contentType, size: Number(size) };
 }
 
 export async function executeMedia(command: MediaCommand) {
@@ -184,39 +158,30 @@ export async function executeMedia(command: MediaCommand) {
     const limit = command.limit ?? 50;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new DataError(400, "Limit must be 1–100.");
-    const sort = MEDIA_SORT;
-    const filter = filters(command.where);
+    // Files are not queried by what they belong to: a page records the URLs
+    // it uses, and the library is only ever read newest first.
     const cursor = decodeCursor(
       command.pageToken,
       owner.id,
-      sort,
-      filter.fingerprint,
+      MEDIA_SORT,
+      undefined,
       "f",
     );
-    const comparison = sort.direction === "asc" ? ">" : "<";
-    const sortValue = sql.ref(sort.column);
     let query = files()
       .where("status", "=", "ready")
       .selectAll()
       .select(
-        (sort.orderBy === "id"
-          ? sql<string | null>`null`
-          : sql<string>`to_char(${sortValue} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
-        ).as("cursor_value"),
+        sql<string>`to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as(
+          "cursor_value",
+        ),
       )
-      .orderBy(sortValue, sort.direction)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
       .limit(limit + 1);
-    for (const condition of filterConditions(filter, "metadata"))
-      query = query.where(condition);
-    if (sort.orderBy !== "id") query = query.orderBy("id", sort.direction);
-    if (cursor) {
-      if (sort.orderBy === "id")
-        query = query.where("id", comparison, cursor.id);
-      else
-        query = query.where(
-          sql<boolean>`(${sortValue}, id) ${sql.raw(comparison)} (${cursor.value}::timestamptz, ${cursor.id})`,
-        );
-    }
+    if (cursor)
+      query = query.where(
+        sql<boolean>`(created_at, id) < (${cursor.value}::timestamptz, ${cursor.id})`,
+      );
     const rows = await query.execute();
     const page = rows.slice(0, limit);
     const last = page.at(-1);
@@ -226,10 +191,10 @@ export async function executeMedia(command: MediaCommand) {
         rows.length > limit && last
           ? encodeCursor(
               owner.id,
-              sort,
+              MEDIA_SORT,
               last.id,
               last.cursor_value,
-              filter.fingerprint,
+              undefined,
               "f",
             )
           : null,
@@ -279,7 +244,6 @@ export async function executeMedia(command: MediaCommand) {
           original_name: input.filename,
           content_type: input.contentType,
           size_bytes: input.size,
-          metadata: input.metadata,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -295,10 +259,10 @@ export async function executeMedia(command: MediaCommand) {
         }) as never,
         { expiresIn: 10 * 60 },
       );
+      // PUT the bytes to uploadUrl with these headers, then finalize by id.
       return {
-        file: output(file),
+        id: file.id,
         uploadUrl,
-        method: "PUT",
         headers: { "Content-Type": input.contentType },
       };
     } catch (error) {

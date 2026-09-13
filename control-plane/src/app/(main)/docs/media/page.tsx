@@ -11,9 +11,8 @@ const sections = [
   ["start", "01 · 미디어 라이브러리에서 시작하기"],
   ["upload", "02 · 웹 SDK로 올리기"],
   ["resize", "03 · 큰 사진은 알아서 줄입니다"],
-  ["metadata", "04 · 어떤 글의 파일인지 적어 두기"],
-  ["limits", "05 · 한도와 허용 형식"],
-  ["cleanup", "06 · 정리와 삭제"],
+  ["limits", "04 · 한도와 허용 형식"],
+  ["cleanup", "05 · 정리와 삭제"],
 ];
 
 function Section({
@@ -148,38 +147,7 @@ await owner.collection("posts").set("hello", {
               </p>
             </Section>
 
-            <Section id="metadata" title="04 · 어떤 글의 파일인지 적어 두기">
-              <p>
-                <code>metadata</code>에 넣은 값은 파일을 읽을 때 그대로
-                돌아옵니다. 어떤 글이 그 파일을 쓰는지 적어 두면, 나중에 글을
-                지울 때 딸린 파일도 함께 지워 저장 용량이 새는 것을 막을 수
-                있습니다.
-              </p>
-              <p>
-                <code>files.list()</code>의 <code>where</code>는 이 안의 최상위
-                필드를 컬렉션 질의와 똑같은 규칙으로 거릅니다. 찾을 거리를
-                스칼라로 담아 두면 서버가 찾아 주므로, 파일 한 장을 찾겠다고
-                라이브러리를 통째로 받아 올 일이 없습니다.
-              </p>
-              <Code>{`await owner.files.upload(file, {
-  metadata: { altText: "비둘기 사진", postId: "hello" },
-});
-
-// 서버가 찾습니다. 라이브러리를 훑지 않습니다.
-const { files } = await owner.files.list({ where: { postId: "hello" } });
-for (const file of files) console.log(file.url);`}</Code>
-              <p>
-                <code>metadata</code>는 올릴 때 정하고 나중에 고칠 수 없습니다.
-                찾을 거리가 바뀔 수 있다면 문서 쪽에 파일 주소를 적어 두세요.
-              </p>
-              <p>
-                <code>altText</code>는 화면 낭독기를 위한 설명입니다. 문서에
-                이미지를 넣을 때 함께 저장해 두면 사이트에서 그대로 쓸 수
-                있습니다.
-              </p>
-            </Section>
-
-            <Section id="limits" title="05 · 한도와 허용 형식">
+            <Section id="limits" title="04 · 한도와 허용 형식">
               <p>
                 파일 하나는 <strong>25 MiB</strong>까지, 사이트 하나는{" "}
                 <strong>250 MiB</strong>까지 저장할 수 있습니다. 데이터베이스
@@ -199,7 +167,7 @@ for (const file of files) console.log(file.url);`}</Code>
               <Code>{`const { files, nextPageToken } = await owner.files.list({ limit: 50 });`}</Code>
             </Section>
 
-            <Section id="cleanup" title="06 · 정리와 삭제">
+            <Section id="cleanup" title="05 · 정리와 삭제">
               <p>
                 <code>files.delete(id)</code>는 저장된 파일과 그 정보를 함께
                 지웁니다. <strong>되돌릴 수 없습니다.</strong> 미디어
@@ -207,8 +175,12 @@ for (const file of files) console.log(file.url);`}</Code>
                 있는지는 직접 확인해야 합니다. 지운 파일의 주소를 가리키던
                 이미지는 깨집니다.
               </p>
-              <Code>{`const { files } = await owner.files.list({ where: { postId: "hello" } });
-for (const file of files) await owner.files.delete(file.id);`}</Code>
+              <p>
+                나루는 어떤 글이 어떤 파일을 쓰는지 기록하지 않습니다. 글을
+                지워도 그 글에 넣은 이미지는 저장 공간에 남으니, 더 쓰지 않는
+                파일은 미디어 라이브러리에서 골라 지우세요.
+              </p>
+              <Code>{`await owner.files.delete(image.id);`}</Code>
               <p>
                 끝내 마무리되지 않은 업로드 승인은 한 시간 뒤 배경 정리 작업이
                 치웁니다. 계정을 지우면 그 계정의 미디어도 함께 사라집니다.

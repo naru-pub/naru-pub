@@ -80,13 +80,9 @@ function matchVersion(expected: number, actual: number | undefined) {
       "VERSION_CONFLICT",
     );
 }
-/** Documents filter on `data`; media filters on `metadata`. The column is only
- * ever one of those two literals, never caller-supplied text. */
-export function filterConditions(
-  filter: ReturnType<typeof filters>,
-  column: "data" | "metadata" = "data",
-) {
-  const target = sql.ref(column);
+/** Filters address top-level fields of a document's `data`. */
+function filterConditions(filter: ReturnType<typeof filters>) {
+  const target = sql.ref("data");
   const conditions = [];
   if (filter.entries.length) {
     // GIN finds candidates; equality checks enforce exact scalar semantics,

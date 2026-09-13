@@ -71,11 +71,15 @@ export async function ownerAuthRequest(request: Request, action: string) {
     if (crossOrigin) {
       if (request.method !== "POST")
         throw new DataError(405, "Method not allowed.");
-      if (action === "token")
-        return Response.json(
-          await exchangeCode(await jsonBody(request), origin),
-          { headers },
+      if (action === "token") {
+        // The expiry instant is all a browser needs; a lifetime in seconds
+        // would only drift from it by the time the response is read.
+        const { accessToken, expiresAt } = await exchangeCode(
+          await jsonBody(request),
+          origin,
         );
+        return Response.json({ accessToken, expiresAt }, { headers });
+      }
       const match = /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(
         request.headers.get("authorization") ?? "",
       );

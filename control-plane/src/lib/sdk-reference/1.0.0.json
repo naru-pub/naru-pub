@@ -645,7 +645,7 @@
         {
           "name": "files",
           "optional": false,
-          "signature": "files: {\n  delete(id: string, options?: RequestOptions): Promise<void>;\n  list(\n    options?: RequestOptions & {\n      limit?: number;\n      pageToken?: string | null;\n      where?: Filter;\n    },\n  ): Promise<{ files: StoredFile[]; nextPageToken: string | null }>;\n  upload(\n    file: Blob | File,\n    options?: RequestOptions & { metadata?: { [key: string]: Json } },\n  ): Promise<StoredFile>;\n}",
+          "signature": "files: {\n  delete(id: string, options?: RequestOptions): Promise<void>;\n  list(\n    options?: RequestOptions & {\n      limit?: number;\n      pageToken?: string | null;\n    },\n  ): Promise<{ files: StoredFile[]; nextPageToken: string | null }>;\n  upload(\n    file: Blob | File,\n    options?: RequestOptions,\n  ): Promise<StoredFile>;\n}",
           "summary": [],
           "throws": []
         },
@@ -872,23 +872,6 @@
       "extends": [],
       "members": [
         {
-          "name": "controlPlaneOrigin",
-          "optional": true,
-          "signature": "controlPlaneOrigin?: string",
-          "summary": [
-            {
-              "type": "paragraph",
-              "spans": [
-                {
-                  "type": "text",
-                  "value": "개발용입니다. HTTP 루프백 출처만 받습니다."
-                }
-              ]
-            }
-          ],
-          "throws": []
-        },
-        {
           "name": "site",
           "optional": true,
           "signature": "site?: string",
@@ -955,23 +938,6 @@
           "throws": []
         },
         {
-          "name": "metadata",
-          "optional": false,
-          "signature": "metadata: Json",
-          "summary": [
-            {
-              "type": "paragraph",
-              "spans": [
-                {
-                  "type": "text",
-                  "value": "올릴 때 넘긴 값입니다."
-                }
-              ]
-            }
-          ],
-          "throws": []
-        },
-        {
           "name": "name",
           "optional": false,
           "signature": "name: string",
@@ -996,13 +962,6 @@
           "throws": []
         },
         {
-          "name": "status",
-          "optional": false,
-          "signature": "status: \"ready\"",
-          "summary": [],
-          "throws": []
-        },
-        {
           "name": "updatedAt",
           "optional": false,
           "signature": "updatedAt: string",
@@ -1023,7 +982,7 @@
                 },
                 {
                   "type": "text",
-                  "value": "의 공개 주소입니다. 문서에는 이 주소를 저장하세요."
+                  "value": "의 공개 주소입니다. 이 파일을 쓰는 문서에 이 주소를 저장하세요. 파일이 어느 문서에 쓰이는지는 나루가 기록하지 않습니다."
                 }
               ]
             }

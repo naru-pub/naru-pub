@@ -90,11 +90,14 @@ async function owner() {
     { type: "update", collection: "posts", id: "one", data: {} },
   ]);
   const file: StoredFile = await admin.files.upload(new Blob(["x"]), {
-    metadata: { postId: "one" },
     signal,
   });
   const url: string = file.url;
-  const listing = await admin.files.list({ where: { postId: "one" } });
+  // @ts-expect-error Uploads carry no metadata to find them by.
+  admin.files.upload(new Blob(["x"]), { metadata: { postId: "one" } });
+  const listing = await admin.files.list({ limit: 20, pageToken: null });
+  // @ts-expect-error The library is not filtered by what files belong to.
+  admin.files.list({ where: { postId: "one" } });
   const files: StoredFile[] = listing.files;
   await admin.files.delete(file.id);
   // @ts-expect-error Image settings are fixed.

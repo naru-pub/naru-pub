@@ -64,9 +64,7 @@ export default async function MediaPage() {
         </p>
         <pre className="overflow-x-auto bg-muted p-3 text-sm">
           {`const owner = await ownerSession();
-const image = await owner.files.upload(input.files[0], {
-  metadata: { postId: "hello" },
-});
+const image = await owner.files.upload(input.files[0]);
 // image.url 을 문서에 저장해 두고 그대로 사용합니다.
 const { files, nextPageToken } = await owner.files.list({ limit: 50 });`}
         </pre>

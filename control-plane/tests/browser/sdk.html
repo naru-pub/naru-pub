@@ -139,20 +139,19 @@
         if (init.method === "POST") {
           declared.push(JSON.parse(init.body));
           return Response.json({
-            file: { id: "browser_file", status: "pending" },
+            id: "browser_file",
             uploadUrl: `${location.origin}/upload`,
-            method: "PUT",
             headers: {},
           });
         }
         return Response.json({
-          file: { id: "browser_file", status: "ready" },
+          file: { id: "browser_file", url: `${location.origin}/upload` },
         });
       };
       const source = await photo(4096, 2048);
       const stored = await uploader.files.upload(source);
       check(
-        stored.status === "ready",
+        stored.id === "browser_file",
         "native upload authorizes, transfers and finalizes",
       );
       const sent = declared[0];

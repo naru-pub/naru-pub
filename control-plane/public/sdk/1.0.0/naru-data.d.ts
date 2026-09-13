@@ -75,8 +75,6 @@ export class NaruDataError extends Error {
 export interface SiteOptions {
   /** 나루 로그인 이름입니다. `이름.naru.pub`에 올린 페이지에서는 생략합니다. */
   site?: string;
-  /** 개발용입니다. HTTP 루프백 출처만 받습니다. */
-  controlPlaneOrigin?: string;
 }
 
 export interface RequestOptions {
@@ -191,11 +189,9 @@ export interface StoredFile {
   name: string;
   contentType: string;
   size: number;
-  status: "ready";
-  /** `media.naru.pub`의 공개 주소입니다. 문서에는 이 주소를 저장하세요. */
+  /** `media.naru.pub`의 공개 주소입니다. 이 파일을 쓰는 문서에 이 주소를
+   * 저장하세요. 파일이 어느 문서에 쓰이는지는 나루가 기록하지 않습니다. */
   url: string;
-  /** 올릴 때 넘긴 값입니다. */
-  metadata: Json;
   createdAt: string;
   updatedAt: string;
 }
@@ -232,11 +228,9 @@ export interface Owner {
     options?: RequestOptions,
   ): Promise<(Written | { success: true })[]>;
   files: {
-    /** 최근에 올린 것부터 한 쪽씩 가져옵니다. `where`는 `metadata`의 최상위
-     * 필드를 거릅니다. */
+    /** 최근에 올린 것부터 한 쪽씩 가져옵니다. */
     list(
       options?: RequestOptions & {
-        where?: Filter;
         limit?: number;
         pageToken?: string | null;
       },
@@ -250,18 +244,10 @@ export interface Owner {
      * 뒤 25 MiB까지입니다. HTML과 SVG는 받지 않습니다.
      *
      * ```js
-     * const image = await owner.files.upload(input.files[0], {
-     *   metadata: { postId: "hello" },
-     * });
+     * const image = await owner.files.upload(input.files[0]);
      * ```
      */
-    upload(
-      file: File | Blob,
-      options?: RequestOptions & {
-        /** 나중에 `list({ where })`로 찾을 값입니다. 최대 8 KiB입니다. */
-        metadata?: { [key: string]: Json };
-      },
-    ): Promise<StoredFile>;
+    upload(file: File | Blob, options?: RequestOptions): Promise<StoredFile>;
     /** 파일을 지웁니다. 이 주소를 쓰는 문서는 그대로 남습니다. */
     delete(id: string, options?: RequestOptions): Promise<void>;
   };
