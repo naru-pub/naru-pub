@@ -15,7 +15,7 @@ import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { tokenScope } from "./owner-auth";
 import { DataError, name } from "./validation";
 import { filters } from "./filters";
-import { filterConditions, merge } from "./service";
+import { filterConditions } from "./service";
 import { decodeCursor, encodeCursor, sorting } from "./pagination";
 
 export const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
@@ -55,26 +55,12 @@ type MediaCommand = {
   body?: Record<string, unknown>;
   pageToken?: string;
   limit?: number;
-  orderBy?: string;
-  direction?: string;
   where?: unknown;
   usage?: boolean;
-  ifVersion?: number;
 };
 export const MAX_MEDIA_METADATA_BYTES = 8192;
-/** Metadata is a JSONB column like a document's data, so it filters, sorts and
- * pages with the same machinery rather than a second set of rules. */
-function mediaSort(command: MediaCommand) {
-  // Newest first is what a media library is for, and it is what this endpoint
-  // returned before it grew a cursor.
-  const sort = sorting(
-    command.orderBy ?? "createdAt",
-    command.direction ?? "desc",
-  );
-  if (sort.field)
-    throw new DataError(400, "Use orderBy=id, createdAt or updatedAt.");
-  return sort;
-}
+/** Newest first is what a media library is for, and the only order offered. */
+const MEDIA_SORT = sorting("createdAt", "desc");
 function metadataInput(value: unknown) {
   const metadata =
     value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -94,7 +80,6 @@ function output(file: {
   size_bytes: number;
   status: string;
   metadata: unknown;
-  version: number;
   created_at: Date | string;
   updated_at: Date | string;
 }) {
@@ -106,7 +91,6 @@ function output(file: {
     status: file.status,
     metadata: file.metadata,
     url: publicUrl(file.object_key),
-    version: file.version,
     createdAt: file.created_at,
     updatedAt: file.updated_at,
   };
@@ -193,13 +177,14 @@ export async function executeMedia(command: MediaCommand) {
     };
   };
   if (command.method === "GET" && command.path.length === 0) {
-    // A quota readout is a single aggregate row. Making it share the listing
-    // response meant every caller who wanted one paid for the whole library.
-    if (command.usage) return { usage: await readUsage() };
+    // A quota readout is a single aggregate row, and only the control panel's
+    // own library screen shows one; website tokens are not offered it.
+    if (command.usage && command.adminUserId !== undefined)
+      return { usage: await readUsage() };
     const limit = command.limit ?? 50;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw new DataError(400, "Limit must be 1–100.");
-    const sort = mediaSort(command);
+    const sort = MEDIA_SORT;
     const filter = filters(command.where);
     const cursor = decodeCursor(
       command.pageToken,
@@ -251,15 +236,6 @@ export async function executeMedia(command: MediaCommand) {
     };
   }
   const id = command.path[0] ? name(command.path[0]) : undefined;
-  if (command.method === "GET" && id) {
-    const file = await files()
-      .where("id", "=", id)
-      .where("status", "=", "ready")
-      .selectAll()
-      .executeTakeFirst();
-    if (!file) throw new DataError(404, "File not found.");
-    return { file: output(file) };
-  }
   if (command.method === "POST" && command.path.length === 0) {
     const input = uploadInput(command.body || {});
     const fileId = randomUUID();
@@ -369,50 +345,6 @@ export async function executeMedia(command: MediaCommand) {
       .returningAll()
       .executeTakeFirstOrThrow();
     return { file: output(ready) };
-  }
-  if (command.method === "PATCH" && id) {
-    // Metadata is the only mutable part of a file: the bytes, their type and
-    // their size were fixed when the upload was authorized and verified.
-    const file = await files()
-      .where("id", "=", id)
-      .where("status", "=", "ready")
-      .selectAll()
-      .executeTakeFirst();
-    const body = command.body || {};
-    if (!Object.hasOwn(body, "data"))
-      throw new DataError(400, "data is required.");
-    if (command.ifVersion !== undefined) {
-      if (!Number.isInteger(command.ifVersion) || command.ifVersion < 0)
-        throw new DataError(400, "ifVersion must be a non-negative integer.");
-      if (command.ifVersion !== (file?.version ?? 0))
-        throw new DataError(
-          409,
-          "File version does not match ifVersion.",
-          "VERSION_CONFLICT",
-        );
-    }
-    if (!file) throw new DataError(404, "File not found.");
-    const metadata = metadataInput(merge({ data: file.metadata }, body));
-    const updated = await db
-      .updateTable("site_data_files")
-      .where("id", "=", id)
-      .where("version", "=", file.version)
-      .set({
-        metadata: sql`${JSON.stringify(metadata)}::jsonb`,
-        updated_at: new Date(),
-        version: sql`site_data_files.version + 1`,
-      })
-      .returningAll()
-      .executeTakeFirst();
-    // Losing this race means another writer moved the version out from under a
-    // read that was already checked, which is the conflict ifVersion reports.
-    if (!updated)
-      throw new DataError(
-        409,
-        "File was modified concurrently. Read it again and retry.",
-        "VERSION_CONFLICT",
-      );
-    return { file: output(updated) };
   }
   if (command.method === "DELETE" && id) {
     const file = await files()

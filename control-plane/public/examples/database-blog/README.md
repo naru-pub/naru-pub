@@ -16,7 +16,7 @@ SDK 1.0.0을 사용합니다. 빌드나 패키지 설치가 필요 없습니다.
    루트: https://내사이트.naru.pub/admin.html
    blog 폴더: https://내사이트.naru.pub/blog/admin.html
    본인의 활성화된 인증 도메인도 가능합니다. 쿼리와 #은 넣지 마세요.
-5. config.js의 site에 나루 로그인 이름을 넣으세요. Client ID는 등록된 콜백 URL로 자동 확인됩니다.
+5. 내사이트.naru.pub에 올린다면 config.js는 그대로 두세요. SDK가 주소에서 사이트를 알아냅니다. 연결한 도메인에 올린다면 config.js의 site에 나루 로그인 이름을 넣으세요. Client ID는 등록된 콜백 URL로 자동 확인됩니다.
    제어판 주소는 SDK에 https://naru.pub로 고정되어 별도 설정이 필요 없습니다.
    비밀번호나 토큰을 코드에 넣지 마세요.
 6. 모든 파일을 같은 폴더에 업로드하고 호스팅된 index.html을 여세요. file://로 열지 마세요.
@@ -41,9 +41,9 @@ SDK 1.0.0을 사용합니다. 빌드나 패키지 설치가 필요 없습니다.
 
 ## 필터와 페이지 이동
 
-글과 방명록은 서버 생성 시각(createdAt) 내림차순, 관리자 목록은 수정 시각(updatedAt) 내림차순입니다.
+글과 방명록은 `orderBy: [["createdAt", "desc"]]`, 관리자 목록은 `orderBy: [["updatedAt", "desc"]]`로 정렬합니다.
 같은 시각이면 ID 내림차순입니다. 공개 목록의 분류 필터는 `where: { category: "일상" }`로 정확히 비교합니다.
-더 보기에는 같은 where/orderBy/direction과 응답의 nextPageToken을 pageToken으로 보냅니다. 마지막 쪽의 `null`을 그대로 넘기면 첫 쪽이 되므로 따로 가를 필요가 없습니다.
+더 보기에는 같은 where/orderBy와 응답의 nextPageToken을 pageToken으로 보냅니다. 마지막 쪽의 `null`을 그대로 넘기면 첫 쪽이 되므로 따로 가를 필요가 없습니다.
 분류를 바꾸면 목록과 커서를 초기화합니다. 빈 분류는 `where: {}`, 곧 전체 목록입니다.
 JSON 필터와 시각 정렬 인덱스는 나루가 자동으로 관리합니다.
 createdAt은 서버가 정하며 수정해도 유지됩니다. 기존 문서는 마이그레이션 당시 updatedAt으로 채워집니다.

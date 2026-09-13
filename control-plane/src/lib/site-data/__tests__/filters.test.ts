@@ -76,6 +76,9 @@ describe("filter validation", () => {
     expect(() => parseWhereQuery(" ".repeat(2049))).toThrow();
   });
 });
+// The wire form of one sort key.
+const order = (field: string, direction = "asc") =>
+  JSON.stringify([[field, direction]]);
 const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 integration("indexed filtered queries", () => {
@@ -194,36 +197,30 @@ integration("indexed filtered queries", () => {
     ] as const) {
       const result = await call("GET", ["notes"], {
         where,
-        orderBy: "id",
+        orderBy: order("id"),
         adminUserId: undefined,
       });
       expect(result.documents!.map((d) => d.id)).toEqual(ids);
-      expect((await call("GET", ["notes"], { where, count: true })).count).toBe(
-        ids.length,
-      );
+      expect(
+        (await call("GET", ["notes"], { where, includeTotal: true, limit: 1 }))
+          .total,
+      ).toBe(ids.length);
     }
   });
-  test("counts respect filters and read permissions without paging", async () => {
-    expect((await call("GET", ["posts"], { count: true })).count).toBe(8);
-    expect(
-      (
-        await call("GET", ["posts"], {
-          count: true,
-          where: { category: "일상" },
-        })
-      ).count,
-    ).toBe(2);
-    // Counting ignores paging inputs rather than truncating at a page.
-    expect(
-      (await call("GET", ["posts"], { count: true, limit: 1 })).count,
-    ).toBe(8);
+  test("totals respect filters and read permissions, not the page size", async () => {
+    const total = async (extra = {}) =>
+      (await call("GET", ["posts"], { includeTotal: true, limit: 1, ...extra }))
+        .total;
+    expect(await total()).toBe(8);
+    expect(await total({ where: { category: "일상" } })).toBe(2);
+    expect(await total({ where: {} })).toBe(8);
     await call("PATCH", ["posts"], { body: { read: "admin", write: "admin" } });
-    await expect(
-      call("GET", ["posts"], { count: true, adminUserId: undefined }),
-    ).rejects.toMatchObject({ status: 403 });
+    await expect(total({ adminUserId: undefined })).rejects.toMatchObject({
+      status: 403,
+    });
   });
   test("range filters page with a cursor bound to their bounds", async () => {
-    const sort = { orderBy: "createdAt", direction: "asc" };
+    const sort = { orderBy: order("createdAt", "asc") };
     const where = { count: { gte: 1, lte: 2 } };
     const first = await call("GET", ["posts"], { ...sort, where, limit: 1 });
     expect(first.documents!.map((d) => d.id)).toEqual(["a"]);
@@ -246,7 +243,7 @@ integration("indexed filtered queries", () => {
       ).rejects.toMatchObject({ status: 400 });
   });
   test("filtered pagination binds query fingerprint and accepts reordered equivalent filters", async () => {
-    const sort = { orderBy: "createdAt", direction: "desc" };
+    const sort = { orderBy: order("createdAt", "desc") };
     const first = await call("GET", ["posts"], {
       ...sort,
       where: { category: "일상", active: true },
@@ -267,7 +264,11 @@ integration("indexed filtered queries", () => {
       { category: "일상" },
     ])
       await expect(
-        call("GET", ["posts"], { ...sort, where, pageToken: first.nextPageToken }),
+        call("GET", ["posts"], {
+          ...sort,
+          where,
+          pageToken: first.nextPageToken,
+        }),
       ).rejects.toMatchObject({ status: 400 });
     await expect(
       call("GET", ["posts"], { where: { category: "일상" }, pageToken: "a" }),

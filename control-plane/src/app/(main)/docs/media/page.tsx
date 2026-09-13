@@ -97,7 +97,7 @@ export default function MediaDocs() {
             <Section id="upload" title="02 · 웹 SDK로 올리기">
               <p>
                 파일 API는 <strong>관리자 세션에서만</strong> 열립니다. 컬렉션과
-                달리 <code>createDatabase()</code>만으로는 쓸 수 없고,{" "}
+                달리 <code>collection()</code>만으로는 쓸 수 없고,{" "}
                 <a href="/docs/database#owner">웹사이트에서 관리자 로그인</a>을
                 먼저 마쳐야 <code>owner.files</code>를 쓸 수 있습니다.
               </p>
@@ -107,12 +107,10 @@ export default function MediaDocs() {
                 확인한 뒤 파일을 돌려줍니다. 문서에는 base64 대신 돌아온{" "}
                 <code>url</code>이나 <code>id</code>를 저장하세요.
               </p>
-              <Code>{`const owner = await db.completeOwnerSignIn();
+              <Code>{`const owner = await ownerSession();
 
 const image = await owner.files.upload(fileInput.files[0], {
   signal: abortController.signal,
-  onProgress: ({ loaded, total, phase }) =>
-    phase === "resizing" ? showResizing() : showProgress(loaded / total),
 });
 
 await owner.collection("posts").set("hello", {
@@ -129,38 +127,21 @@ await owner.collection("posts").set("hello", {
                 내려받는 양도 줄어듭니다.
               </p>
               <p>
-                JPEG, PNG, WebP는 긴 변이 2048 픽셀을 넘거나 파일이{" "}
-                <strong>500 KiB</strong>보다 무거울 때만 다시 인코딩합니다.
-                공들여 줄여 둔 작은 이미지는 손대지 않고, 줄인 쪽이 오히려
-                커지면 원본을 그대로 올립니다. 아이폰이 저장하는 HEIC는
-                사파리에서 받는 형식으로 바꿔 주므로, 원래대로면 거절당했을
-                사진도 올릴 수 있습니다.
+                업로드는 나루를 거치지 않고 브라우저에서 저장소로 바로 가므로,
+                사진을 줄일 수 있는 곳은 브라우저뿐입니다. JPEG, PNG, WebP,
+                HEIC는 긴 변이 2048 픽셀을 넘거나 파일이{" "}
+                <strong>512 KiB</strong>보다 무거울 때, 긴 변 2048 픽셀 이하의
+                WebP(만들 수 없는 브라우저에서는 흰 바탕의 JPEG)로 한 번 다시
+                저장합니다. 줄인 쪽이 오히려 커지면 원본을 그대로 올립니다.
+                아이폰이 저장하는 HEIC는 사파리에서 받는 형식으로 바꿔 주므로,
+                원래대로면 거절당했을 사진도 올릴 수 있습니다.
               </p>
               <p>
-                500 KiB에 맞출 때는 품질을 먼저 낮추고, 그래도 모자라면 크기를
-                줄입니다. 여섯 번 안에 맞추지 못하면 그중 가장 작은 결과를
-                올립니다. 다른 용량을 원하면 <code>maxBytes</code>로 정하세요.
-              </p>
-              <p>
-                다시 인코딩하면 EXIF가 사라집니다. 회전은 픽셀에 반영해 넣으니
+                다시 저장하면 EXIF가 사라집니다. 회전은 픽셀에 반영해 넣으니
                 사진이 눕지 않고, 촬영 위치는 공개 주소에 남지 않습니다. 줄이는
-                동안에는 바이트가 하나도 나가지 않으므로, 정말 다시 인코딩하기로
-                정해지면 <code>onProgress</code>가{" "}
-                <code>phase: &quot;resizing&quot;</code>으로 한 번 알려 줍니다.
-                어떤 파일이 줄어들지 짐작해 볼 필요 없이 그 단계를 그대로 보여
-                주세요. 전송이 시작되면 <code>phase</code>가{" "}
-                <code>&quot;uploading&quot;</code>으로 바뀝니다.
+                방식은 고정되어 있어 따로 넘길 설정이 없습니다. 한도는 줄인 뒤의
+                크기로 셉니다.
               </p>
-              <Code>{`// 기본값 그대로: 긴 변 2048, WebP.
-await owner.files.upload(file);
-
-// 원하는 크기로.
-await owner.files.upload(file, {
-  image: { maxDimension: 1600, maxBytes: 300 * 1024, type: "image/jpeg" },
-});
-
-// 원본 그대로 올리기.
-await owner.files.upload(file, { original: true });`}</Code>
               <p>
                 <a href="/media">미디어 라이브러리</a>에서 끌어 놓은 파일은
                 줄이지 않고 올린 그대로 저장합니다.
@@ -185,20 +166,12 @@ await owner.files.upload(file, { original: true });`}</Code>
 });
 
 // 서버가 찾습니다. 라이브러리를 훑지 않습니다.
-for await (const file of owner.files.all({ where: { postId: "hello" } }))
-  console.log(file.url);`}</Code>
+const { files } = await owner.files.list({ where: { postId: "hello" } });
+for (const file of files) console.log(file.url);`}</Code>
               <p>
-                올릴 때 적어 둔 값이 더 이상 맞지 않으면{" "}
-                <code>files.update()</code>로 고칠 수 있습니다. 고칠 수 있는
-                것은 <code>metadata</code>뿐이고, 문서 쓰기와 똑같이{" "}
-                <code>ifVersion</code>으로 먼저 읽어 둔 판이 그대로인지 확인할
-                수 있습니다.
+                <code>metadata</code>는 올릴 때 정하고 나중에 고칠 수 없습니다.
+                찾을 거리가 바뀔 수 있다면 문서 쪽에 파일 주소를 적어 두세요.
               </p>
-              <Code>{`await owner.files.update(
-  image.id,
-  { postId: "moved" },
-  { ifVersion: image.version },
-);`}</Code>
               <p>
                 <code>altText</code>는 화면 낭독기를 위한 설명입니다. 문서에
                 이미지를 넣을 때 함께 저장해 두면 사이트에서 그대로 쓸 수
@@ -219,15 +192,11 @@ for await (const file of owner.files.all({ where: { postId: "hello" } }))
                 방문자에게 위험할 수 있기 때문입니다.
               </p>
               <p>
-                <code>files.usage()</code>는 목록과는 별개의 요청입니다. 남은
-                용량만 보려고 라이브러리를 훑지 않습니다. 목록은{" "}
-                <code>files.list()</code>가 한 쪽씩, 컬렉션과 똑같이 커서로
-                돌려줍니다.
+                남은 용량은 제어판의 <a href="/media">미디어 라이브러리</a>에서
+                확인하세요. 목록은 <code>files.list()</code>가 최근에 올린
+                것부터 한 쪽씩, 컬렉션과 똑같이 커서로 돌려줍니다.
               </p>
-              <Code>{`const { bytes, maxBytes, count } = await owner.files.usage();
-showQuota(bytes / maxBytes, count);
-
-const { files, nextPageToken } = await owner.files.list({ limit: 50 });`}</Code>
+              <Code>{`const { files, nextPageToken } = await owner.files.list({ limit: 50 });`}</Code>
             </Section>
 
             <Section id="cleanup" title="06 · 정리와 삭제">
@@ -238,8 +207,8 @@ const { files, nextPageToken } = await owner.files.list({ limit: 50 });`}</Code>
                 있는지는 직접 확인해야 합니다. 지운 파일의 주소를 가리키던
                 이미지는 깨집니다.
               </p>
-              <Code>{`for await (const file of owner.files.all({ where: { postId: "hello" } }))
-  await owner.files.delete(file.id);`}</Code>
+              <Code>{`const { files } = await owner.files.list({ where: { postId: "hello" } });
+for (const file of files) await owner.files.delete(file.id);`}</Code>
               <p>
                 끝내 마무리되지 않은 업로드 승인은 한 시간 뒤 배경 정리 작업이
                 치웁니다. 계정을 지우면 그 계정의 미디어도 함께 사라집니다.

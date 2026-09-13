@@ -3,32 +3,38 @@
 <title>Naru SDK local browser acceptance</title>
 <h1>Naru SDK local browser acceptance</h1>
 <p>
-  Uses the local SDK, native browser storage and crypto, and simulated API
-  responses. No production writes.
+  Uses the local SDK with the browser's own storage, fetch and canvas, and
+  simulated API responses. No production requests.
 </p>
 <button id="run">Run checks</button>
 <button id="reload">Check page reload</button>
 <pre id="results" role="status">Ready</pre>
 <script type="module">
-  import { createDatabase, NaruDataError } from "/sdk/1.0.0/naru-data.js";
-  const documentFixture = (id) => ({
-    id,
-    data: null,
-    version: 1,
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
-  });
-  const output = document.querySelector("#results");
+  import {
+    collection,
+    NaruDataError,
+    ownerSession,
+  } from "/sdk/1.0.0/naru-data.js";
+  const site = { site: "sdk-browser-test" };
+  const sessionKey = `naru:owner:https://naru.pub:sdk-browser-test:${location.origin}${location.pathname}`;
   const reloadKey = "naru-sdk-fixture-reload";
-  const sessionKey = `naru:owner:https://naru.pub:sdk-browser-test:session:${location.origin}${location.pathname}`;
+  const output = document.querySelector("#results");
+  const check = (condition, message) => {
+    if (!condition) throw new Error(message);
+    output.textContent += "\nPASS " + message;
+  };
+  const saveSession = (expiresAt) =>
+    sessionStorage.setItem(
+      sessionKey,
+      JSON.stringify({ accessToken: "t".repeat(43), expiresAt }),
+    );
+
   const reloadDeadline = sessionStorage.getItem(reloadKey);
   if (reloadDeadline) {
     try {
-      const owner = await createDatabase({
-        site: "sdk-browser-test",
-      }).completeOwnerSignIn();
+      const owner = await ownerSession(site);
       output.textContent =
-        owner?.session.expiresAt === Number(reloadDeadline)
+        owner?.expiresAt === Number(reloadDeadline)
           ? "PASS actual page reload restores the original deadline"
           : "FAIL page reload changed or lost the deadline";
     } finally {
@@ -38,278 +44,130 @@
   }
   document.querySelector("#reload").onclick = () => {
     const expiresAt = Date.now() + 60000;
-    sessionStorage.setItem(
-      sessionKey,
-      JSON.stringify({
-        accessToken: "t".repeat(43),
-        expiresAt,
-        redirectUri: location.origin + location.pathname,
-      }),
-    );
+    saveSession(expiresAt);
     sessionStorage.setItem(reloadKey, String(expiresAt));
     location.reload();
   };
-  const check = (condition, message) => {
-    if (!condition) throw new Error(message);
-    output.textContent += "\nPASS " + message;
-  };
+
+  // A large, busy PNG, so the browser's real encoder does the shrinking.
+  async function photo(width, height) {
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d");
+    for (let y = 0; y < height; y += 8)
+      for (let x = 0; x < width; x += 8) {
+        context.fillStyle = `rgb(${(x * 7) % 255},${(y * 13) % 255},${(x ^ y) % 255})`;
+        context.fillRect(x, y, 8, 8);
+      }
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return new File([blob], "big.png", { type: "image/png" });
+  }
+
   document.querySelector("#run").onclick = async () => {
     output.textContent = "Running";
     const original = window.fetch;
-    const key = `naru:owner:https://naru.pub:sdk-browser-test:session:${location.origin}${location.pathname}`;
     try {
-      const expiresAt = Date.now() + 60000;
-      const saved = {
-        accessToken: "t".repeat(43),
-        expiresAt,
-        redirectUri: location.origin + location.pathname,
-      };
-      sessionStorage.setItem(key, JSON.stringify(saved));
-      const db = createDatabase({ site: "sdk-browser-test" });
-      const owner = await db.completeOwnerSignIn();
+      saveSession(Date.now() + 60000);
+      const owner = await ownerSession(site);
       check(
-        owner.session.expiresAt === expiresAt,
-        "native sessionStorage restores exact expiry",
+        owner?.expiresAt > Date.now(),
+        "native sessionStorage restores a session",
       );
-      const restored = await createDatabase({
-        site: "sdk-browser-test",
-      }).completeOwnerSignIn();
-      check(
-        restored.session.expiresAt === expiresAt,
-        "new SDK instance preserves session deadline",
-      );
+
       const calls = [];
-      window.fetch = async (url, options) => {
-        calls.push({ url, options });
-        return Response.json({
-          documents: [],
-          nextPageToken: null,
-          id: "one",
-          version: 1,
-          createdAt: "2026-01-01T00:00:00Z",
-          updatedAt: "2026-01-01T00:00:00Z",
-        });
-      };
-      await owner.collection("posts").set("one", { title: "브라우저 테스트" });
-      await db.collection("posts").list({
-        where: { category: "일상" },
-        orderBy: "createdAt",
-        direction: "desc",
-      });
-      check(
-        calls[0].options.headers.Authorization ===
-          `Bearer ${saved.accessToken}`,
-        "admin write uses bearer",
-      );
-      check(
-        !calls[1].options.headers.Authorization &&
-          calls.every((c) => c.options.credentials === "omit"),
-        "public reads stay anonymous",
-      );
-      check(
-        new URL(calls[1].url).searchParams.get("where") ===
-          JSON.stringify({ category: "일상" }),
-        "Korean filters survive URL encoding",
-      );
-      let invalid = false;
-      try {
-        db.collection("posts").add({ title: undefined });
-      } catch (e) {
-        invalid = e instanceof TypeError;
-      }
-      check(
-        invalid && calls.length === 2,
-        "invalid JSON is rejected before a request",
-      );
-      const modern = [];
-      window.fetch = async (url, options) => {
-        modern.push({ url: new URL(url), options });
-        if (new URL(url).searchParams.get("count") === "1")
-          return Response.json({ count: 7 });
+      window.fetch = async (url, init = {}) => {
+        calls.push({ url: new URL(url), ...init });
         return Response.json(
-          modern.length === 2
+          init.method === "PUT"
             ? {
-                documents: [documentFixture("a"), documentFixture("b")],
-                nextPageToken: "v1.next",
-              }
-            : { documents: [documentFixture("c")], nextPageToken: null },
-        );
-      };
-      const month = { gte: "2026-09-01", lt: "2026-10-01" };
-      check(
-        (await db.collection("posts").count({ where: { date: month } })) === 7,
-        "count() reads a server total",
-      );
-      check(
-        JSON.parse(modern[0].url.searchParams.get("where")).date.lt ===
-          "2026-10-01" &&
-          !modern[0].url.searchParams.has("limit") &&
-          !modern[0].url.searchParams.has("pageToken"),
-        "range filters survive URL encoding and counting skips paging",
-      );
-      const seen = [];
-      for await (const document of db
-        .collection("posts")
-        .all({ orderBy: "data.date", direction: "desc" }))
-        seen.push(document.id);
-      check(
-        seen.join(",") === "a,b,c" && modern.length === 3,
-        "all() walks cursors through a real async generator",
-      );
-      check(
-        modern[1].url.searchParams.get("orderBy") === "data.date" &&
-          modern[2].url.searchParams.get("pageToken") === "v1.next",
-        "document field ordering and cursors reach the wire",
-      );
-      window.fetch = async (url, options) => {
-        modern.push({ url: new URL(url), options });
-        return Response.json(
-          options.method === "DELETE"
-            ? { success: true }
-            : {
                 id: "one",
-                version: 3,
+                version: 2,
                 createdAt: "2026-01-01T00:00:00Z",
                 updatedAt: "2026-01-01T00:00:00Z",
-              },
+              }
+            : { documents: [], nextPageToken: null },
         );
       };
+      const notes = collection("notes", site);
+      await notes.list({ where: { tag: "한글" } });
       await owner
-        .collection("posts")
-        .update(
-          "one",
-          { title: "부분 수정" },
-          { unset: ["legacy"], ifVersion: 2 },
-        );
+        .collection("notes")
+        .set("one", { title: "x" }, { ifVersion: 1 });
+      await notes.list({ where: { tag: "한글" } });
       check(
-        modern[3].options.method === "PATCH" &&
-          modern[3].url.searchParams.get("ifVersion") === "2" &&
-          JSON.parse(modern[3].options.body).unset[0] === "legacy",
-        "merge patches carry unset and ifVersion",
+        JSON.parse(calls[0].url.searchParams.get("where")).tag === "한글",
+        "Korean filters survive URL encoding",
       );
-      await owner.collection("posts").delete("one", { ifVersion: 3 });
       check(
-        modern[4].options.method === "DELETE" &&
-          modern[4].url.searchParams.get("ifVersion") === "3" &&
-          modern[4].options.body === undefined,
-        "conditional delete carries no body",
+        calls[0].cache === "default" &&
+          !calls[0].headers.Authorization &&
+          calls[1].headers.Authorization === `Bearer ${"t".repeat(43)}` &&
+          calls[2].cache === "no-store",
+        "public reads use the cache until this browser writes",
       );
-      window.fetch = (_url, options) => original("/slow", options);
-      let timedOut = false;
-      try {
-        await db.collection("posts").list({ timeoutMs: 10 });
-      } catch (error) {
-        timedOut = error.code === "REQUEST_TIMEOUT";
-      }
-      check(timedOut, "native fetch respects the SDK deadline");
+
+      window.fetch = (_url, init) => original("/slow", init);
       const controller = new AbortController();
-      const pending = db
-        .collection("posts")
-        .list({ signal: controller.signal });
+      const pending = notes.list({ signal: controller.signal });
       controller.abort();
       let aborted = false;
       try {
         await pending;
       } catch (error) {
-        aborted = error.code === "REQUEST_ABORTED";
+        aborted = error.name === "AbortError";
       }
-      check(aborted, "native fetch cancellation has a distinct error code");
-      const file = {
-        id: "browser_file",
-        name: "upload",
-        contentType: "text/plain",
-        size: 3,
-        status: "ready",
-        metadata: {},
-        version: 1,
-        url: `${location.origin}/upload`,
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-      };
-      for (const cancel of [false, true]) {
-        const uploadController = new AbortController();
-        let cleaned = false,
-          progressed = false;
-        window.fetch = async (_url, options) => {
-          if (options.method === "POST")
-            return Response.json({
-              file: { id: file.id, status: "pending" },
-              method: "PUT",
-              uploadUrl: `${location.origin}/upload`,
-              headers: { "Content-Type": "text/plain" },
-            });
-          if (options.method === "DELETE") {
-            cleaned = true;
-            return Response.json({ success: true });
-          }
-          return Response.json({ file });
-        };
-        let uploadError;
-        try {
-          await owner.files.upload(new Blob(["abc"], { type: "text/plain" }), {
-            signal: uploadController.signal,
-            onProgress: () => {
-              progressed = true;
-              if (cancel) uploadController.abort();
-            },
+      check(aborted, "native fetch cancellation surfaces as AbortError");
+
+      window.fetch = async () => new Response("<html>", { status: 401 });
+      let expired = false;
+      try {
+        await owner.collection("notes").get("one");
+      } catch (error) {
+        expired =
+          error instanceof NaruDataError &&
+          error.code === "OWNER_SESSION_EXPIRED";
+      }
+      check(
+        expired && !sessionStorage.getItem(sessionKey),
+        "an HTML 401 ends the session and clears storage",
+      );
+
+      saveSession(Date.now() + 60000);
+      const uploader = await ownerSession(site);
+      const declared = [];
+      window.fetch = async (url, init = {}) => {
+        if (String(url).endsWith("/upload")) return original("/upload", init);
+        if (init.method === "POST") {
+          declared.push(JSON.parse(init.body));
+          return Response.json({
+            file: { id: "browser_file", status: "pending" },
+            uploadUrl: `${location.origin}/upload`,
+            method: "PUT",
+            headers: {},
           });
-        } catch (error) {
-          uploadError = error;
         }
-        check(
-          progressed &&
-            (cancel
-              ? uploadError?.code === "REQUEST_ABORTED" && cleaned
-              : !uploadError && !cleaned),
-          cancel
-            ? "native XHR abort waits for cleanup"
-            : "native XHR progress upload finalizes successfully",
-        );
-      }
-      window.fetch = async () =>
-        new Response("<html>Unauthorized</html>", { status: 401 });
-      let revoked = false;
-      try {
-        await owner.collection("posts").get("one");
-      } catch (e) {
-        revoked = e instanceof NaruDataError && e.status === 401;
-      }
-      check(
-        revoked && sessionStorage.getItem(key) === null,
-        "HTML 401 clears persisted session",
-      );
-      sessionStorage.setItem(key, JSON.stringify(saved));
-      const logout = await createDatabase({
-        site: "sdk-browser-test",
-      }).completeOwnerSignIn();
-      window.fetch = async () => {
-        throw new TypeError("Offline");
+        return Response.json({
+          file: { id: "browser_file", status: "ready" },
+        });
       };
-      let offline = false;
-      try {
-        await logout.signOut();
-      } catch (e) {
-        offline = e.status === 0;
-      }
+      const source = await photo(4096, 2048);
+      const stored = await uploader.files.upload(source);
       check(
-        offline && sessionStorage.getItem(key) === null,
-        "offline logout removes local credentials",
+        stored.status === "ready",
+        "native upload authorizes, transfers and finalizes",
       );
+      const sent = declared[0];
       check(
-        (
-          await crypto.subtle.digest(
-            "SHA-256",
-            new TextEncoder().encode("test"),
-          )
-        ).byteLength === 32,
-        "native secure-context crypto is available",
+        ["image/webp", "image/jpeg"].includes(sent.contentType) &&
+          sent.size < source.size &&
+          /^big\.(webp|jpeg)$/.test(sent.name),
+        `native canvas shrinks a 4096px PNG (${source.size} → ${sent.size} bytes, ${sent.contentType})`,
       );
       output.textContent += "\nALL CHECKS PASSED";
-    } catch (e) {
-      output.textContent += "\nFAIL " + e.message;
+    } catch (error) {
+      output.textContent += "\nFAIL " + error.message;
     } finally {
       window.fetch = original;
-      sessionStorage.removeItem(key);
+      sessionStorage.removeItem(sessionKey);
     }
   };
 </script>

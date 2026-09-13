@@ -85,21 +85,21 @@ export default function DatabaseDocs() {
                     title: "글과 작품을 공개하기",
                     collection: "posts · 공개 읽기 / 관리자 쓰기",
                     body: "방문자는 목록과 글을 읽고, 소유자만 새 글을 공개하거나 고칩니다.",
-                    code: 'db.collection("posts").list({ orderBy: "createdAt", direction: "desc" })',
+                    code: 'collection("posts").list({ orderBy: [["createdAt", "desc"]] })',
                   },
                   {
                     id: "recipe-guestbook",
                     title: "방명록과 댓글 받기",
                     collection: "guestbook · 공개 읽기 / 공개 생성만",
                     body: "방문자는 새 인사를 남길 수 있지만 기존 인사를 고치거나 지울 수 없습니다.",
-                    code: 'db.collection("guestbook").add({ name, message })',
+                    code: 'collection("guestbook").add({ name, message })',
                   },
                   {
                     id: "recipe-submissions",
                     title: "비공개 문의와 신청 받기",
                     collection: "submissions · 관리자 읽기 / 공개 생성만",
                     body: "방문자가 보낸 내용은 목록에 공개되지 않고 소유자만 제어판이나 관리자 페이지에서 읽습니다.",
-                    code: 'db.collection("submissions").add({ email, message })',
+                    code: 'collection("submissions").add({ email, message })',
                   },
                   {
                     id: "recipe-drafts",
@@ -254,15 +254,22 @@ export default function DatabaseDocs() {
             </Section>
             <Section id="sdk" title="04 · 웹 SDK 사용하기">
               <p>
-                빌드 도구 없이 HTML의 모듈 스크립트에서 사용할 수 있습니다.{" "}
-                <code>site</code>에는 전체 도메인이 아니라 나루 로그인 이름을
-                넣으세요. 공개 작업에는 API 키가 필요 없습니다.
+                빌드 도구 없이 HTML의 모듈 스크립트에서 사용할 수 있습니다.
+                데이터베이스와 컬렉션은 제어판에서 만들고, 페이지에서는 이름으로
+                부르기만 합니다. <code>내-로그인-이름.naru.pub</code>에 올린
+                페이지는 사이트를 주소에서 알아내므로 따로 설정할 것이 없습니다.
+                연결한 도메인에서는{" "}
+                <code>
+                  collection(&quot;posts&quot;, {'{ site: "내-로그인-이름" }'})
+                </code>
+                처럼 로그인 이름을 넘기세요. 공개 작업에는 API 키가 필요
+                없습니다.
               </p>
-              <Code language="html">{`<script type="module">\n  import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\n  const db = createDatabase({ site: "내-로그인-이름" });\n  const posts = db.collection("posts");\n  const sort = { orderBy: "createdAt", direction: "desc" };\n  const page = await posts.list({ ...sort, limit: 20 });\n  for (const document of page.documents) {\n    console.log(document.id, document.data, document.createdAt);\n  }\n  if (page.nextPageToken) {\n    const next = await posts.list({ ...sort, limit: 20, pageToken: page.nextPageToken });\n  }\n  const post = await posts.get("hello");\n  await db.collection("guestbook").add({\n    name: "방문자", message: "잘 읽었습니다!"\n  });\n</script>`}</Code>
+              <Code language="html">{`<script type="module">\n  import { collection } from "https://naru.pub/sdk/1.0.0/naru-data.js";\n  const posts = collection("posts");\n  const query = { orderBy: [["createdAt", "desc"]], limit: 20 };\n  const page = await posts.list(query);\n  for (const document of page.documents) {\n    console.log(document.id, document.data, document.createdAt);\n  }\n  const next = await posts.list({ ...query, pageToken: page.nextPageToken });\n  const post = await posts.get("hello");\n  await collection("guestbook").add({\n    name: "방문자", message: "잘 읽었습니다!"\n  });\n</script>`}</Code>
               <p>
                 현재 제공 버전은 <strong>1.0.0</strong>이며 이 버전 안에서 계속
-                개선합니다. 버전 없는 URL은 제공하지 않습니다. 제어판 주소는
-                SDK에
+                개선합니다. 꼭 필요한 기능만 제공하고, 필요해지면 더합니다. 버전
+                없는 URL은 제공하지 않습니다. 제어판 주소는 SDK에
                 <code>https://naru.pub</code>로 고정되어 별도 설정이 필요
                 없습니다. 자체 번들로 옮겨도 같습니다.{" "}
                 <a href="/sdk/1.0.0/naru-data.d.ts">TypeScript 타입 정의</a>도
@@ -286,16 +293,8 @@ export default function DatabaseDocs() {
                         "문서 한 개 → { id, data, version, createdAt, updatedAt }. 없으면 404",
                       ],
                       [
-                        "list({ limit, pageToken, orderBy, direction, where, includeTotal })",
-                        "{ documents, nextPageToken, total? }. 기본 50개, 최대 100개",
-                      ],
-                      [
-                        "all({ limit, orderBy, direction, where })",
-                        "조건에 맞는 모든 문서를 필요할 때마다 한 페이지씩 가져오는 async iterator",
-                      ],
-                      [
-                        "count({ where })",
-                        "조건에 맞는 문서 개수를 서버에서 계산 → 숫자",
+                        "list({ where, orderBy, limit, pageToken, includeTotal })",
+                        "{ documents, nextPageToken, total? }. 기본 50개, 최대 100개. includeTotal이면 조건에 맞는 전체 개수도 함께",
                       ],
                       [
                         "add(data)",
@@ -306,12 +305,8 @@ export default function DatabaseDocs() {
                         "지정 ID로 생성 또는 전체 교체 → { id, version, createdAt, updatedAt }",
                       ],
                       [
-                        "update(id, patch, { unset, ifVersion })",
-                        "지정한 필드만 병합하고 unset에 적은 필드는 삭제 → { id, version, createdAt, updatedAt }. 문서가 없으면 404",
-                      ],
-                      [
                         "delete(id, { ifVersion })",
-                        "문서 삭제 → { success: true }",
+                        "문서 삭제. 없는 문서를 지워도 성공합니다",
                       ],
                     ].map(([call, result]) => (
                       <tr className="border-b" key={call}>
@@ -334,19 +329,16 @@ export default function DatabaseDocs() {
               </p>
               <Code>{`const query = {
   where: { category: "일상" },
-  orderBy: "createdAt",
-  direction: "desc",
+  orderBy: [["createdAt", "desc"]],
   limit: 20,
 };
-const page = await db.collection("posts").list(query);
-if (page.nextPageToken !== null) {
-  const next = await db.collection("posts").list({
-    ...query, pageToken: page.nextPageToken,
-  });
-}
+const page = await collection("posts").list(query);
+const next = await collection("posts").list({
+  ...query, pageToken: page.nextPageToken,
+});
 
 // comments 컬렉션을 따로 만든 경우:
-const comments = await db.collection("comments").list({
+const comments = await collection("comments").list({
   where: { postId: "hello", approved: true },
 });`}</Code>
               <p>
@@ -363,13 +355,13 @@ const comments = await db.collection("comments").list({
                 문서를 받아 걸러내는 대신 필요한 구간만 요청할 수 있습니다.
               </p>
               <Code>{`// 2026년 9월에 쓴 글만 가져옵니다.
-const page = await db.collection("posts").list({
+const page = await collection("posts").list({
   where: { date: { gte: "2026-09-01", lte: "2026-09-30" } },
-  orderBy: "data.date",
+  orderBy: [["data.date", "asc"]],
 });
 
 // 등호 조건과 범위 조건을 함께 쓸 수 있습니다.
-const mine = await db.collection("posts").list({
+const mine = await collection("posts").list({
   where: { categoryId: "diary", score: { gte: 10, lt: 100 } },
 });`}</Code>
               <p>
@@ -403,22 +395,21 @@ const mine = await db.collection("posts").list({
               </p>
               <h3 className="font-bold">정렬과 페이지 이동</h3>
               <p>
-                기본 정렬은 ID 오름차순입니다. <code>orderBy</code>는{" "}
-                <code>id</code>, <code>createdAt</code>(서버 생성 시각),{" "}
-                <code>updatedAt</code>(서버 수정 시각), 그리고 문서의 최상위
-                필드를 뜻하는 <code>data.필드이름</code> 중 하나이며,{" "}
-                <code>direction</code>은 <code>asc</code>(기본값) 또는{" "}
-                <code>desc</code>입니다. 방명록은 <code>createdAt</code>{" "}
-                내림차순으로 최신 글부터 표시합니다. 글쓴이가 날짜를 직접 정하는
-                블로그라면 <code>orderBy: &quot;data.date&quot;</code>로
-                정렬해야 나중에 쓴 지난 날짜 글이 맨 위로 올라오지 않습니다.
-                같은 날짜 안에서도 의미 있는 순서가 필요하면{" "}
+                기본 정렬은 ID 오름차순입니다. <code>orderBy</code>는 언제나{" "}
+                <code>[필드, 방향]</code>을 한두 개 담은 배열입니다. 필드는{" "}
+                <code>createdAt</code>(서버 생성 시각), <code>updatedAt</code>
+                (서버 수정 시각), 그리고 문서의 최상위 필드를 뜻하는{" "}
+                <code>data.필드이름</code>이고, 방향은 <code>asc</code> 또는{" "}
+                <code>desc</code>입니다. 방명록은{" "}
+                <code>[[&quot;createdAt&quot;, &quot;desc&quot;]]</code>로 최신
+                글부터 표시합니다. 글쓴이가 날짜를 직접 정하는 블로그라면{" "}
                 <code>
                   [[&quot;data.date&quot;, &quot;desc&quot;],
                   [&quot;createdAt&quot;, &quot;desc&quot;]]
                 </code>
-                처럼 두 정렬 키를 함께 넘기세요. ID는 마지막 기준으로 자동
-                추가됩니다.
+                처럼 두 키를 넘기면 나중에 쓴 지난 날짜 글이 맨 위로 올라오지
+                않고, 같은 날짜 안에서는 쓴 순서를 따릅니다. ID는 마지막
+                기준으로 자동 추가됩니다.
               </p>
               <p>
                 <code>data.필드이름</code>으로 정렬하면 값이 없는 문서는 JSON
@@ -437,9 +428,8 @@ const mine = await db.collection("posts").list({
                 넘기면 됩니다. <code>where: {"{}"}</code>도 필터가 없다는
                 뜻입니다. 이전 페이지는 페이지 내용이나 시작 커서를 저장해
                 구현할 수 있습니다. 페이지 번호와 offset은 제공하지 않습니다.
-                목록과 개수가 함께 필요하면 <code>includeTotal: true</code>,
-                개수만 필요하면 <code>count()</code>를 쓰세요. 모든 문서를
-                훑어야 한다면 <code>all()</code>이 커서를 대신 관리합니다.
+                목록과 개수가 함께 필요하면 <code>includeTotal: true</code>를
+                넘기고, 개수만 필요하면 <code>limit: 1</code>과 함께 쓰세요.
                 페이지 이동은 하나의 스냅샷이 아니므로, 새 문서는 새로고침해야
                 보일 수 있고 정렬 기준 값이 바뀐 문서는 이동 중 빠지거나 다시
                 나타날 수 있습니다.
@@ -453,29 +443,13 @@ const mine = await db.collection("posts").list({
                 두 시각을 함께 돌려주므로, 저장한 것을 바로 화면에 그릴 때
                 브라우저 시계로 시각을 지어낼 필요가 없습니다.
               </p>
-              <Code>{`// 커서를 직접 다루지 않고 전부 순회합니다.
-for await (const document of db.collection("posts").all({
-  where: { categoryId: "diary" },
-  orderBy: [["data.date", "desc"], ["createdAt", "desc"]],
-  includeTotal: true,
-})) {
-  console.log(document.id, document.data);
-}
-
-// 개수는 서버가 셉니다.
-const total = await db.collection("posts").count({
-  where: { categoryId: "diary" },
-});`}</Code>
               <h3 id="versions" className="font-bold">
-                부분 갱신과 덮어쓰기 방지
+                덮어쓰기 방지
               </h3>
               <p>
                 <code>set()</code>은 기존 필드를 합치지 않고 전체 JSON을
-                교체합니다. 일부 필드만 바꾸려면 <code>update()</code>를
-                사용하세요. 최상위 필드를 병합하고, <code>unset</code>에 적은
-                필드는 지웁니다. 값으로 넘긴 <code>null</code>은 필드를 지우지
-                않고 null을 저장하므로, 삭제는 항상 <code>unset</code>으로만
-                일어납니다. 대상 문서가 없거나 JSON 객체가 아니면 실패합니다.
+                교체합니다. 일부 필드만 바꿀 때도 읽어 온 문서에 고친 값을 더해
+                통째로 저장하세요.
               </p>
               <p>
                 모든 문서에는 저장할 때마다 1씩 오르는 <code>version</code>이
@@ -485,12 +459,12 @@ const total = await db.collection("posts").count({
                 <code>ifVersion: 0</code>은 &ldquo;아직 없는 문서&rdquo;를
                 뜻하므로 새 글을 만들 때 같은 ID를 덮어쓰는 사고를 막습니다.
               </p>
-              <Code>{`const post = await db.collection("posts").get("hello");
+              <Code>{`const post = await owner.collection("posts").get("hello");
 try {
-  await owner.collection("posts").update(
+  await owner.collection("posts").set(
     "hello",
-    { title: "새 제목" },
-    { unset: ["legacy"], ifVersion: post.version },
+    { ...post.data, title: "새 제목" },
+    { ifVersion: post.version },
   );
 } catch (error) {
   if (error.code === "VERSION_CONFLICT")
@@ -522,15 +496,18 @@ try {
                   컬렉션 권한은 따로 등록하고 수정할 수 있습니다.
                 </li>
                 <li>
-                  로그인 버튼에서 <code>signInAsOwner()</code>를 호출합니다.
-                  현재 페이지를 떠나 나루 승인 화면으로 이동합니다.
+                  로그인 버튼에서{" "}
+                  <code>signIn({'{ collections: ["posts", "drafts"] }'})</code>
+                  를 호출합니다. 현재 페이지를 떠나 나루 승인 화면으로
+                  이동합니다.
                 </li>
                 <li>
-                  돌아온 페이지에서 <code>completeOwnerSignIn()</code>을
-                  호출하고, 반환받은 관리자 클라이언트로 문서를 저장합니다.
+                  돌아온 페이지에서 <code>ownerSession()</code>을 호출하고,
+                  반환받은 관리자 클라이언트로 문서를 저장합니다. 로그인하지
+                  않았으면 null입니다.
                 </li>
               </ol>
-              <Code>{`import { createDatabase } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nconst db = createDatabase({ site: "내-로그인-이름" });\nlet owner = null;\ntry {\n  owner = await db.completeOwnerSignIn();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\nowner?.onSessionChange(({ status }) => {\n  if (status !== "active") owner = null;\n});\n\nasync function login() {\n  await db.signInAsOwner({\n    redirectUri: location.origin + location.pathname,\n    collections: ["posts", "drafts"],\n  });\n}\n\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  await owner.collection("posts").set(id, { title, body });\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
+              <Code>{`import { ownerSession, signIn } from "https://naru.pub/sdk/1.0.0/naru-data.js";\nlet owner = null;\ntry {\n  owner = await ownerSession();\n} catch (error) {\n  document.querySelector("#status").textContent = error.message;\n}\n\nfunction login() {\n  return signIn({ collections: ["posts", "drafts"] });\n}\n\nasync function publish(id, title, body) {\n  if (!owner) throw new Error("관리자 로그인이 필요합니다.");\n  try {\n    await owner.collection("posts").set(id, { title, body });\n  } catch (error) {\n    if (error.code === "OWNER_SESSION_EXPIRED") owner = null;\n    throw error;\n  }\n}\n\nasync function logout() {\n  const previous = owner;\n  owner = null;\n  await previous?.signOut();\n}`}</Code>
               <p>
                 콜백은 본인 나루 사이트 또는 활성화된 인증 도메인의 HTTPS
                 주소여야 합니다. 쿼리·해시·와일드카드는 사용할 수 없습니다.
@@ -538,17 +515,18 @@ try {
                 origin도 같아야 합니다.
               </p>
               <p>
-                관리자 클라이언트는 기존 공개 클라이언트 <code>db</code>와
-                별개입니다. 관리자 토큰 하나를 이 탭의 sessionStorage에 저장하여
+                관리자 클라이언트의 <code>owner.collection()</code>만 토큰을
+                보내고, <code>collection()</code>은 로그인 뒤에도 공개 요청으로
+                남습니다. 관리자 토큰 하나를 이 탭의 sessionStorage에 저장하여
                 같은 관리자 페이지를 새로고침해도 복원합니다. 자동 갱신은 없으며
                 새로고침하거나 요청해도 만료 시각은 늘어나지 않습니다. 서버는 매
                 요청마다 권한과 폐기 여부를 확인합니다.
-                <code>owner.session.expiresAt</code>은 최대 24시간인 관리자
-                토큰의 만료 시각입니다(Unix 밀리초). 나루 로그인 세션이 먼저
-                만료되면 관리자 세션도 종료됩니다. 401 응답, 만료 시각 도달,
-                로그아웃은 모두 <code>owner.onSessionChange()</code>로
-                알려지므로, 여기서 관리자 화면을 접으면 요청마다 만료를 따로
-                확인하지 않아도 됩니다.
+                <code>owner.expiresAt</code>은 최대 24시간인 관리자 토큰의 만료
+                시각입니다(Unix 밀리초). 나루 로그인 세션이 먼저 만료되면 관리자
+                세션도 종료됩니다. 만료 시각이 지났거나 서버가 401로 답하면
+                요청은 <code>OWNER_SESSION_EXPIRED</code>로 실패하고, 저장된
+                세션이 지워져 다음 <code>ownerSession()</code>은 null을
+                돌려줍니다.
               </p>
               <p>
                 제어판에서 관리자 페이지마다 ‘관리자 토큰 유효 시간’을
@@ -592,8 +570,6 @@ try {
                 있습니다. HTML과 SVG는 허용하지 않습니다.
               </p>
               <Code>{`const image = await owner.files.upload(fileInput.files[0], {
-  signal: abortController.signal,
-  onProgress: ({ loaded, total }) => showProgress(loaded / total),
   metadata: { altText: "설명", postId: "hello" },
 });
 await owner.collection("posts").set("hello", {
@@ -604,56 +580,33 @@ await owner.collection("posts").set("hello", {
 // metadata의 최상위 스칼라 값은 서버가 거를 수 있으므로, 글을 지울 때
 // 라이브러리를 통째로 받지 않고 그 글의 이미지만 찾아 정리합니다.
 const { files } = await owner.files.list({ where: { postId: "hello" } });
-for (const file of files) await owner.files.delete(file.id);
-
-const { bytes, maxBytes, count } = await owner.files.usage();`}</Code>
+for (const file of files) await owner.files.delete(file.id);`}</Code>
               <p>
-                <code>metadata</code>에 넣은 값은 <code>files.list()</code>와{" "}
-                <code>files.get()</code>에 그대로 돌아오고, 최상위 스칼라 값은{" "}
+                <code>metadata</code>에 넣은 값은 <code>files.list()</code>에
+                그대로 돌아오고, 최상위 스칼라 값은{" "}
                 <code>files.list({"{ where }"})</code>로 서버에서 거를 수
                 있습니다. 어떤 문서가 그 파일을 쓰는지 적어 두면, 문서를 삭제할
-                때 딸린 파일도 함께 지워 저장 용량이 새는 것을 막을 수 있습니다.{" "}
-                <code>files.usage()</code>는 현재 사용량과 한도를 알려줍니다.
+                때 딸린 파일도 함께 지워 저장 용량이 새는 것을 막을 수 있습니다.
+                사용량은 제어판의 미디어 라이브러리에서 확인하세요.
               </p>
-              <h3 className="text-lg font-semibold">원자적 batch와 검증</h3>
+              <h3 className="text-lg font-semibold">원자적 batch</h3>
               <p>
-                <code>owner.batch()</code>는 최대 100개의 문서 저장·병합·삭제를
+                <code>owner.batch()</code>는 최대 100개의 문서 추가·저장·삭제를
                 한 트랜잭션으로 처리합니다. 하나라도 실패하면 모두 취소되므로,
                 <code>ifVersion</code>이 어긋난 항목 하나가 앞선 저장까지 함께
                 되돌립니다.
-                <code>createDatabase()</code>의 <code>collections</code>에
-                컬렉션마다 동기 함수 <code>parse</code>를 한 번 등록하면, 읽은
-                문서를 검사·정리하고 <code>add</code>·<code>set</code>과 batch의
-                같은 작업도 요청 전에 검사합니다. 오류를 던지면 거부됩니다.{" "}
-                <code>map</code>은 읽은 문서를 화면에서 쓸 값으로 바꿉니다. 공개
-                클라이언트와 관리자 클라이언트가 같은 규칙을 쓰며, 클라이언트
-                검증은 개발 편의 기능이지 보안 경계가 아닙니다.
               </p>
-              <Code>{`const db = createDatabase({
-  site: "내-로그인-이름",
-  collections: {
-    posts: {
-      parse(post) {
-        if (typeof post?.title !== "string" || !post.title)
-          throw new TypeError("제목을 입력하세요.");
-        return post;
-      },
-      map: (document) => ({ ...document.data, id: document.id }),
-    },
-  },
-});
-
-await owner.batch([
+              <Code>{`await owner.batch([
   { type: "set", collection: "posts", id, data: post, ifVersion: 0 },
   { type: "add", collection: "logs", data: { published: id } },
-  { type: "update", collection: "stats", id: "totals", data: { posts: 12 } },
   { type: "delete", collection: "drafts", id },
 ]);`}</Code>
               <p>
                 <code>add</code>는 서버가 ID를 정하므로 <code>id</code>나{" "}
                 <code>ifVersion</code>을 함께 보낼 수 없습니다. 정해진 ID가
                 필요하면 <code>set</code>을 쓰세요. 결과 배열은 보낸 순서대로 각
-                항목의 <code>id</code>와 <code>version</code>을 돌려줍니다.
+                항목의 <code>id</code>와 <code>version</code>을, 삭제는{" "}
+                <code>{"{ success: true }"}</code>를 돌려줍니다.
               </p>
               <p>
                 SDK 오류의 <code>code</code>에는
@@ -693,7 +646,9 @@ await owner.batch([
                   <code>drafts</code> 컬렉션을 등록합니다.
                 </li>
                 <li>
-                  <code>config.js</code>의 <code>site</code>를 채웁니다.
+                  <code>내사이트.naru.pub</code>에 올린다면{" "}
+                  <code>config.js</code>는 그대로 둡니다. 연결한 도메인에
+                  올린다면 <code>site</code>에 로그인 이름을 채웁니다.
                 </li>
                 <li>
                   파일을 모두 같은 폴더에 업로드합니다. 기존{" "}
@@ -730,9 +685,8 @@ await owner.batch([
                 작성 중인 내용은 로그인 이동을 위해 이 탭의 sessionStorage에
                 임시 저장됩니다. ‘비공개 초안 저장’은 drafts에 서버 저장하며,
                 같은 ID의 공개 글은 바꾸지 않습니다. ‘글 공개하기’는 posts에
-                먼저 저장한 뒤 해당 초안을 삭제합니다. 두 요청은 하나의
-                트랜잭션이 아니므로, 공개는 성공했지만 초안 삭제가 실패하면
-                안내에 따라 재시도하거나 초안 목록에서 정리하세요.
+                저장하면서 해당 초안을 삭제합니다. 두 작업은 하나의 batch로
+                처리되어 둘 다 반영되거나 둘 다 취소됩니다.
               </p>
               <p>
                 분류를 입력해 공개하면 글 목록에서 같은 분류로 찾을 수 있습니다.
@@ -758,17 +712,17 @@ await owner.batch([
                   선택하세요.
                 </li>
               </ul>
-              <Code>{`try {\n  await db.collection("guestbook").add({ message: "안녕하세요" });\n} catch (error) {\n  // NaruDataError.status는 HTTP 상태이며, 응답을 받지 못하면 0입니다.\n  // 잘못된 입력은 TypeError입니다.\n  document.querySelector("#status").textContent =\n    error.status === 429 ? "잠시 후 다시 시도하세요." : error.message;\n}`}</Code>
+              <Code>{`try {\n  await collection("guestbook").add({ message: "안녕하세요" });\n} catch (error) {\n  // 서버가 거절하면 NaruDataError(status, code)입니다.\n  // 연결이 끊기면 fetch의 TypeError, 취소하면 AbortError가 그대로 옵니다.\n  document.querySelector("#status").textContent =\n    error.status === 429 ? "잠시 후 다시 시도하세요." : error.message;\n}`}</Code>
               <p>
                 네트워크 오류가 나도 쓰기는 서버에 저장되었을 수 있습니다. SDK는
                 자동 재시도하지 않습니다. 특히 add()를 다시 호출하면 중복 문서가
                 생길 수 있으므로 먼저 저장 여부를 확인하세요.
               </p>
               <p>
-                데이터에는 JSON 값만 사용하세요. undefined, NaN, Infinity,
-                BigInt, 함수, 순환 참조, 빈 배열 슬롯은 허용하지 않습니다.
-                Date는 문자열로 명시적으로 변환하세요. 객체는 일반 객체여야 하며
-                getter, Symbol 키, 열거할 수 없는 속성도 허용하지 않습니다.
+                데이터는 <code>JSON.stringify</code>로 보냅니다. undefined나
+                함수처럼 JSON이 버리는 값은 사라지고, Date는 문자열이 되므로
+                저장할 형태로 직접 바꿔 두세요. SDK는 문서 내용을 따로 검사하지
+                않습니다.
               </p>
               <p>
                 TypeScript에서는 collection&lt;Post&gt;(&quot;posts&quot;)로
@@ -791,7 +745,7 @@ await owner.batch([
                   ],
                   [
                     "409 / 413 / 429",
-                    "각각 충돌, 요청 크기 초과, 요청 빈도 초과를 뜻합니다. 409의 code로 원인을 구분하세요. VERSION_CONFLICT는 ifVersion과 저장된 버전이 다른 경우, NOT_MERGEABLE은 JSON 객체가 아닌 문서를 update()로 병합하려 한 경우이며, code가 없으면 용량·개수 한도 초과입니다.",
+                    "각각 충돌, 요청 크기 초과, 요청 빈도 초과를 뜻합니다. 409의 code로 원인을 구분하세요. VERSION_CONFLICT는 ifVersion과 저장된 버전이 다른 경우이며, code가 없으면 용량·개수 한도 초과입니다.",
                   ],
                   [
                     "승인 후 돌아왔는데 로그인되지 않음",

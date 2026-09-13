@@ -1,12 +1,11 @@
 import { config } from "./config.js";
 export async function connect() {
-  if (!config.site)
-    throw new Error(
-      "먼저 config.js의 site를 내 나루 로그인 이름으로 설정하세요. README.md를 참고하세요.",
-    );
-  const { createDatabase } =
-    await import("https://naru.pub/sdk/1.0.0/naru-data.js");
-  return createDatabase({
-    site: config.site,
-  });
+  const sdk = await import("https://naru.pub/sdk/1.0.0/naru-data.js");
+  // A page on <login>.naru.pub finds its own site; config.site is for others.
+  const site = config.site ? { site: config.site } : undefined;
+  return {
+    collection: (name) => sdk.collection(name, site),
+    ownerSession: () => sdk.ownerSession(site),
+    signIn: (collections) => sdk.signIn({ ...site, collections }),
+  };
 }

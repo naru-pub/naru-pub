@@ -11,7 +11,6 @@ export type Sort = {
   /** Set when ordering by a document field rather than a column. */
   field?: string;
 };
-export type SortInput = string | [string, Direction][];
 /** Server metadata is camelCase on the wire and snake_case in PostgreSQL. */
 const COLUMNS: Record<Column, string> = {
   id: "id",
@@ -40,16 +39,16 @@ export function sorting(orderBy = "id", direction = "asc"): Sort {
   };
 }
 
-/** A query may choose two keys; the document id is always the final stable
- * tie-breaker. The wire keeps the original one-key form and uses JSON only for
- * the new tuple form, so frozen clients and their cursors remain valid. */
-export function sortings(raw = "id", direction = "asc"): Sort[] {
-  if (!raw.startsWith("[")) return [sorting(raw, direction)];
+/** One wire form: a JSON array of one or two [field, direction] pairs. The
+ * document id is always the final stable tie-breaker, so it may only be named
+ * on its own. Without orderBy a query reads in id order. */
+export function sortings(raw?: string): Sort[] {
+  if (raw === undefined) return [sorting()];
   let input: unknown;
   try {
     input = JSON.parse(raw);
   } catch {
-    throw new DataError(400, "orderBy must be a field or a JSON sort tuple.");
+    input = undefined;
   }
   if (
     !Array.isArray(input) ||
@@ -65,22 +64,17 @@ export function sortings(raw = "id", direction = "asc"): Sort[] {
   )
     throw new DataError(
       400,
-      "Multi-field orderBy requires one or two [field, direction] pairs.",
-    );
-  if (direction !== "asc")
-    throw new DataError(
-      400,
-      "Do not combine direction with multi-field orderBy.",
+      'orderBy must be a JSON array of one or two [field, direction] pairs, such as [["createdAt","desc"]].',
     );
   const result = (input as [string, Direction][]).map(
     ([field, itemDirection]) => sorting(field, itemDirection),
   );
   if (new Set(result.map((item) => item.orderBy)).size !== result.length)
-    throw new DataError(400, "Multi-field orderBy fields must be unique.");
-  if (result.some((item) => item.orderBy === "id"))
+    throw new DataError(400, "orderBy fields must be unique.");
+  if (result.length > 1 && result.some((item) => item.orderBy === "id"))
     throw new DataError(
       400,
-      "The document id is already the final multi-field tie-breaker.",
+      "The document id is already the final tie-breaker.",
     );
   return result;
 }

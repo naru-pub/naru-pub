@@ -24,7 +24,7 @@ const guides = [
     title: "SDK 레퍼런스",
     summary:
       "웹 SDK가 내보내는 모든 함수와 타입입니다. 컬렉션 읽고 쓰기, 관리자 로그인, 파일 업로드까지 한자리에서 찾아보세요.",
-    topics: ["createDatabase", "Collection", "FileStore", "오류 코드"],
+    topics: ["collection", "ownerSession", "Owner", "오류 코드"],
   },
   {
     href: "/docs/media",

@@ -14,7 +14,6 @@ import {
 } from "./validation";
 import { COMPARISONS, filters } from "./filters";
 import {
-  sorting,
   sortings,
   decodeCursor,
   encodeCursor,
@@ -35,10 +34,9 @@ export type DataCommand = {
   body?: Record<string, unknown>;
   pageToken?: string;
   limit?: number;
+  /** JSON array of one or two [field, direction] pairs. */
   orderBy?: string;
-  direction?: string;
   where?: unknown;
-  count?: boolean;
   includeTotal?: boolean;
   ifVersion?: number;
   /**
@@ -82,32 +80,6 @@ function matchVersion(expected: number, actual: number | undefined) {
       "VERSION_CONFLICT",
     );
 }
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-/** Shallow merge: patch fields replace stored fields, `unset` names removed. */
-export function merge(
-  existing: { data: unknown } | undefined,
-  body: Record<string, unknown>,
-) {
-  if (!existing) throw new DataError(404, "Document not found.");
-  if (!isObject(body.data))
-    throw new DataError(400, "A merge patch must be a JSON object.");
-  if (!isObject(existing.data))
-    throw new DataError(
-      409,
-      "Only object documents can be merged.",
-      "NOT_MERGEABLE",
-    );
-  const unset = body.unset ?? [];
-  if (!Array.isArray(unset) || unset.some((key) => typeof key !== "string"))
-    throw new DataError(400, "unset must be an array of field names.");
-  const merged: Record<string, unknown> = { ...existing.data, ...body.data };
-  // Removal is explicit: a null in the patch stores null rather than deleting.
-  for (const key of unset) delete merged[key as string];
-  return merged;
-}
-
 /** Documents filter on `data`; media filters on `metadata`. The column is only
  * ever one of those two literals, never caller-supplied text. */
 export function filterConditions(
@@ -286,19 +258,10 @@ export async function executeData(command: DataCommand) {
       }
       const filter = filters(command.where);
       const conditions = filterConditions(filter);
-      if (command.count) {
-        let counter = documents().select(
-          tx.fn.countAll<string>().as("matched"),
-        );
-        for (const condition of conditions) counter = counter.where(condition);
-        return {
-          count: Number((await counter.executeTakeFirstOrThrow()).matched),
-        };
-      }
       const limit = command.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 100)
         throw new DataError(400, "Limit must be 1–100.");
-      const sorts = sortings(command.orderBy, command.direction);
+      const sorts = sortings(command.orderBy);
       const sort = sorts[0];
       const multiple = sorts.length > 1;
       const cursor = multiple
@@ -458,7 +421,7 @@ export async function executeData(command: DataCommand) {
     const current = (id: string) =>
       documents()
         .where("id", "=", id)
-        .select(["size_bytes", "data", "version"])
+        .select(["size_bytes", "version"])
         .executeTakeFirst();
     if (method === "DELETE" && path.length === 2) {
       if (expected !== undefined)
@@ -471,16 +434,14 @@ export async function executeData(command: DataCommand) {
         .execute();
       return { success: true };
     }
-    const patching = method === "PATCH" && path.length === 2;
-    if (!(creating || (method === "PUT" && path.length === 2) || patching))
+    if (!(creating || (method === "PUT" && path.length === 2)))
       throw new DataError(405, "Method not allowed.");
     if (!Object.hasOwn(body, "data"))
       throw new DataError(400, "data is required.");
     const id = path[1] ?? randomUUID();
     const existing = await current(id);
     if (expected !== undefined) matchVersion(expected, existing?.version);
-    const data = patching ? merge(existing, body) : body.data;
-    const encoded = JSON.stringify(data);
+    const encoded = JSON.stringify(body.data);
     const size = Buffer.byteLength(encoded);
     if (size > MAX_DOCUMENT_BYTES)
       throw new DataError(413, "Document exceeds 64 KiB.");
@@ -615,19 +576,20 @@ export async function executeBatch(command: DataCommand) {
       // A fresh ID has no version to quote, so the two cannot be combined.
       if (adding && expected !== undefined)
         throw new DataError(400, "add cannot take ifVersion.");
-      const merging = operation.type === "update";
       // The batch holds the owner lock, so a read here cannot go stale before
       // the write that follows it.
-      const existing =
-        expected !== undefined || merging
-          ? await tx
+      if (expected !== undefined)
+        matchVersion(
+          expected,
+          (
+            await tx
               .selectFrom("site_data_documents")
               .where("collection_id", "=", collection.id)
               .where("id", "=", id)
-              .select(["data", "version"])
+              .select("version")
               .executeTakeFirst()
-          : undefined;
-      if (expected !== undefined) matchVersion(expected, existing?.version);
+          )?.version,
+        );
       if (operation.type === "delete") {
         await tx
           .deleteFrom("site_data_documents")
@@ -638,16 +600,14 @@ export async function executeBatch(command: DataCommand) {
         continue;
       }
       if (
-        !(operation.type === "set" || merging || adding) ||
+        !(operation.type === "set" || adding) ||
         !Object.hasOwn(operation, "data")
       )
         throw new DataError(
           400,
-          "Batch operations must be add, set, update or delete.",
+          "Batch operations must be add, set or delete.",
         );
-      const encoded = JSON.stringify(
-        merging ? merge(existing, operation) : operation.data,
-      );
+      const encoded = JSON.stringify(operation.data);
       const size = Buffer.byteLength(encoded);
       if (size > MAX_DOCUMENT_BYTES)
         throw new DataError(413, "Document exceeds 64 KiB.");

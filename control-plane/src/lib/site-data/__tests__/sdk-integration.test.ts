@@ -11,14 +11,15 @@ import {
   approveAuthorization,
   authorizationInput,
   digest,
-  exchangeCode,
   registerClient,
   siteClientId,
 } from "../owner-auth";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
 import {
-  createDatabase,
-  type OwnerDatabase,
+  collection,
+  ownerSession,
+  type Owner,
+  type SiteOptions,
 } from "../../../../public/sdk/1.0.0/naru-data.js";
 
 const integration =
@@ -31,11 +32,15 @@ integration("SDK and data API contract", () => {
   let server: Server | undefined;
   let origin: string;
   let accessToken: string;
-  let owner: OwnerDatabase;
+  let owner: Owner;
   let ownerId: number;
-  let publicDb: ReturnType<typeof createDatabase>;
+  let site: SiteOptions;
+  const storage = new Map<string, string>();
   const nativeFetch = globalThis.fetch;
-  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const browserGlobals = ["location", "sessionStorage", "history"] as const;
+  const oldGlobals = browserGlobals.map((name) =>
+    Object.getOwnPropertyDescriptor(globalThis, name),
+  );
   const oldFeatureMode = process.env.FEATURE_ACCESS_MODE;
 
   beforeAll(async () => {
@@ -99,7 +104,7 @@ integration("SDK and data API contract", () => {
     await sql`insert into sessions values ('sdk-session', ${userId}, now() + interval '1 hour')`.execute(
       db,
     );
-    const collections = ["crud", "feed", "atomic", "private", "raw"];
+    const collections = ["crud", "feed", "atomic", "private"];
     for (const name of collections)
       await executeData({
         site: "alice",
@@ -128,45 +133,51 @@ integration("SDK and data API contract", () => {
         challenge: digest(verifier),
       }),
     );
-    const token = await exchangeCode(
-      {
-        code: new URL(approval.redirect).searchParams.get("code"),
-        verifier,
-        clientId,
-        redirectUri,
-      },
-      origin,
-    );
-    accessToken = token.accessToken;
     ownerId = userId;
-    const storage = new Map<string, string>([
-      [
-        `naru:owner:${origin}:alice:session:${redirectUri}`,
-        JSON.stringify({
-          accessToken: token.accessToken,
-          expiresAt: token.expiresAt,
-          redirectUri,
-        }),
-      ],
-    ]);
-    Object.defineProperty(globalThis, "window", {
-      configurable: true,
-      value: {
-        location: new URL(redirectUri),
-        sessionStorage: {
-          getItem: (key: string) => storage.get(key) ?? null,
-          removeItem: (key: string) => storage.delete(key),
-        },
+    // The page Naru redirects back to, with the code, and the transaction
+    // signIn() would have left in this tab before leaving.
+    const location = new URL(approval.redirect);
+    const values = {
+      location: Object.assign(location, { assign() {} }),
+      sessionStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key),
       },
-    });
-    publicDb = createDatabase({ site: "alice", controlPlaneOrigin: origin });
-    owner = (await publicDb.completeOwnerSignIn())!;
+      history: {
+        state: null,
+        replaceState: (_state: unknown, _title: string, url: string) =>
+          (location.href = url),
+      },
+    };
+    for (const name of browserGlobals)
+      Object.defineProperty(globalThis, name, {
+        configurable: true,
+        value: values[name],
+      });
+    const sessionKey = `naru:owner:${origin}:alice:${redirectUri}`;
+    storage.set(
+      `${sessionKey}:pending`,
+      JSON.stringify({
+        clientId,
+        verifier,
+        state: "s".repeat(43),
+        startedAt: Date.now(),
+      }),
+    );
+    site = { site: "alice", controlPlaneOrigin: origin };
+    owner = (await ownerSession(site))!;
+    expect(location.href).toBe(redirectUri);
+    accessToken = JSON.parse(storage.get(sessionKey)!).accessToken;
   }, 30000);
 
   afterAll(async () => {
     globalThis.fetch = nativeFetch;
-    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow);
-    else Reflect.deleteProperty(globalThis, "window");
+    browserGlobals.forEach((name, index) => {
+      const old = oldGlobals[index];
+      if (old) Object.defineProperty(globalThis, name, old);
+      else Reflect.deleteProperty(globalThis, name);
+    });
     try {
       if (server?.listening) {
         server.closeAllConnections();
@@ -183,7 +194,7 @@ integration("SDK and data API contract", () => {
   });
 
   test("CRUD preserves JSON, metadata, versions, and HTTP failures", async () => {
-    const posts = publicDb.collection("crud");
+    const posts = collection("crud", site);
     const added = await posts.add({
       title: "한글",
       nested: { value: null },
@@ -220,39 +231,36 @@ integration("SDK and data API contract", () => {
     await expect(
       posts.set(added.id, null, { ifVersion: 1 }),
     ).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
-    await posts.update(
-      added.id,
-      { count: 2 },
-      { ifVersion: 2, unset: ["replaced"] },
-    );
-    expect((await posts.get(added.id)).data).toEqual({ count: 2 });
     await expect(
-      posts.delete(added.id, { ifVersion: 2 }),
+      posts.delete(added.id, { ifVersion: 1 }),
     ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
-    expect(await posts.delete(added.id, { ifVersion: 3 })).toEqual({
-      success: true,
-    });
+    expect(await posts.delete(added.id, { ifVersion: 2 })).toBeUndefined();
     await expect(posts.get(added.id)).rejects.toMatchObject({ status: 404 });
-    expect(await posts.delete(added.id)).toEqual({ success: true });
+    await posts.delete(added.id);
+    // Partial updates are not part of the contract.
+    const patch = await nativeFetch(`${origin}/api/data/alice/crud/new`, {
+      method: "PATCH",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ data: { a: 1 } }),
+    });
+    await patch.arrayBuffer();
+    expect(patch.status).toBe(405);
     await posts.set("new", null, { ifVersion: 0 });
     await expect(
       posts.set("new", false, { ifVersion: 0 }),
     ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
   });
 
-  test("filtered pages, count, and all use the same real query contract", async () => {
-    const feed = publicDb.collection<{ rank: number; visible: boolean }>(
-      "feed",
-    );
+  test("filtered pages and totals use the same real query contract", async () => {
+    const feed = collection<{ rank: number; visible: boolean }>("feed", site);
     for (let rank = 1; rank <= 5; rank++)
       await feed.set(`post_${rank}`, { rank, visible: rank !== 3 });
     const query = {
       where: { rank: { gte: 2 }, visible: true },
-      orderBy: "data.rank" as const,
-      direction: "desc" as const,
+      orderBy: [["data.rank", "desc"]] as [[string, "desc"]],
     };
-    expect(await feed.count({ where: query.where })).toBe(3);
-    const first = await feed.list({ ...query, limit: 2 });
+    const first = await feed.list({ ...query, limit: 2, includeTotal: true });
+    expect(first.total).toBe(3);
     expect(first.documents.map((d) => d.id)).toEqual(["post_5", "post_4"]);
     expect(first.nextPageToken).toEqual(expect.any(String));
     const second = await feed.list({
@@ -262,10 +270,6 @@ integration("SDK and data API contract", () => {
     });
     expect(second.documents.map((d) => d.id)).toEqual(["post_2"]);
     expect(second.nextPageToken).toBeNull();
-    const ids: string[] = [];
-    for await (const document of feed.all({ ...query, limit: 1 }))
-      ids.push(document.id);
-    expect(ids).toEqual(["post_5", "post_4", "post_2"]);
     await expect(
       feed.list({
         ...query,
@@ -273,13 +277,20 @@ integration("SDK and data API contract", () => {
         pageToken: first.nextPageToken,
       }),
     ).rejects.toMatchObject({ status: 400 });
+    // An empty filter and a null token are the first, unfiltered page.
+    const everything = await feed.list({
+      where: {},
+      pageToken: null,
+      includeTotal: true,
+    });
+    expect(everything.total).toBe(5);
   });
 
   test("owner batches return operation results and roll back conflicts across collections", async () => {
-    await expect(publicDb.collection("private").list()).rejects.toMatchObject({
+    await expect(collection("private", site).list()).rejects.toMatchObject({
       status: 403,
     });
-    const result = await owner.batch([
+    const results = await owner.batch([
       {
         type: "set",
         collection: "atomic",
@@ -294,16 +305,16 @@ integration("SDK and data API contract", () => {
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
     };
-    expect(result.results).toEqual([
+    expect(results).toEqual([
       { id: "one", ...stamps },
       { id: expect.any(String), ...stamps },
       { success: true },
     ]);
-    const privateId = result.results[1].id;
+    const privateId = (results[1] as { id: string }).id;
     await expect(
       owner.batch([
         {
-          type: "update",
+          type: "set",
           collection: "atomic",
           id: "one",
           data: { changed: true },
@@ -321,46 +332,9 @@ integration("SDK and data API contract", () => {
     });
   });
 
-  test("read parsers validate stored schemaless data and identify failures", async () => {
-    const raw = publicDb.collection("raw");
-    await raw.set("a", { title: "valid" });
-    await raw.set("b", { title: 42 });
-    const parsed = createDatabase({
-      site: "alice",
-      controlPlaneOrigin: origin,
-      collections: {
-        raw: {
-          parse(data) {
-            if (
-              !data ||
-              typeof data !== "object" ||
-              Array.isArray(data) ||
-              typeof data.title !== "string"
-            )
-              throw new Error("title must be a string");
-            return { title: data.title.toUpperCase() };
-          },
-        },
-      },
-    }).collection("raw");
-    expect((await parsed.get("a")).data).toEqual({ title: "VALID" });
-    const failure = {
-      code: "DOCUMENT_VALIDATION_FAILED",
-      collection: "raw",
-      documentId: "b",
-    };
-    await expect(parsed.get("b")).rejects.toMatchObject(failure);
-    await expect(parsed.list()).rejects.toMatchObject(failure);
-    const iterator = parsed.all({ limit: 1 });
-    expect((await iterator.next()).value?.data).toEqual({ title: "VALID" });
-    await expect(iterator.next()).rejects.toMatchObject(failure);
-    expect((await raw.get("b")).data).toEqual({ title: 42 });
-    expect(await parsed.count()).toBe(2);
-  });
-
-  test("the media library pages, filters on metadata and patches it", async () => {
+  test("the media library pages newest first and filters on metadata", async () => {
     // Uploads need object storage; everything after the bytes land is database
-    // work, and that is what the reshaped listing and patch endpoints do.
+    // work, and that is what the listing does.
     for (let index = 1; index <= 3; index++)
       await sql`insert into site_data_files
         (id, user_id, object_key, original_name, content_type, size_bytes, status, metadata, created_at)
@@ -370,16 +344,9 @@ integration("SDK and data API contract", () => {
           })}::jsonb, now() + ${sql.raw(`interval '${index} seconds'`)})`.execute(
         db,
       );
-    const usage = await owner.files.usage();
-    expect(usage).toEqual({
-      bytes: 600,
-      count: 3,
-      pending: 0,
-      maxBytes: expect.any(Number),
-    });
-    // Newest first by default, and a page carries a cursor rather than the lot.
     const first = await owner.files.list({ limit: 2 });
     expect(first.files.map((file) => file.id)).toEqual(["file_3", "file_2"]);
+    expect(first.files[0]).not.toHaveProperty("version");
     expect(first.nextPageToken).toEqual(expect.any(String));
     const second = await owner.files.list({
       limit: 2,
@@ -387,39 +354,19 @@ integration("SDK and data API contract", () => {
     });
     expect(second.files.map((file) => file.id)).toEqual(["file_1"]);
     expect(second.nextPageToken).toBeNull();
-    // The server does the finding, so a caller never walks the library to
-    // discover which images belong to one post.
-    const matched: string[] = [];
-    for await (const file of owner.files.all({ where: { postId: "hello" } }))
-      matched.push(file.id);
-    expect(matched).toEqual(["file_2", "file_1"]);
+    const matched = await owner.files.list({ where: { postId: "hello" } });
+    expect(matched.files.map((file) => file.id)).toEqual(["file_2", "file_1"]);
     await expect(
       owner.files.list({
         where: { postId: "other" },
         pageToken: first.nextPageToken,
       }),
     ).rejects.toMatchObject({ status: 400 });
-    const moved = await owner.files.update(
-      "file_1",
-      { postId: "moved", altText: "비둘기" },
-      { ifVersion: 1 },
-    );
-    expect(moved).toMatchObject({
-      id: "file_1",
-      version: 2,
-      metadata: { postId: "moved", altText: "비둘기" },
+    // The quota readout is the control panel's alone.
+    const usage = await nativeFetch(`${origin}/api/data/alice/_files?usage=1`, {
+      headers: { Origin: origin, Authorization: `Bearer ${accessToken}` },
     });
-    await expect(
-      owner.files.update("file_1", { postId: "again" }, { ifVersion: 1 }),
-    ).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
-    expect(
-      (await owner.files.update("file_1", {}, { unset: ["altText"] })).metadata,
-    ).toEqual({ postId: "moved" });
-    await expect(
-      publicDb.collection("crud").list({ orderBy: "createdAt" }),
-    ).resolves.toBeDefined();
-    // The anonymous client has no media surface at all to misuse.
-    expect((publicDb as { files?: unknown }).files).toBeUndefined();
+    expect(await usage.json()).not.toHaveProperty("usage");
   });
 
   // Public reads are the request a site makes most, and letting a shared cache
@@ -464,27 +411,9 @@ integration("SDK and data API contract", () => {
     expect(missing.headers.get("cache-control")).toBe("no-store");
   });
 
-  test("walking stops at its ceiling instead of paging without end", async () => {
-    const feed = owner.collection("feed");
-    for (let index = 0; index < 4; index += 1)
-      await feed.set(`walk-${index}`, { index });
-    const walked: string[] = [];
-    await expect(
-      (async () => {
-        for await (const document of feed.all({ max: 2, limit: 1 }))
-          walked.push(document.id);
-      })(),
-    ).rejects.toMatchObject({ code: "WALK_LIMIT_EXCEEDED" });
-    expect(walked).toHaveLength(2);
-    // Raising it deliberately is what the error tells the caller to do.
-    const all: string[] = [];
-    for await (const document of feed.all({ max: 100 })) all.push(document.id);
-    expect(all.length).toBeGreaterThanOrEqual(4);
-  });
-
   test("SDK signout revokes the real owner token", async () => {
     await owner.signOut();
-    expect(await publicDb.completeOwnerSignIn()).toBeNull();
+    expect(await ownerSession(site)).toBeNull();
     await expect(owner.collection("private").list()).rejects.toMatchObject({
       status: 401,
     });

@@ -187,17 +187,17 @@ test("list sort and opaque cursor are passed through for both API surfaces", asy
   for (const site of ["alice", undefined]) {
     await dataRequest(
       new Request(
-        "https://naru.pub/api/data/alice/posts?orderBy=created_at&direction=desc&pageToken=v1.example&limit=7",
+        `https://naru.pub/api/data/alice/posts?orderBy=${encodeURIComponent('[["createdAt","desc"]]')}&pageToken=v1.example&limit=7`,
       ),
       ["posts"],
       site,
     );
     expect(execute.mock.lastCall![0]).toMatchObject({
-      orderBy: "created_at",
-      direction: "desc",
+      orderBy: '[["createdAt","desc"]]',
       pageToken: "v1.example",
       limit: 7,
     });
+    expect(execute.mock.lastCall![0]).not.toHaveProperty("direction");
   }
 });
 

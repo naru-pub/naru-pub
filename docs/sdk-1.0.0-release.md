@@ -19,16 +19,13 @@ The fixture loads the actual local SDK and uses native browser sessionStorage,
 URL encoding, and crypto. API responses and credentials are synthetic; it makes
 no production writes. Stop the server afterward.
 
-Tests cover CRUD request isolation, automatic Client ID discovery, PKCE/state and
-callback expiry, one-time concurrent completion, restoration without extending
-expiry, revocation, offline logout, storage denial, failed token persistence,
-JSON/schema validation, atomic batch encoding, upload metadata, non-JSON HTTP
-errors, network failures, sorting/filter encoding, and generic declaration usage.
-They also cover the media library paging and filtering on metadata, the quota
-readout as its own request, metadata patches under a version check, the absence
-of owner-only methods on the anonymous client, the resize phase reported before
-any bytes move, an upload redirected off its authorized origin, and a callback
-completing on a page that carries its own query string.
+Tests cover site inference from the page address, CRUD request shape and cookie
+isolation, list query encoding, server error codes with native network and abort
+errors, cache bypass after a write (including a lost one), PKCE sign-in and
+callback completion, session restore and expiry, 401 handling, sign-out that
+never erases a newer session, batch encoding, direct-to-storage upload with
+image shrinking, and the media listing. The browser fixture repeats the storage,
+fetch and 401 checks natively and shrinks a real 4096 px PNG on a real canvas.
 The blog tests exercise public browsing/guestbook and admin draft/publishing flows.
 
 ## Before freezing
@@ -44,20 +41,22 @@ The blog tests exercise public browsing/guestbook and admin draft/publishing flo
 - Confirm documented limits, equality-only filters, replacement writes,
   non-snapshot pagination, and no automatic write retries.
 - Confirm the frozen shapes one last time, since a new versioned directory is
-  the only way to change them afterwards: server metadata is camelCase
-  (`createdAt`/`updatedAt`), every write returns `{ id, version, createdAt,
-  updatedAt }`, `files.list()` returns a `{ files, nextPageToken }` page rather
-  than an array, `files.usage()` is its own request, `files.update()` exists so
-  metadata is not write-once, `onProgress` carries a `phase`, and the anonymous
-  client exposes neither `batch` nor `files`.
+  the only way to change them afterwards. The surface is deliberately minimal:
+  `collection()` with `get`, `list`, `add`, `set` and `delete`; `signIn()`;
+  `ownerSession()` returning `expiresAt`, `collection()`, `batch()`,
+  `files.upload / list / delete` and `signOut()`; and `NaruDataError`. Server
+  metadata is camelCase (`createdAt`/`updatedAt`), `add` and `set` return
+  `{ id, version, createdAt, updatedAt }`, `orderBy` is always a list of
+  `[field, direction]` pairs, and `files.list()` returns a
+  `{ files, nextPageToken }` page. Anything added later is added to the server
+  contract too, so add it only when a site needs it.
 - Obtain the owner's instruction to freeze 1.0.0. Then remove its development
   notice, record release notes and checksums, and tag the exact verified commit.
   Future SDK changes must use a new versioned directory after that freeze.
 
 ## Operational limitations
 
-Logout invalidates the in-memory client and attempts to clear browser storage
-before server revocation. If storage access is blocked, persisted bytes may remain;
+Logout clears browser storage before requesting server revocation. If storage access is blocked, persisted bytes may remain;
 if the network also fails, a copied token can remain usable until expiration or
 control-plane revocation. The SDK cannot guarantee remote logout while offline.
 An admin session is scoped to a browser tab and callback path; sessionStorage

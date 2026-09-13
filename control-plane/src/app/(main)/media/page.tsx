@@ -56,15 +56,14 @@ export default async function MediaPage() {
         <h2 className="font-bold">웹 SDK에서 쓰기</h2>
         <p className="text-sm text-muted-foreground">
           파일 API는 소유자 세션에서만 열립니다. 컬렉션과 달리{" "}
-          <code className="bg-muted px-1">createDatabase</code>만으로는 쓸 수
-          없고,{" "}
+          <code className="bg-muted px-1">collection</code>만으로는 쓸 수 없고,{" "}
           <Link href="/database" className="text-primary hover:underline">
             웹사이트 관리자 로그인
           </Link>
           을 먼저 마쳐야 합니다.
         </p>
         <pre className="overflow-x-auto bg-muted p-3 text-sm">
-          {`const owner = await db.completeOwnerSignIn();
+          {`const owner = await ownerSession();
 const image = await owner.files.upload(input.files[0], {
   metadata: { postId: "hello" },
 });

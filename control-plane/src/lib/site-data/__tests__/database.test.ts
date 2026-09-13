@@ -156,61 +156,14 @@ integration("site database integration", () => {
       status: 404,
     });
   });
-  test("merge patches change named fields only and leave the rest untouched", async () => {
+  test("documents cannot be patched: replacement is the only update", async () => {
     await call("POST", [], { name: "notes", read: "world" }, true);
-    const created = await call(
-      "PUT",
-      ["notes", "one"],
-      { data: { title: "first", body: "text", legacy: "drop", keep: [1, 2] } },
-      true,
-    );
-    expect(created).toEqual({ id: "one", ...writeStamps(1) });
-    const patched = await call(
-      "PATCH",
-      ["notes", "one"],
-      { data: { title: "second", added: null }, unset: ["legacy"] },
-      true,
-    );
-    expect(patched).toEqual({ id: "one", ...writeStamps(2) });
-    const document = (await call("GET", ["notes", "one"])).document!;
-    // A null in the patch stores null; removal is only ever explicit.
-    expect(document.data).toEqual({
-      title: "second",
-      body: "text",
-      added: null,
-      keep: [1, 2],
-    });
-    expect(document.version).toBe(2);
-    // Size accounting follows the merged document, not the patch.
-    const stored = await sql<{
-      size_bytes: number;
-    }>`select d.size_bytes from site_data_documents d
-      join site_data_collections c on c.id = d.collection_id
-      where c.name = 'notes' and d.id = 'one'`.execute(db);
-    expect(stored.rows[0].size_bytes).toBe(
-      Buffer.byteLength(JSON.stringify(document.data)),
-    );
+    await call("PUT", ["notes", "one"], { data: { title: "first" } }, true);
     await expect(
-      call("PATCH", ["notes", "missing"], { data: { a: 1 } }, true),
-    ).rejects.toMatchObject({ status: 404 });
-    await call("PUT", ["notes", "scalar"], { data: "text" }, true);
-    await expect(
-      call("PATCH", ["notes", "scalar"], { data: { a: 1 } }, true),
-    ).rejects.toMatchObject({ status: 409, code: "NOT_MERGEABLE" });
-    for (const body of [
-      { data: "text" },
-      { data: [1] },
-      { data: null },
-      { data: { a: 1 }, unset: "legacy" },
-      { data: { a: 1 }, unset: [1] },
-    ])
-      await expect(
-        call("PATCH", ["notes", "one"], body, true),
-      ).rejects.toMatchObject({ status: 400 });
-    await expect(
-      call("PATCH", ["notes", "one"], { data: { a: 1 } }),
-    ).rejects.toMatchObject({
-      status: 403,
+      call("PATCH", ["notes", "one"], { data: { title: "second" } }, true),
+    ).rejects.toMatchObject({ status: 405 });
+    expect((await call("GET", ["notes", "one"])).document!.data).toEqual({
+      title: "first",
     });
   });
   test("conditional writes reject stale versions and guard creation", async () => {
@@ -238,7 +191,7 @@ integration("site database integration", () => {
     ).toBe(2);
     // The losing writer of a concurrent edit is told rather than overwriting.
     await expect(
-      call("PATCH", ["guarded", "one"], { data: { round: 3 } }, true, {
+      call("PUT", ["guarded", "one"], { data: { round: 3 } }, true, {
         ifVersion: 1,
       }),
     ).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
@@ -257,7 +210,7 @@ integration("site database integration", () => {
       status: 404,
     });
   });
-  test("batch applies merges and conditional writes atomically", async () => {
+  test("batch applies conditional writes atomically", async () => {
     const batch = (...operations: Record<string, unknown>[]) =>
       executeBatch({
         site: "alice",
@@ -275,11 +228,11 @@ integration("site database integration", () => {
     );
     const applied = await batch(
       {
-        type: "update",
+        type: "set",
         collection: "batched",
         id: "one",
         data: { title: "b" },
-        unset: ["keep"],
+        ifVersion: 1,
       },
       { type: "set", collection: "batched", id: "two", data: { title: "c" } },
     );
@@ -300,7 +253,7 @@ integration("site database integration", () => {
           data: { title: "d" },
         },
         {
-          type: "update",
+          type: "set",
           collection: "batched",
           id: "one",
           data: { title: "e" },
@@ -314,17 +267,10 @@ integration("site database integration", () => {
     expect((await call("GET", ["batched", "one"])).document!.data).toEqual({
       title: "b",
     });
-    await expect(
-      batch({
-        type: "update",
-        collection: "batched",
-        id: "missing",
-        data: { title: "f" },
-      }),
-    ).rejects.toMatchObject({ status: 404 });
-    await expect(
-      batch({ type: "replace", collection: "batched", id: "one", data: {} }),
-    ).rejects.toMatchObject({ status: 400 });
+    for (const type of ["update", "replace"])
+      await expect(
+        batch({ type, collection: "batched", id: "one", data: {} }),
+      ).rejects.toMatchObject({ status: 400 });
     // add assigns server IDs, so a batch no longer has to mint its own.
     const created = await batch(
       { type: "add", collection: "batched", data: { title: "g" } },

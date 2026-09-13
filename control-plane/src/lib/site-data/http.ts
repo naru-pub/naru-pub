@@ -13,9 +13,9 @@ import { executeMedia } from "./media";
 // `max-age=0` keeps the browser revalidating, so a reader who reloads is not
 // looking at their own stale copy; `s-maxage` is what a CDN collapses bursts
 // with. The window is short because the data behind it is a guestbook or a post
-// list, where seconds of lag is unremarkable and minutes would not be. Callers
-// that must not see a stale read say so explicitly (the SDK's `fresh` option),
-// which is what write-then-reread flows use.
+// list, where seconds of lag is unremarkable and minutes would not be. The SDK
+// reads a collection its own browser just wrote with `cache: "no-store"`, so
+// write-then-reread flows never see the cached copy.
 //
 // No `stale-while-revalidate`: it would extend how long a shared cache may keep
 // answering after this window, and that window is also how long a collection
@@ -26,7 +26,7 @@ const PUBLIC_READ_CACHE = "public, max-age=0, s-maxage=10";
 
 const publicHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "Access-Control-Max-Age": "600",
 };
@@ -74,6 +74,8 @@ export async function dataRequest(
       process.env.SITE_DATA_TRUST_CLOUDFLARE_IP === "1"
         ? request.headers.get("cf-connecting-ip")
         : null;
+    // PATCH only reaches here from the control panel, to change a collection's
+    // permissions; the public route does not export it.
     const body = ["POST", "PUT", "PATCH"].includes(request.method)
       ? await jsonBody(request)
       : undefined;
@@ -89,11 +91,10 @@ export async function dataRequest(
       clientIp: forwardedIp && isIP(forwardedIp) ? forwardedIp : undefined,
       body,
       where: parseWhereQuery(url.searchParams.get("where")),
-      count: url.searchParams.get("count") === "1",
       includeTotal: url.searchParams.get("includeTotal") === "1",
       cacheability,
-      // The media listing and its quota readout are separate queries, so a
-      // caller that only wants the quota never pays to page the library.
+      // The control panel's quota readout; the media service ignores it for
+      // anyone but a signed-in owner.
       usage: url.searchParams.get("usage") === "1",
       ifVersion:
         ifVersion === null
@@ -102,7 +103,6 @@ export async function dataRequest(
             ? Number(ifVersion)
             : NaN,
       orderBy: url.searchParams.get("orderBy") ?? undefined,
-      direction: url.searchParams.get("direction") ?? undefined,
       pageToken: url.searchParams.get("pageToken") ?? undefined,
       limit: url.searchParams.has("limit")
         ? Number(url.searchParams.get("limit"))

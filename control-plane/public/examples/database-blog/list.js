@@ -20,8 +20,7 @@ async function load(reset = false) {
     const page = await db.collection(guestbook ? "guestbook" : "posts").list({
       limit: 20,
       where: category ? { category } : {},
-      orderBy: "createdAt",
-      direction: "desc",
+      orderBy: [["createdAt", "desc"]],
       pageToken: cursor,
     });
     if (reset) $("entries").replaceChildren();

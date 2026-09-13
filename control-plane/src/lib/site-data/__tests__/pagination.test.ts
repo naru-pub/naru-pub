@@ -13,6 +13,9 @@ import { executeData } from "../service";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
 import { down, up } from "@/migrations/1788180032055_add_site_data_created_at";
 
+// The wire form of one sort key.
+const order = (field: string, direction = "asc") =>
+  JSON.stringify([[field, direction]]);
 const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 integration("sorted database pagination", () => {
@@ -64,8 +67,7 @@ integration("sorted database pagination", () => {
         let pageToken: string | undefined;
         do {
           const page = await call("GET", ["posts"], {
-            orderBy,
-            direction,
+            orderBy: order(orderBy, direction),
             limit: 1,
             pageToken,
             adminUserId: undefined,
@@ -82,7 +84,7 @@ integration("sorted database pagination", () => {
     },
   );
   test("deleted cursor anchor and new documents before the cursor do not disturb traversal", async () => {
-    const sort = { orderBy: "createdAt", direction: "desc" };
+    const sort = { orderBy: order("createdAt", "desc") };
     const first = await call("GET", ["posts"], { ...sort, limit: 2 });
     await call("DELETE", ["posts", "c"]);
     await call("PUT", ["posts", "new"], { body: { data: true } });
@@ -106,14 +108,13 @@ integration("sorted database pagination", () => {
   });
   test("cursors reject mismatched order, collection, recreation and malformed input", async () => {
     const first = await call("GET", ["posts"], {
-      orderBy: "createdAt",
-      direction: "desc",
+      orderBy: order("createdAt", "desc"),
       limit: 1,
     });
     await call("POST", [], { body: { name: "other", read: "world" } });
     for (const extra of [
-      { orderBy: "updatedAt", direction: "desc" },
-      { orderBy: "createdAt", direction: "asc" },
+      { orderBy: order("updatedAt", "desc") },
+      { orderBy: order("createdAt", "asc") },
       {},
     ])
       await expect(
@@ -121,35 +122,50 @@ integration("sorted database pagination", () => {
       ).rejects.toMatchObject({ status: 400 });
     await expect(
       call("GET", ["other"], {
-        orderBy: "createdAt",
-        direction: "desc",
+        orderBy: order("createdAt", "desc"),
         pageToken: first.nextPageToken,
       }),
     ).rejects.toMatchObject({ status: 400 });
     for (const after of ["", "v1.bad", "x".repeat(2000), "a"])
       await expect(
-        call("GET", ["posts"], { orderBy: "createdAt", pageToken: after }),
+        call("GET", ["posts"], {
+          orderBy: order("createdAt"),
+          pageToken: after,
+        }),
       ).rejects.toMatchObject({ status: 400 });
     await call("DELETE", ["posts"]);
     await call("POST", [], { body: { name: "posts" } });
     await expect(
       call("GET", ["posts"], {
-        orderBy: "createdAt",
-        direction: "desc",
+        orderBy: order("createdAt", "desc"),
         pageToken: first.nextPageToken,
       }),
     ).rejects.toMatchObject({ status: 400 });
   });
   test("sort inputs are allowlisted and raw ID page tokens are rejected", async () => {
     for (const extra of [
-      { orderBy: "data." },
-      { orderBy: "data.nested.title" },
-      { orderBy: "data.title; drop table users" },
-      { orderBy: "data title" },
-      { orderBy: "id; drop table users" },
-      { direction: "sideways" },
+      { orderBy: order("data.") },
+      { orderBy: order("data.nested.title") },
+      { orderBy: order("data.title; drop table users") },
+      { orderBy: order("data title") },
+      { orderBy: order("id; drop table users") },
+      { orderBy: order("createdAt", "sideways") },
       { orderBy: "" },
-      { direction: "" },
+      // The one wire form is the JSON array; a bare field name is refused.
+      { orderBy: "createdAt" },
+      { orderBy: "[]" },
+      {
+        orderBy: JSON.stringify([
+          ["id", "asc"],
+          ["createdAt", "asc"],
+        ]),
+      },
+      {
+        orderBy: JSON.stringify([
+          ["createdAt", "asc"],
+          ["createdAt", "desc"],
+        ]),
+      },
     ])
       await expect(call("GET", ["posts"], extra)).rejects.toMatchObject({
         status: 400,
@@ -172,20 +188,19 @@ integration("sorted database pagination", () => {
     expect(
       (
         await call("GET", ["posts"], {
-          orderBy: "updatedAt",
-          direction: "desc",
+          orderBy: order("updatedAt", "desc"),
           limit: 1,
         })
       ).documents![0].id,
     ).toBe("a");
     const page = await call("GET", ["posts"], {
-      orderBy: "createdAt",
+      orderBy: order("createdAt"),
       limit: 1,
     });
     await call("PATCH", ["posts"], { body: { read: "admin", write: "admin" } });
     await expect(
       call("GET", ["posts"], {
-        orderBy: "createdAt",
+        orderBy: order("createdAt"),
         pageToken: page.nextPageToken,
         adminUserId: undefined,
       }),
@@ -219,8 +234,7 @@ integration("sorted database pagination", () => {
       let pageToken: string | undefined;
       do {
         const page = await call("GET", ["notes"], {
-          orderBy: "data.date",
-          direction,
+          orderBy: order("data.date", direction),
           limit: 2,
           pageToken,
           adminUserId: undefined,
@@ -242,18 +256,21 @@ integration("sorted database pagination", () => {
         body: { data: { date: id, title: id } },
       });
     const first = await call("GET", ["notes"], {
-      orderBy: "data.date",
+      orderBy: order("data.date"),
       limit: 1,
     });
     expect(first.nextPageToken).toEqual(expect.any(String));
     for (const orderBy of ["data.title", "createdAt", "id"])
       await expect(
-        call("GET", ["notes"], { orderBy, pageToken: first.nextPageToken }),
+        call("GET", ["notes"], {
+          orderBy: order(orderBy),
+          pageToken: first.nextPageToken,
+        }),
       ).rejects.toMatchObject({ status: 400 });
     expect(
       (
         await call("GET", ["notes"], {
-          orderBy: "data.date",
+          orderBy: order("data.date"),
           pageToken: first.nextPageToken,
         })
       ).documents!.map((d) => d.id),

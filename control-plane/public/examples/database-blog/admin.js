@@ -48,7 +48,7 @@ function updateUI() {
   for (const id of ["title", "body", "category"]) $(id).readOnly = busy;
   $("manage-list").disabled = busy || !owner;
   $("auth").textContent = owner
-    ? `관리자 로그인됨 · ${new Date(owner.session.expiresAt).toLocaleTimeString("ko-KR")}까지`
+    ? `관리자 로그인됨 · ${new Date(owner.expiresAt).toLocaleTimeString("ko-KR")}까지`
     : "글을 관리하려면 사이트 소유자로 로그인하세요.";
   $("editing").textContent =
     state.kind === "posts"
@@ -72,6 +72,7 @@ async function run(action) {
   try {
     await action();
   } catch (e) {
+    if (e.code === "OWNER_SESSION_EXPIRED") owner = null;
     message(errorMessage(e));
   } finally {
     busy = false;
@@ -98,8 +99,7 @@ async function loadList(reset = true) {
   listKind = kind;
   const page = await owner.collection(kind).list({
     limit: 20,
-    orderBy: "updatedAt",
-    direction: "desc",
+    orderBy: [["updatedAt", "desc"]],
     pageToken: cursor,
   });
   for (const doc of page.documents) {
@@ -148,19 +148,13 @@ async function refreshAfterWrite(notice) {
     await loadList(true);
     message(notice);
   } catch (e) {
+    if (e.code === "OWNER_SESSION_EXPIRED") owner = null;
     message(`${notice} 목록 갱신에 실패했습니다. ${errorMessage(e)}`);
   }
 }
 try {
   db = await connect();
-  owner = await db.completeOwnerSignIn();
-  // A 401, the deadline passing and signing out all end up here, so no request
-  // has to check for an expired session itself.
-  owner?.onSessionChange(({ status }) => {
-    if (status === "active") return;
-    owner = null;
-    updateUI();
-  });
+  owner = await db.ownerSession();
   message(
     owner ? "승인되었습니다. 공개 글과 비공개 초안을 관리할 수 있습니다." : "",
   );
@@ -203,10 +197,7 @@ $("login").addEventListener("click", () =>
   run(async () => {
     saveLocal();
     db ??= await connect();
-    await db.signInAsOwner({
-      redirectUri: location.origin + location.pathname,
-      collections: ["posts", "drafts"],
-    });
+    await db.signIn(["posts", "drafts"]);
   }),
 );
 $("logout").addEventListener("click", () =>
