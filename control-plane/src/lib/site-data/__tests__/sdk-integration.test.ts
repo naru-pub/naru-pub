@@ -395,9 +395,9 @@ integration("SDK and data API contract", () => {
       }>`select column_name from information_schema.columns where table_name = 'site_data_files'`.execute(
         db,
       );
-      expect(columns.rows.map((row) => row.column_name)).not.toContain(
-        "metadata",
-      );
+      const names = columns.rows.map((row) => row.column_name);
+      expect(names).not.toContain("metadata");
+      expect(names).not.toContain("version");
     }
   });
 
