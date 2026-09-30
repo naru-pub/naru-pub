@@ -527,6 +527,24 @@ integration("payments against the database", () => {
       ).map((row) => row.billing_key);
     }
 
+    // Nothing in the database queues keys any more; only retireBillingKey
+    // does, and billing-key-writes-payment.test.ts keeps every path on it.
+    test("the database does not queue keys on its own", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "key-raw",
+      });
+
+      await db
+        .updateTable("subscriptions")
+        .set({ toss_billing_key: null })
+        .where("id", "=", subId)
+        .execute();
+
+      expect(await queued()).toEqual([]);
+    });
+
     test("retiring a key queues it and clears it in one transaction", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, {
