@@ -1,4 +1,5 @@
 import { db } from "@/lib/database";
+import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import {
   addInterval,
   addMonths,
@@ -52,99 +53,107 @@ export async function applyOneTimePayment(opts: {
     throw new Error("Invalid one-time support years");
   }
   const now = new Date();
-  return db.transaction().execute(async (trx) => {
-    if (opts.paymentId) {
-      const ledger = await trx
-        .selectFrom("payments")
-        .select(["status", "period_start", "period_end"])
-        .where("id", "=", opts.paymentId)
+  const { retiredKey, ...period } = await db
+    .transaction()
+    .execute(async (trx) => {
+      if (opts.paymentId) {
+        const ledger = await trx
+          .selectFrom("payments")
+          .select(["status", "period_start", "period_end"])
+          .where("id", "=", opts.paymentId)
+          .forUpdate()
+          .executeTakeFirstOrThrow();
+        if (
+          ledger.status === "done" &&
+          ledger.period_start &&
+          ledger.period_end
+        ) {
+          return {
+            periodStart: new Date(ledger.period_start),
+            periodEnd: new Date(ledger.period_end),
+            retiredKey: null,
+          };
+        }
+      }
+
+      // Serialize entitlement extensions for this user. Two distinct donations
+      // confirmed together must each add their full period.
+      const current = await trx
+        .selectFrom("users")
+        .select("supporter_until")
+        .where("id", "=", opts.userId)
         .forUpdate()
         .executeTakeFirstOrThrow();
-      if (
-        ledger.status === "done" &&
-        ledger.period_start &&
-        ledger.period_end
-      ) {
-        return {
-          periodStart: new Date(ledger.period_start),
-          periodEnd: new Date(ledger.period_end),
-        };
+      const periodStart =
+        current.supporter_until && new Date(current.supporter_until) > now
+          ? new Date(current.supporter_until)
+          : now;
+      const periodEnd = addMonths(periodStart, 12 * opts.years);
+
+      if (opts.paymentId) {
+        await trx
+          .updateTable("payments")
+          .set({
+            ...paymentProviderMetadata(opts.payment, "one-time"),
+            toss_payment_key: opts.payment.paymentKey,
+            order_id: opts.payment.orderId,
+            amount: opts.amount,
+            status: "done",
+            paid_at: now,
+            period_start: periodStart,
+            period_end: periodEnd,
+            raw: JSON.stringify(opts.payment),
+          })
+          .where("id", "=", opts.paymentId)
+          .execute();
+      } else {
+        await trx
+          .insertInto("payments")
+          .values({
+            ...paymentProviderMetadata(opts.payment, "one-time"),
+            user_id: opts.userId,
+            subscription_id: null,
+            toss_payment_key: opts.payment.paymentKey,
+            order_id: opts.payment.orderId,
+            amount: opts.amount,
+            status: "done",
+            paid_at: now,
+            period_start: periodStart,
+            period_end: periodEnd,
+            raw: JSON.stringify(opts.payment),
+          })
+          .execute();
       }
-    }
 
-    // Serialize entitlement extensions for this user. Two distinct donations
-    // confirmed together must each add their full period.
-    const current = await trx
-      .selectFrom("users")
-      .select("supporter_until")
-      .where("id", "=", opts.userId)
-      .forUpdate()
-      .executeTakeFirstOrThrow();
-    const periodStart =
-      current.supporter_until && new Date(current.supporter_until) > now
-        ? new Date(current.supporter_until)
-        : now;
-    const periodEnd = addMonths(periodStart, 12 * opts.years);
-
-    if (opts.paymentId) {
       await trx
-        .updateTable("payments")
+        .updateTable("users")
+        .set({ supporter_until: periodEnd })
+        .where("id", "=", opts.userId)
+        .execute();
+
+      // A confirmed one-time purchase switches an active recurring supporter to
+      // prepaid access atomically, so the old billing key can never renew at the
+      // boundary that now belongs to the prepaid period.
+      const switched = await trx
+        .updateTable("subscriptions")
         .set({
-          ...paymentProviderMetadata(opts.payment, "one-time"),
-          toss_payment_key: opts.payment.paymentKey,
-          order_id: opts.payment.orderId,
-          amount: opts.amount,
-          status: "done",
-          paid_at: now,
-          period_start: periodStart,
-          period_end: periodEnd,
-          raw: JSON.stringify(opts.payment),
+          status: "switched_to_one_time",
+          next_billing_at: null,
+          canceled_at: now,
+          charging_started_at: null,
+          updated_at: now,
         })
-        .where("id", "=", opts.paymentId)
-        .execute();
-    } else {
-      await trx
-        .insertInto("payments")
-        .values({
-          ...paymentProviderMetadata(opts.payment, "one-time"),
-          user_id: opts.userId,
-          subscription_id: null,
-          toss_payment_key: opts.payment.paymentKey,
-          order_id: opts.payment.orderId,
-          amount: opts.amount,
-          status: "done",
-          paid_at: now,
-          period_start: periodStart,
-          period_end: periodEnd,
-          raw: JSON.stringify(opts.payment),
-        })
-        .execute();
-    }
-
-    await trx
-      .updateTable("users")
-      .set({ supporter_until: periodEnd })
-      .where("id", "=", opts.userId)
-      .execute();
-
-    // A confirmed one-time purchase switches an active recurring supporter to
-    // prepaid access atomically, so the old billing key can never renew at the
-    // boundary that now belongs to the prepaid period.
-    await trx
-      .updateTable("subscriptions")
-      .set({
-        status: "switched_to_one_time",
-        toss_billing_key: null,
-        next_billing_at: null,
-        canceled_at: now,
-        charging_started_at: null,
-        updated_at: now,
-      })
-      .where("user_id", "=", opts.userId)
-      .where("status", "in", SWITCHABLE_SUBSCRIPTION_STATUSES)
-      .execute();
-    return { periodStart, periodEnd };
-  });
+        .where("user_id", "=", opts.userId)
+        .where("status", "in", SWITCHABLE_SUBSCRIPTION_STATUSES)
+        .returning("id")
+        .executeTakeFirst();
+      const retiredKey = switched
+        ? await retireBillingKey(trx, { subscriptionId: switched.id })
+        : null;
+      return { periodStart, periodEnd, retiredKey };
+    });
+  await deleteRetiredBillingKey(retiredKey);
+  return period;
 }
 
 // Applies a successful Toss charge atomically: records the payment, extends the

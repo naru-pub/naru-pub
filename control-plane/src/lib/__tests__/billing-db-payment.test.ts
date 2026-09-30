@@ -45,8 +45,10 @@ const { reconcilePayment } =
   require("@/lib/payment-reconciliation") as typeof import("@/lib/payment-reconciliation");
 const { refundPayment } =
   require("@/lib/refunds") as typeof import("@/lib/refunds");
-const { deleteRetiredBillingKeys } =
+const { deleteRetiredBillingKeys, retireBillingKey } =
   require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
+const { deleteUserRow } =
+  require("@/lib/account-deletion") as typeof import("@/lib/account-deletion");
 
 // Runs against a disposable, migrated database (scripts/test-payments-db.sh),
 // never the developer's own.
@@ -525,46 +527,94 @@ integration("payments against the database", () => {
       ).map((row) => row.billing_key);
     }
 
-    test("every key a subscription lets go of is queued for deletion", async () => {
+    test("retiring a key queues it and clears it in one transaction", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, {
         status: "active",
         billingKey: "key-a",
       });
 
-      // Unrelated updates leave the key alone.
-      await db
-        .updateTable("subscriptions")
-        .set({ status: "past_due" })
-        .where("id", "=", subId)
-        .execute();
-      expect(await queued()).toEqual([]);
+      const retired = await db
+        .transaction()
+        .execute((trx) => retireBillingKey(trx, { subscriptionId: subId }));
 
-      // Replaced by a new card.
-      await db
-        .updateTable("subscriptions")
-        .set({ toss_billing_key: "key-b" })
-        .where("id", "=", subId)
-        .execute();
-      // Cleared by a cancel.
-      await db
-        .updateTable("subscriptions")
-        .set({ toss_billing_key: null })
-        .where("id", "=", subId)
-        .execute();
-      expect(await queued()).toEqual(["key-a", "key-b"]);
+      expect(retired).toBe("key-a");
+      expect((await subscription(subId)).toss_billing_key).toBeNull();
+      expect(await queued()).toEqual(["key-a"]);
+
+      // A subscription without a key has nothing to retire.
+      expect(
+        await db
+          .transaction()
+          .execute((trx) => retireBillingKey(trx, { subscriptionId: subId })),
+      ).toBeNull();
+      expect(await queued()).toEqual(["key-a"]);
     });
 
-    test("a deleted account's key is queued too", async () => {
+    test("a rolled-back transaction keeps the key where it was", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "key-b",
+      });
+
+      await expect(
+        db.transaction().execute(async (trx) => {
+          await retireBillingKey(trx, { subscriptionId: subId });
+          throw new Error("rollback");
+        }),
+      ).rejects.toThrow("rollback");
+
+      expect((await subscription(subId)).toss_billing_key).toBe("key-b");
+      expect(await queued()).toEqual([]);
+    });
+
+    test("deleting an account retires its key first", async () => {
       const userId = await makeUser();
       await makeSubscription(userId, { status: "active", billingKey: "key-c" });
 
-      await db.deleteFrom("users").where("id", "=", userId).execute();
+      const retired = await db
+        .transaction()
+        .execute((trx) => deleteUserRow(trx, userId));
 
+      expect(retired).toBe("key-c");
       expect(await queued()).toEqual(["key-c"]);
+      expect(
+        await db
+          .selectFrom("users")
+          .select("id")
+          .where("id", "=", userId)
+          .executeTakeFirst(),
+      ).toBeUndefined();
     });
 
-    test("a one-time purchase retires the recurring key", async () => {
+    test("a key Toss already deleted is cleared without being queued", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "key-gone",
+      });
+      await db
+        .insertInto("retired_billing_keys")
+        .values({ billing_key: "key-gone" })
+        .execute();
+
+      const retired = await db
+        .transaction()
+        .execute((trx) =>
+          retireBillingKey(
+            trx,
+            { subscriptionId: subId },
+            { deletedAtToss: true },
+          ),
+        );
+
+      expect(retired).toBeNull();
+      expect((await subscription(subId)).toss_billing_key).toBeNull();
+      expect(await queued()).toEqual([]);
+    });
+
+    test("a one-time purchase deletes the recurring key at Toss right away", async () => {
       const userId = await makeUser();
       await makeSubscription(userId, { status: "active", billingKey: "key-d" });
 
@@ -575,7 +625,72 @@ integration("payments against the database", () => {
         payment: tossPayment("one-time-retire", 12000),
       });
 
-      expect(await queued()).toEqual(["key-d"]);
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("key-d");
+      expect(await queued()).toEqual([]);
+    });
+
+    test("a key Toss would not delete stays queued for the cron", async () => {
+      const userId = await makeUser();
+      await makeSubscription(userId, { status: "active", billingKey: "key-e" });
+      toss.deleteBillingKey.mockRejectedValue(
+        new toss.TossApiError("server error", 500),
+      );
+
+      // The purchase itself still succeeds.
+      await applyOneTimePayment({
+        userId,
+        amount: 12000,
+        years: 1,
+        payment: tossPayment("one-time-retire-2", 12000),
+      });
+
+      const [row] = await db
+        .selectFrom("retired_billing_keys")
+        .selectAll()
+        .execute();
+      expect(row).toMatchObject({ billing_key: "key-e", attempts: 1 });
+    });
+
+    test("a refunded renewal cancels the subscription and deletes its key", async () => {
+      const periodEnd = new Date(Date.now() + 20 * DAY);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "key-f",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: subId,
+        attemptKey: `subscription:${subId}:refund:1`,
+        orderId: "refunded-renewal",
+        amount: 1000,
+      });
+      await db
+        .updateTable("payments")
+        .set({
+          status: "done",
+          paid_at: new Date(),
+          period_start: new Date(),
+          period_end: periodEnd,
+        })
+        .where("id", "=", paymentId)
+        .execute();
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("refunded-renewal", 1000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 1000 }],
+        }),
+      );
+
+      await reconcilePayment(paymentId);
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("canceled");
+      expect(sub.toss_billing_key).toBeNull();
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("key-f");
+      expect(await queued()).toEqual([]);
     });
 
     test("keys are deleted at Toss and forgotten once Toss confirms", async () => {

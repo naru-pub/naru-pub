@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
+import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 
 // Cancels auto-renewal. Access (supporter_until) is left intact so the user
 // keeps the feature through the already-paid period; the renewal cron skips
@@ -35,17 +36,20 @@ export async function POST(_request: NextRequest) {
     }
 
     const cancelingSchedule = sub.status === "scheduled";
-    await db
-      .updateTable("subscriptions")
-      .set({
-        status: cancelingSchedule ? "switched_to_one_time" : "canceled",
-        toss_billing_key: null,
-        canceled_at: new Date(),
-        next_billing_at: null,
-        updated_at: new Date(),
-      })
-      .where("id", "=", sub.id)
-      .execute();
+    const billingKey = await db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("subscriptions")
+        .set({
+          status: cancelingSchedule ? "switched_to_one_time" : "canceled",
+          canceled_at: new Date(),
+          next_billing_at: null,
+          updated_at: new Date(),
+        })
+        .where("id", "=", sub.id)
+        .execute();
+      return retireBillingKey(trx, { subscriptionId: sub.id });
+    });
+    await deleteRetiredBillingKey(billingKey);
 
     return NextResponse.json({
       success: true,

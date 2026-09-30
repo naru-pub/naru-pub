@@ -1,4 +1,5 @@
 import { db } from "@/lib/database";
+import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { cancelPayment, paymentFlowForRecord, TossApiError } from "@/lib/toss";
 
@@ -89,20 +90,31 @@ export class RefundError extends Error {
 // refunded one-time donation has no subscription of its own, so the account's
 // recurring plan is stopped here as well.
 async function stopRecurringBilling(userId: number): Promise<boolean> {
-  const result = await db
-    .updateTable("subscriptions")
-    .set({
-      status: "canceled",
-      toss_billing_key: null,
-      next_billing_at: null,
-      charging_started_at: null,
-      canceled_at: new Date(),
-      updated_at: new Date(),
-    })
-    .where("user_id", "=", userId)
-    .where("status", "not in", ["canceled", "switched_to_one_time"])
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  const { stopped, billingKey } = await db
+    .transaction()
+    .execute(async (trx) => {
+      const stopped = await trx
+        .updateTable("subscriptions")
+        .set({
+          status: "canceled",
+          next_billing_at: null,
+          charging_started_at: null,
+          canceled_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where("user_id", "=", userId)
+        .where("status", "not in", ["canceled", "switched_to_one_time"])
+        .returning("id")
+        .executeTakeFirst();
+      return {
+        stopped: stopped != null,
+        billingKey: stopped
+          ? await retireBillingKey(trx, { subscriptionId: stopped.id })
+          : null,
+      };
+    });
+  await deleteRetiredBillingKey(billingKey);
+  return stopped;
 }
 
 export type RefundOutcome = {

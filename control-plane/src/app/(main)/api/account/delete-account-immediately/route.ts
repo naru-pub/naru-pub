@@ -13,6 +13,8 @@ import { deleteCustomDomainsForUser } from "@/lib/customDomains";
 import { verify } from "@node-rs/argon2";
 import { deleteUserMedia } from "@/lib/site-data/media";
 import { deleteUserTemplateObjects } from "@/lib/board/templates";
+import { deleteUserRow } from "@/lib/account-deletion";
+import { deleteRetiredBillingKey } from "@/lib/billing-keys";
 
 export async function POST(request: NextRequest) {
   try {
@@ -115,7 +117,10 @@ export async function POST(request: NextRequest) {
     await deleteCustomDomainsForUser(user.id);
 
     // Delete user account (this will cascade to all related tables)
-    await db.deleteFrom("users").where("id", "=", user.id).execute();
+    const billingKey = await db
+      .transaction()
+      .execute((trx) => deleteUserRow(trx, user.id));
+    await deleteRetiredBillingKey(billingKey);
 
     // Invalidate session
     if (session) {

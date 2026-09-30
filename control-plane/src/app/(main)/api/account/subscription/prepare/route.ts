@@ -6,6 +6,7 @@ import {
   hasVerifiedEmail,
 } from "@/lib/support";
 import { db } from "@/lib/database";
+import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { assertJsonContentType } from "@/lib/utils";
 import { isBillingInterval, PLAN_AMOUNTS } from "@/lib/toss";
 import { canStartRecurringPurchase } from "@/lib/support-purchases";
@@ -87,19 +88,23 @@ export async function POST(request: NextRequest) {
     const amount = PLAN_AMOUNTS[interval];
 
     if (existing) {
-      await db
-        .updateTable("subscriptions")
-        .set({
-          plan: "supporter",
-          billing_interval: interval,
-          amount,
-          status: "incomplete",
-          toss_customer_key: customerKey,
-          toss_billing_key: null,
-          updated_at: new Date(),
-        })
-        .where("id", "=", existing.id)
-        .execute();
+      // A new card is registered next, so the old key is done.
+      const billingKey = await db.transaction().execute(async (trx) => {
+        await trx
+          .updateTable("subscriptions")
+          .set({
+            plan: "supporter",
+            billing_interval: interval,
+            amount,
+            status: "incomplete",
+            toss_customer_key: customerKey,
+            updated_at: new Date(),
+          })
+          .where("id", "=", existing.id)
+          .execute();
+        return retireBillingKey(trx, { subscriptionId: existing.id });
+      });
+      await deleteRetiredBillingKey(billingKey);
     } else {
       await db
         .insertInto("subscriptions")

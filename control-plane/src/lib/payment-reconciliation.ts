@@ -12,6 +12,7 @@ import {
   applyOneTimePayment,
   applySuccessfulCharge,
 } from "@/lib/subscriptions";
+import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 
 const UNCONFIRMED_EXPIRY_MS = 30 * 60 * 1000;
 
@@ -172,7 +173,7 @@ async function reconcilePaymentCore(
         payment.amount,
       );
 
-      await db.transaction().execute(async (trx) => {
+      const retiredKey = await db.transaction().execute(async (trx) => {
         await trx
           .updateTable("payments")
           .set({
@@ -241,7 +242,6 @@ async function reconcilePaymentCore(
             .updateTable("subscriptions")
             .set({
               status: "canceled",
-              toss_billing_key: null,
               next_billing_at: null,
               charging_started_at: null,
               canceled_at: refundedAt ?? new Date(),
@@ -249,8 +249,13 @@ async function reconcilePaymentCore(
             })
             .where("id", "=", payment.subscription_id)
             .execute();
+          return retireBillingKey(trx, {
+            subscriptionId: payment.subscription_id,
+          });
         }
+        return null;
       });
+      await deleteRetiredBillingKey(retiredKey);
       if (status === "canceled" || status === "partial_canceled") {
         return { state: "refunded", amount: refundedAmount, full };
       }

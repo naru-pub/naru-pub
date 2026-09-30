@@ -7,6 +7,7 @@ import {
   TossApiError,
 } from "@/lib/toss";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
+import { retireBillingKey } from "@/lib/billing-keys";
 import { parseTossWebhook, webhookLedgerAction } from "@/lib/toss-webhooks";
 // General Toss payment webhooks are not signed. Treat the payload only as a
 // notification and retrieve the authoritative payment before changing state.
@@ -24,32 +25,39 @@ export async function POST(request: NextRequest) {
     const event = parseTossWebhook(body);
 
     if (event.type === "billing-deleted") {
-      const subscription = await db
-        .selectFrom("subscriptions")
-        .select(["id", "canceled_at"])
-        .where("toss_billing_key", "=", event.billingKey)
-        .executeTakeFirst();
-
-      if (subscription) {
-        const now = new Date();
-        await db
-          .updateTable("subscriptions")
-          .set({
-            status: "canceled",
-            toss_billing_key: null,
-            next_billing_at: null,
-            canceled_at: subscription.canceled_at ?? now,
-            updated_at: now,
-          })
-          .where("id", "=", subscription.id)
+      await db.transaction().execute(async (trx) => {
+        const subscription = await trx
+          .selectFrom("subscriptions")
+          .select(["id", "canceled_at"])
           .where("toss_billing_key", "=", event.billingKey)
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (subscription) {
+          const now = new Date();
+          await trx
+            .updateTable("subscriptions")
+            .set({
+              status: "canceled",
+              next_billing_at: null,
+              canceled_at: subscription.canceled_at ?? now,
+              updated_at: now,
+            })
+            .where("id", "=", subscription.id)
+            .execute();
+          await retireBillingKey(
+            trx,
+            { subscriptionId: subscription.id },
+            { deletedAtToss: true },
+          );
+        }
+        // Toss already deleted this key, so it has nothing left to retire,
+        // including a copy queued before this event arrived.
+        await trx
+          .deleteFrom("retired_billing_keys")
+          .where("billing_key", "=", event.billingKey)
           .execute();
-      }
-      // Toss already deleted this key; nothing is left to retire.
-      await db
-        .deleteFrom("retired_billing_keys")
-        .where("billing_key", "=", event.billingKey)
-        .execute();
+      });
 
       return NextResponse.json({ received: true });
     }

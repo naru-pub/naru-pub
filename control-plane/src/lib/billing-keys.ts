@@ -1,5 +1,57 @@
 import { db } from "@/lib/database";
+import type { Executor } from "@/lib/entitlements";
 import { deleteBillingKey, TossApiError } from "@/lib/toss";
+
+// Every way a billing key leaves subscriptions.toss_billing_key goes through
+// retireBillingKey: a cancel, a refund, a one-time switch, a new card, an
+// account deletion. Keys never expire at Toss and are stored here in plain
+// text, so a key 나루 stops using must also be deleted there — and it can only
+// be deleted while someone still has it. retireBillingKey moves it into
+// retired_billing_keys in the caller's transaction; after that commits, the
+// caller passes the returned key to deleteRetiredBillingKey, and the cron's
+// deleteRetiredBillingKeys retries whatever Toss did not confirm.
+//
+// A test fails if anything else writes toss_billing_key = null.
+export async function retireBillingKey(
+  trx: Executor,
+  subscription: { subscriptionId: number } | { userId: number },
+  opts: { deletedAtToss?: boolean } = {},
+): Promise<string | null> {
+  const row = await trx
+    .selectFrom("subscriptions")
+    .select(["id", "toss_billing_key"])
+    .where((eb) =>
+      "subscriptionId" in subscription
+        ? eb("id", "=", subscription.subscriptionId)
+        : eb("user_id", "=", subscription.userId),
+    )
+    .forUpdate()
+    .executeTakeFirst();
+  const billingKey = row?.toss_billing_key ?? null;
+  if (!row || !billingKey) return null;
+
+  if (!opts.deletedAtToss) {
+    await trx
+      .insertInto("retired_billing_keys")
+      .values({ billing_key: billingKey })
+      .onConflict((oc) => oc.column("billing_key").doNothing())
+      .execute();
+  }
+  await trx
+    .updateTable("subscriptions")
+    .set({ toss_billing_key: null })
+    .where("id", "=", row.id)
+    .execute();
+  if (opts.deletedAtToss) {
+    // Toss told us the key is gone (BILLING_DELETED), so nothing is left to
+    // delete there — including a copy queued earlier.
+    await trx
+      .deleteFrom("retired_billing_keys")
+      .where("billing_key", "=", billingKey)
+      .execute();
+  }
+  return opts.deletedAtToss ? null : billingKey;
+}
 
 const BATCH_SIZE = 100;
 // A key Toss would not delete is retried at most this often.
@@ -35,35 +87,64 @@ export async function deleteRetiredBillingKeys(now = new Date()) {
   let deleted = 0;
   let failed = 0;
   for (const row of queued) {
-    try {
-      await deleteBillingKey(row.billing_key);
-    } catch (error) {
-      if (!alreadyGone(error)) {
-        failed += 1;
-        await db
-          .updateTable("retired_billing_keys")
-          .set((eb) => ({
-            attempts: eb("attempts", "+", 1),
-            last_attempted_at: now,
-            last_error: (error instanceof Error
-              ? error.message
-              : String(error)
-            ).slice(0, 2000),
-          }))
-          .where("id", "=", row.id)
-          .execute();
-        console.error(
-          `[delete-retired-billing-keys] key ${row.id}: deletion failed`,
-          error,
-        );
-        continue;
-      }
+    if (await deleteQueuedKey(row, now)) {
+      deleted += 1;
+    } else {
+      failed += 1;
     }
-    deleted += 1;
-    await db
-      .deleteFrom("retired_billing_keys")
-      .where("id", "=", row.id)
-      .execute();
   }
   return { deleted, failed };
+}
+
+async function deleteQueuedKey(
+  row: { id: number; billing_key: string },
+  now: Date,
+): Promise<boolean> {
+  try {
+    await deleteBillingKey(row.billing_key);
+  } catch (error) {
+    if (!alreadyGone(error)) {
+      await db
+        .updateTable("retired_billing_keys")
+        .set((eb) => ({
+          attempts: eb("attempts", "+", 1),
+          last_attempted_at: now,
+          last_error: (error instanceof Error
+            ? error.message
+            : String(error)
+          ).slice(0, 2000),
+        }))
+        .where("id", "=", row.id)
+        .execute();
+      console.error(
+        `[delete-retired-billing-keys] key ${row.id}: deletion failed`,
+        error,
+      );
+      return false;
+    }
+  }
+  await db
+    .deleteFrom("retired_billing_keys")
+    .where("id", "=", row.id)
+    .execute();
+  return true;
+}
+
+// Deletes a key retireBillingKey just queued, once the caller's transaction has
+// committed, so the plain-text copy is gone in milliseconds when Toss answers.
+// Never throws: a key Toss did not confirm stays queued for the cron.
+export async function deleteRetiredBillingKey(
+  billingKey: string | null,
+): Promise<void> {
+  if (!billingKey) return;
+  try {
+    const row = await db
+      .selectFrom("retired_billing_keys")
+      .select(["id", "billing_key"])
+      .where("billing_key", "=", billingKey)
+      .executeTakeFirst();
+    if (row) await deleteQueuedKey(row, new Date());
+  } catch (error) {
+    console.error("Retired billing key deletion error:", error);
+  }
 }
