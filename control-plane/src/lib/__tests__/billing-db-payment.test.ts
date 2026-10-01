@@ -1167,11 +1167,13 @@ integration("payments against the database", () => {
       };
     }
 
+    // Both keys may list the same test account, and Toss's list prefixes
+    // a billing order's id.
     test("a day whose books agree reports nothing", async () => {
       const { paidAt } = await paidYesterday("agrees");
-      toss.listTransactions.mockImplementation(async (flow) =>
-        flow === "one-time" ? [transaction("agrees", "DONE", paidAt)] : [],
-      );
+      toss.listTransactions.mockImplementation(async () => [
+        { ...transaction("agrees", "DONE", paidAt), orderId: "1a5321_agrees" },
+      ]);
 
       const result = await withKeys(() => checkTossTransactions());
 

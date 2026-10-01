@@ -34,8 +34,17 @@ export function previousKstDay(now = new Date()) {
   return { start, end, startLocal: local(start), endLocal: local(end) };
 }
 
+// Toss's list names a billing order with a prefix before our order id
+// ("1a5321_2026-10-01-7267-3808"); our ids have no underscore.
+function ourOrderId(orderId: string): string {
+  const at = orderId.indexOf("_");
+  return at === -1 ? orderId : orderId.slice(at + 1);
+}
+
+// Both MIDs' transactions, each once: with test keys both secret keys can
+// list the same account.
 async function tossTransactions(startLocal: string, endLocal: string) {
-  const all: TossTransaction[] = [];
+  const all = new Map<string, TossTransaction>();
   for (const { flow } of tossSecretKeys()) {
     let startingAfter: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
@@ -44,12 +53,17 @@ async function tossTransactions(startLocal: string, endLocal: string) {
         endDate: endLocal,
         startingAfter,
       });
-      all.push(...rows);
+      for (const row of rows) {
+        all.set(row.transactionKey, {
+          ...row,
+          orderId: ourOrderId(row.orderId),
+        });
+      }
       if (rows.length < 5000) break;
       startingAfter = rows[rows.length - 1].transactionKey;
     }
   }
-  return all;
+  return [...all.values()];
 }
 
 async function ledgerCounts(start: Date, end: Date, orderIds?: string[]) {
