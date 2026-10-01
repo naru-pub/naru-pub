@@ -100,7 +100,7 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
       "subscriptions.status",
       "billing_interval",
       "amount",
-      "billing_keys.key_hint as billing_key",
+      "billing_keys.billing_key",
       "current_period_start",
       "current_period_end",
       "next_billing_at",
@@ -134,7 +134,7 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
     .selectFrom("billing_keys")
     .select([
       "id",
-      "key_hint as billing_key",
+      "billing_key",
       "status",
       "delete_attempts as attempts",
       "delete_last_error as last_error",
@@ -147,7 +147,15 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
 
   return {
     user: user ? plain(user) : null,
-    subscription: subscription ? plain(subscription) : null,
+    // Keys are shown masked, never whole.
+    subscription: subscription
+      ? plain({
+          ...subscription,
+          billing_key: subscription.billing_key
+            ? maskSecret(subscription.billing_key)
+            : null,
+        })
+      : null,
     payments: payments.map((payment) =>
       plain({
         ...payment,
@@ -156,7 +164,9 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
           : null,
       }),
     ),
-    retiredKeys: retiredKeys.map((row) => plain(row)),
+    retiredKeys: retiredKeys.map((row) =>
+      plain({ ...row, billing_key: maskSecret(row.billing_key ?? "") }),
+    ),
   };
 }
 

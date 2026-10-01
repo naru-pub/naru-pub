@@ -31,6 +31,7 @@ export interface Activities {
 }
 
 export interface BillingKeys {
+  billing_key: string | null;
   card_company: string | null;
   card_number: string | null;
   created_at: Generated<Timestamp>;
@@ -40,9 +41,6 @@ export interface BillingKeys {
   delete_last_error: string | null;
   deleted_at: Timestamp | null;
   id: Generated<string>;
-  key_ciphertext: string | null;
-  key_hash: string;
-  key_hint: string;
   retired_at: Timestamp | null;
   status: ColumnType<"active" | "retired" | "deleted", "active" | "retired" | "deleted" | undefined>;
   user_id: string | null;

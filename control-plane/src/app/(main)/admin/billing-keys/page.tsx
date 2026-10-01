@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { maskSecret } from "@/lib/toss";
 import { db } from "@/lib/database";
 import { STUCK_AFTER_ATTEMPTS } from "@/lib/billing-keys";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +23,7 @@ export default async function RetiredBillingKeysPage() {
     .selectFrom("billing_keys")
     .select([
       "id",
-      "key_hint",
+      "billing_key",
       "retired_at",
       "delete_attempts as attempts",
       "delete_last_attempted_at as last_attempted_at",
@@ -60,7 +61,7 @@ export default async function RetiredBillingKeysPage() {
             {keys.map((key) => (
               <TableRow key={key.id}>
                 <TableCell className="font-mono text-xs">
-                  {key.key_hint}
+                  {maskSecret(key.billing_key ?? "")}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {formatDate(key.retired_at)}

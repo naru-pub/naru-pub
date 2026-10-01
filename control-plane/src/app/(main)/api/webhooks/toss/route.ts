@@ -9,7 +9,6 @@ import {
   tossSecretKeys,
 } from "@/lib/toss";
 import { markDeletedAtToss, retireBillingKey } from "@/lib/billing-keys";
-import { hashBillingKey } from "@/lib/billing-key-crypto";
 import { withAccountLock } from "@/lib/account-lock";
 import { lookupOrder } from "@/lib/toss-gateway";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
@@ -111,7 +110,7 @@ export async function POST(request: NextRequest) {
       const key = await db
         .selectFrom("billing_keys")
         .select(["id", "user_id"])
-        .where("key_hash", "=", hashBillingKey(event.billingKey))
+        .where("billing_key", "=", event.billingKey)
         .executeTakeFirst();
       const cancelPlan = () =>
         db.transaction().execute(async (trx) => {

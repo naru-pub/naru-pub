@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { maskSecret } from "@/lib/toss";
 import type { SubscriptionStatus } from "@/lib/payment-states";
 import Link from "next/link";
 import { sql } from "kysely";
@@ -47,7 +48,7 @@ export default async function SubscriptionsPage({
       "subscriptions.status",
       "subscriptions.billing_interval",
       "subscriptions.amount",
-      "billing_keys.key_hint",
+      "billing_keys.billing_key",
       "billing_keys.card_company",
       "billing_keys.card_number",
       "subscriptions.current_period_end",
@@ -151,8 +152,11 @@ export default async function SubscriptionsPage({
                 </TableCell>
                 <TableCell>{sub.failed_charge_count || "-"}</TableCell>
                 <TableCell className="font-mono text-xs">
-                  {sub.key_hint
-                    ? [sub.card_company, sub.card_number ?? sub.key_hint]
+                  {sub.billing_key
+                    ? [
+                        sub.card_company,
+                        sub.card_number ?? maskSecret(sub.billing_key),
+                      ]
                         .filter(Boolean)
                         .join(" ")
                     : "-"}

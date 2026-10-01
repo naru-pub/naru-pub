@@ -14,7 +14,6 @@ import {
   TossPaymentResult,
 } from "@/lib/toss";
 import { chargeOrder } from "@/lib/toss-gateway";
-import { decryptBillingKey } from "@/lib/billing-key-crypto";
 import {
   notePaymentEvent,
   recordPaymentEvent,
@@ -44,8 +43,8 @@ type DueSubscription = {
   status: SubscriptionStatus;
   billing_interval: string;
   amount: number;
-  // The plan's key, encrypted (lib/billing-key-crypto), and its customerKey.
-  key_ciphertext: string;
+  // The plan's key and its customerKey.
+  billing_key: string;
   customer_key: string;
   current_period_end: Date | string | null;
   payment_grace_notice_sent_at: Date | string | null;
@@ -100,7 +99,7 @@ function dueSubscriptions(
       s.status,
       s.billing_interval,
       s.amount,
-      k.key_ciphertext,
+      k.billing_key,
       k.customer_key,
       s.current_period_end,
       s.payment_grace_notice_sent_at,
@@ -424,7 +423,7 @@ async function chargeAttempt(
     };
   }
   const outcome = await chargeOrder({
-    billingKey: decryptBillingKey(sub.key_ciphertext),
+    billingKey: sub.billing_key,
     customerKey: sub.customer_key,
     amount: sub.amount,
     orderId: attempt.order_id,

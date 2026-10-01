@@ -1,19 +1,14 @@
 import { sql } from "kysely";
 import { db } from "@/lib/database";
-import {
-  billingKeyHint,
-  decryptBillingKey,
-  encryptBillingKey,
-  hashBillingKey,
-} from "@/lib/billing-key-crypto";
 import type { Executor } from "@/lib/entitlements";
 import { notePaymentEvent } from "@/lib/payment-events";
+import { maskSecret } from "@/lib/toss";
 import { deleteKey } from "@/lib/toss-gateway";
 
 // Every billing key Toss issues is a billing_keys row (see the migration that
-// adds it), encrypted, and goes one way: active while a plan may charge it,
-// retired once nothing will, deleted when Toss confirms it is gone — and only
-// then does the row give up its ciphertext. A key stays chargeable at Toss for
+// adds it) and goes one way: active while a plan may charge it, retired once
+// nothing will, deleted when Toss confirms it is gone — and only then does the
+// row give up the key itself. A key stays chargeable at Toss for
 // as long as its card is valid, years, so a key 나루 stops using must be
 // deleted there too, and it can only be deleted while 나루 still has it.
 //
@@ -39,26 +34,23 @@ export async function storeIssuedKey(
     cardNumber?: string | null;
   },
 ): Promise<StoredKey> {
-  const keyHash = hashBillingKey(opts.billingKey);
   const inserted = await trx
     .insertInto("billing_keys")
     .values({
       user_id: opts.userId,
       customer_key: opts.customerKey,
-      key_hash: keyHash,
-      key_ciphertext: encryptBillingKey(opts.billingKey),
-      key_hint: billingKeyHint(opts.billingKey),
+      billing_key: opts.billingKey,
       card_company: opts.cardCompany ?? null,
       card_number: opts.cardNumber ?? null,
     })
-    .onConflict((oc) => oc.column("key_hash").doNothing())
+    .onConflict((oc) => oc.column("billing_key").doNothing())
     .returning(["id", "status"])
     .executeTakeFirst();
   if (inserted) return inserted;
   return trx
     .selectFrom("billing_keys")
     .select(["id", "status"])
-    .where("key_hash", "=", keyHash)
+    .where("billing_key", "=", opts.billingKey)
     .forUpdate()
     .executeTakeFirstOrThrow();
 }
@@ -76,13 +68,13 @@ export async function chargeableKey(
       "billing_keys.id",
       "subscriptions.billing_key_id",
     )
-    .select(["billing_keys.key_ciphertext", "billing_keys.customer_key"])
+    .select(["billing_keys.billing_key", "billing_keys.customer_key"])
     .where("subscriptions.id", "=", subscriptionId)
     .where("billing_keys.status", "=", "active")
     .executeTakeFirst();
-  if (!row?.key_ciphertext) return null;
+  if (!row?.billing_key) return null;
   return {
-    billingKey: decryptBillingKey(row.key_ciphertext),
+    billingKey: row.billing_key,
     customerKey: row.customer_key,
   };
 }
@@ -90,7 +82,7 @@ export async function chargeableKey(
 // Takes the plan's key away from it and retires it. Returns the key's id for
 // deleteRetiredBillingKey, or null when the plan held none. With
 // deletedAtToss (BILLING_DELETED), Toss already deleted it: nothing is left to
-// do there, and the ciphertext goes now.
+// do there, and the key itself goes now.
 export async function retireBillingKey(
   trx: Executor,
   plan: { subscriptionId: string },
@@ -166,7 +158,7 @@ export async function markDeletedAtToss(
     .updateTable("billing_keys")
     .set({
       status: "deleted",
-      key_ciphertext: null,
+      billing_key: null,
       deleted_at: new Date(),
       retired_at: sql<Date>`coalesce(retired_at, now())`,
     })
@@ -186,12 +178,12 @@ const RETRY_AFTER = "1 hour";
 const MAX_RETRY_AFTER = "1 day";
 export const STUCK_AFTER_ATTEMPTS = 5;
 
-// Deletes retired keys at Toss. The ciphertext is dropped as soon as Toss
+// Deletes retired keys at Toss. The key itself is dropped as soon as Toss
 // confirms; a failure stays retired and is retried later.
 export async function deleteRetiredBillingKeys(now = new Date()) {
   const queued = await db
     .selectFrom("billing_keys")
-    .select(["id", "key_ciphertext", "key_hint", "delete_attempts"])
+    .select(["id", "billing_key", "delete_attempts"])
     .where("status", "=", "retired")
     .where((eb) =>
       eb.or([
@@ -224,8 +216,7 @@ export async function deleteRetiredBillingKeys(now = new Date()) {
 
 type QueuedKey = {
   id: string;
-  key_ciphertext: string | null;
-  key_hint: string;
+  billing_key: string | null;
   delete_attempts: number;
 };
 
@@ -249,15 +240,15 @@ async function deleteQueuedKey(row: QueuedKey, now: Date): Promise<boolean> {
       kind: "key_deletion_stuck",
       userId: holder.user_id,
       subscriptionId: holder.id,
-      summary: `폐기된 빌링키 ${row.key_hint}가 아직 정기 결제에 쓰이고 있어 지우지 않음 — 잘못 폐기된 키`,
+      summary: `폐기된 빌링키 ${maskSecret(row.billing_key ?? "")}가 아직 정기 결제에 쓰이고 있어 지우지 않음 — 잘못 폐기된 키`,
     });
     console.error(
       `[delete-retired-billing-keys] key ${row.id}: still held by subscription ${holder.id}; not deleted`,
     );
     return false;
   }
-  const deleted = row.key_ciphertext
-    ? await deleteKey(decryptBillingKey(row.key_ciphertext))
+  const deleted = row.billing_key
+    ? await deleteKey(row.billing_key)
     : ({ kind: "deleted" } as const);
   if (deleted.kind === "failed") {
     const error = deleted.error;
@@ -277,7 +268,7 @@ async function deleteQueuedKey(row: QueuedKey, now: Date): Promise<boolean> {
     if (attempts === STUCK_AFTER_ATTEMPTS) {
       await notePaymentEvent({
         kind: "key_deletion_stuck",
-        summary: `빌링키 ${row.key_hint} 삭제가 ${attempts}번 실패: ${message.slice(0, 300)}`,
+        summary: `빌링키 ${maskSecret(row.billing_key ?? "")} 삭제가 ${attempts}번 실패: ${message.slice(0, 300)}`,
       });
     }
     console.error(
@@ -293,7 +284,7 @@ async function deleteQueuedKey(row: QueuedKey, now: Date): Promise<boolean> {
 }
 
 // Deletes keys retireBillingKey just retired, once the caller's transaction
-// has committed, so the ciphertext is gone in moments when Toss answers.
+// has committed, so the key is gone in moments when Toss answers.
 // Never throws: a key Toss did not confirm stays retired for the cron.
 export async function deleteRetiredBillingKey(
   keyIds: string | null | Array<string | null>,
@@ -305,7 +296,7 @@ export async function deleteRetiredBillingKey(
     try {
       const row = await db
         .selectFrom("billing_keys")
-        .select(["id", "key_ciphertext", "key_hint", "delete_attempts"])
+        .select(["id", "billing_key", "delete_attempts"])
         .where("id", "=", id)
         .where("status", "=", "retired")
         .executeTakeFirst();

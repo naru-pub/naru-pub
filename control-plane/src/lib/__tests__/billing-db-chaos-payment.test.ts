@@ -1,7 +1,6 @@
 /** @jest-environment node */
 import { afterAll, describe, expect, jest, test } from "@jest/globals";
 import { AsyncLocalStorage } from "async_hooks";
-import { createHash } from "crypto";
 import type { TossPaymentResult } from "@/lib/toss";
 
 // Random payment operations, several at once, on a handful of accounts,
@@ -202,8 +201,6 @@ jest.mock("@/lib/email", () => ({
 }));
 jest.mock("@/lib/auth", () => ({ validateRequest: jest.fn() }));
 
-process.env.BILLING_KEY_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
-
 // Required after the mocks: this transform does not hoist jest.mock above
 // imports.
 const { sql } = require("kysely") as typeof import("kysely");
@@ -278,8 +275,6 @@ function post(url: string, body: unknown) {
   });
 }
 
-const hash = (key: string) => createHash("sha256").update(key).digest("hex");
-
 fake.heldKey = async (billingKey) =>
   (await db
     .selectFrom("subscriptions")
@@ -289,13 +284,13 @@ fake.heldKey = async (billingKey) =>
       "subscriptions.billing_key_id",
     )
     .select("subscriptions.id")
-    .where("billing_keys.key_hash", "=", hash(billingKey))
+    .where("billing_keys.billing_key", "=", billingKey)
     .executeTakeFirst()) != null;
 fake.usableKey = async (billingKey) =>
   (await db
     .selectFrom("billing_keys")
     .select("id")
-    .where("key_hash", "=", hash(billingKey))
+    .where("billing_key", "=", billingKey)
     .where("status", "=", "active")
     .executeTakeFirst()) != null;
 
@@ -501,13 +496,11 @@ function operations(userId: string, pick: () => number): Op[] {
             "billing_keys.id",
             "subscriptions.billing_key_id",
           )
-          .select("billing_keys.key_hash")
+          .select("billing_keys.billing_key")
           .where("subscriptions.id", "=", plan.id)
           .executeTakeFirst();
-        const billingKey = [...fake.keys.keys()].find(
-          (k) => held && hash(k) === held.key_hash,
-        );
-        if (!billingKey) return;
+        const billingKey = held?.billing_key;
+        if (!billingKey || !fake.keys.has(billingKey)) return;
         fake.keys.get(billingKey)!.deleted = true;
         return tossWebhook(
           post("/api/webhooks/toss", {

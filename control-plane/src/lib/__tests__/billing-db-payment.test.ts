@@ -36,9 +36,6 @@ jest.mock("@/lib/email", () => ({
 
 jest.mock("@/lib/auth", () => ({ validateRequest: jest.fn() }));
 
-// Billing keys are stored encrypted (lib/billing-key-crypto).
-process.env.BILLING_KEY_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
-
 // Required after the mocks: this transform does not hoist jest.mock above
 // imports.
 const { sql } = require("kysely") as typeof import("kysely");
@@ -98,8 +95,6 @@ const {
 } = require("@/lib/payment-states") as typeof import("@/lib/payment-states");
 const { checkPaymentInvariants } =
   require("@/lib/payment-invariants") as typeof import("@/lib/payment-invariants");
-const crypto =
-  require("@/lib/billing-key-crypto") as typeof import("@/lib/billing-key-crypto");
 const { NextRequest } = require("next/server") as typeof import("next/server");
 const auth = require("@/lib/auth") as jest.Mocked<typeof import("@/lib/auth")>;
 const { POST: cancelSubscriptionRoute } =
@@ -238,9 +233,7 @@ async function storeKey(
     .values({
       user_id: userId,
       customer_key: randomUUID(),
-      key_hash: crypto.hashBillingKey(billingKey),
-      key_ciphertext: crypto.encryptBillingKey(billingKey),
-      key_hint: crypto.billingKeyHint(billingKey),
+      billing_key: billingKey,
       status,
       retired_at: status === "retired" ? new Date() : null,
     })
@@ -263,22 +256,15 @@ async function setPlanKey(subscriptionId: string, billingKey: string | null) {
     .execute();
 }
 
-// A plan, with the key it holds decrypted as billing_key.
-async function subscription(id: string) {
-  const row = await db
+// A plan, with the key it holds as billing_key.
+function subscription(id: string) {
+  return db
     .selectFrom("subscriptions")
     .leftJoin("billing_keys", "billing_keys.id", "subscriptions.billing_key_id")
     .selectAll("subscriptions")
-    .select("billing_keys.key_ciphertext")
+    .select("billing_keys.billing_key")
     .where("subscriptions.id", "=", id)
     .executeTakeFirstOrThrow();
-  const { key_ciphertext, ...plan } = row;
-  return {
-    ...plan,
-    billing_key: key_ciphertext
-      ? crypto.decryptBillingKey(key_ciphertext)
-      : null,
-  };
 }
 
 // The account's current plan (the newest).
@@ -292,12 +278,12 @@ async function currentPlan(userId: string) {
   return subscription(row.id);
 }
 
-// The retired keys waiting to be deleted at Toss, decrypted, oldest first.
+// The retired keys waiting to be deleted at Toss, oldest first.
 async function retiredKeys() {
-  const rows = await db
+  return db
     .selectFrom("billing_keys")
     .select([
-      "key_ciphertext",
+      "billing_key",
       "delete_attempts as attempts",
       "delete_last_error as last_error",
     ])
@@ -305,11 +291,6 @@ async function retiredKeys() {
     .orderBy("retired_at")
     .orderBy("id")
     .execute();
-  return rows.map((row) => ({
-    billing_key: crypto.decryptBillingKey(row.key_ciphertext!),
-    attempts: row.attempts,
-    last_error: row.last_error,
-  }));
 }
 
 async function supporterUntil(userId: string) {
@@ -846,18 +827,6 @@ integration("payments against the database", () => {
       ).rejects.toThrow("may not go from canceled to past_due");
     });
 
-    test("a key is stored encrypted", async () => {
-      const userId = await makeUser();
-      await makeSubscription(userId, {
-        status: "active",
-        billingKey: "key-secret",
-      });
-      const [row] = await db.selectFrom("billing_keys").selectAll().execute();
-      expect(row.key_ciphertext).not.toContain("key-secret");
-      expect(row.key_ciphertext).toMatch(/^v1\./);
-      expect(crypto.decryptBillingKey(row.key_ciphertext!)).toBe("key-secret");
-    });
-
     test("retiring a key queues it and clears it in one transaction", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, {
@@ -939,7 +908,7 @@ integration("payments against the database", () => {
       expect((await subscription(subId)).billing_key).toBeNull();
       expect(await queued()).toEqual([]);
       const [key] = await db.selectFrom("billing_keys").selectAll().execute();
-      expect(key).toMatchObject({ status: "deleted", key_ciphertext: null });
+      expect(key).toMatchObject({ status: "deleted", billing_key: null });
     });
 
     test("a one-time purchase deletes the recurring key at Toss right away", async () => {
