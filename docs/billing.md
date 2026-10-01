@@ -27,6 +27,21 @@
 - **빌링키 삭제**: 빌링키는 Toss에서 만료되지 않고, 나루는 빌링키를 암호화하지 않고 저장합니다. 그래서 더 이상 쓰지 않는 빌링키는 Toss에서도 지웁니다. 빌링키를 비우는 모든 경로(취소·환불·한 번만 결제 전환·재등록·`BILLING_DELETED`)는 `lib/billing-keys.ts`의 `retireBillingKey`를, 계정 삭제는 `lib/account-deletion.ts`의 `deleteUserRow`를 거칩니다. `retireBillingKey`는 호출한 쪽의 트랜잭션 안에서 키를 `retired_billing_keys`에 넣고 컬럼을 비웁니다. 트랜잭션이 커밋되면 호출한 쪽이 `deleteRetiredBillingKey`로 곧바로 빌링키 삭제 API(`DELETE /v1/billing/{billingKey}`)를 부르고, Toss가 확인하면(이미 없는 키 포함) 행을 지워 평문 사본을 남기지 않습니다. Toss가 응답하지 않았거나 커밋 직후 프로세스가 죽었으면 행이 남고, cron의 `delete-retired-billing-keys.ts`(5분마다)가 다시 시도합니다. 데이터베이스는 이 규칙을 강제하지 않으므로, `toss_billing_key`를 다른 곳에서 비우거나 `users` 행을 다른 곳에서 지우면 `billing-key-writes-payment.test.ts`가 실패합니다. 실패한 키는 `attempts`/`last_error`를 남기고 한 시간 뒤부터 두 배씩 늘려(최대 하루) 다시 시도합니다. Toss에 없는 키를 지울 때 Toss가 어떻게 답하는지 문서가 밝히지 않아서, 그런 거절이 영원히 매시간 반복되지 않게 하려는 것입니다. 다섯 번 넘게 실패하면 `STUCK`으로 로그를 남기니 `last_error`를 확인하세요.
 - **웹훅**: 일반 결제 웹훅에는 서명이 없으므로 payload를 신뢰하지 않습니다. `api/webhooks/toss`는 `orderId`로 Toss API를 다시 조회하고 금액과 상태를 확인한 뒤 원장을 동기화합니다. 성공 결제의 엔티틀먼트 부여는 confirm/cron/대사의 원자적 처리에서만 수행합니다. 조회한 결제는 `orderId`·금액·MID(`toss_mid`를 알 때)가 모두 맞아야 반영합니다. `BILLING_DELETED`는 다른 이벤트처럼 `data.billingKey`로 오며, 받으면 그 키를 쓰는 구독을 취소하고 삭제 대기열에서도 뺍니다(Toss에서 이미 지워졌으므로). 빌링키는 조회 API가 없어 이 이벤트만은 다시 확인할 수 없으므로, `SITE_DATA_TRUST_CLOUDFLARE_IP=1`(인그레스가 `CF-Connecting-IP`를 덮어쓰는 배포)에서는 Toss가 공개한 웹훅 발신 IP에서 온 것만 받습니다. 자동결제는 승인 완료 시 `PAYMENT_STATUS_CHANGED`를 보내지 않으니 청구 결과는 웹훅에 기대지 않습니다. 웹훅이 원장 상태를 바꾸는 건 아직 `pending`인 결제가 `aborted`/`expired`/`failed`로 끝났을 때와 취소(대사)뿐입니다 — `READY`·`IN_PROGRESS` 같은 중간 상태를 적으면 그 결제는 confirm도 대사도 할 수 없게 됩니다.
 
+## 결제 실험실 (`/admin`)
+
+모든 Toss 시크릿 키가 테스트 키(`test_…`)인 환경에서만 `/admin` 맨 위에 나타납니다(`isTossTestMode`). 라이브 키가 하나라도 있으면 화면도 API(`api/admin/billing-lab`)도 없습니다 — 버튼 하나가 실제로 청구·환불하기 때문입니다. 결제 운영자(`PAYMENT_OPERATOR_USERS`)만 씁니다.
+
+구독은 `/support`에서 Toss 테스트 카드로 먼저 만들고, 그 뒤 실험실에서 계정을 고릅니다. 버튼은 모두 실제 코드 경로를 부릅니다(`lib/billing-lab.ts`).
+
+- **지금 갱신 청구**: `next_billing_at`을 지금으로 당기고 그 구독 하나만 `chargeDueSubscriptions`로 청구합니다. 남은 기간이 있으면 그 뒤에 이어 붙는 조기 갱신이 됩니다.
+- **Toss 응답 고르기**: `TossPayments-Test-Code` 헤더로 Toss가 지정한 오류를 돌려주게 합니다. 4xx(`REJECT_CARD_PAYMENT` 등)는 실패로 세고, 5xx(`FAILED_CARD_COMPANY`)는 결과 불분명으로 `pending`에 남습니다. 헤더는 실험실 동작 안에서, 테스트 키로 부를 때만 붙습니다.
+- **기간을 지금 끝내기 / 유예 기간 지난 뒤로**: 구독의 `current_period_end`·`next_billing_at`과 `supporter_until`을 옮겨, 며칠 기다리지 않고 재시도와 `past_due` 전환을 봅니다.
+- **대사 / 환불 / 웹훅**: 결제 행마다 `reconcilePayment`, `refundPayment`(정책 무시), `PAYMENT_STATUS_CHANGED` 웹훅 재생을 실행합니다.
+- **Toss에서 빌링키 삭제 + BILLING_DELETED**: 키를 Toss에서 지운 뒤 한 번 더 지워 보고(Toss가 없는 키에 어떻게 답하는지 — `alreadyGone`이 기대는 응답), `BILLING_DELETED` 웹훅을 실제 핸들러로 보냅니다.
+- **빌링키 삭제 대기열 처리**: 재시도 간격을 무시하고 대기열을 한 번 처리합니다.
+
+동작마다 그 동작이 부른 Toss API 호출(메서드·경로·Test-Code·상태·요청/응답 본문, 빌링키는 가림)과, 구독·계정·결제 원장·삭제 대기열의 변경 전/후(바뀐 칸 노랑, 새 행 초록)를 보여 줍니다.
+
 ## Toss 웹훅 등록
 
 웹훅은 [개발자센터](https://developers.tosspayments.com/my/webhooks)에서 **MID마다** 따로 등록합니다. URL은 둘 다 `https://<도메인>/api/webhooks/toss`입니다.

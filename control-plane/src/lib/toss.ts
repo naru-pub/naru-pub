@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { createHash, randomInt } from "crypto";
 
 const TOSS_API = "https://api.tosspayments.com";
@@ -86,11 +87,93 @@ export function isDefinitiveTossFailure(error: unknown): error is TossApiError {
   );
 }
 
+function secretKey(flow: TossPaymentFlow): string | undefined {
+  return flow === "billing"
+    ? process.env.TOSS_BILLING_SECRET_KEY
+    : process.env.TOSS_PAYMENT_SECRET_KEY;
+}
+
+// True only when every configured Toss key is a test key (test_…), so nothing
+// done here can move real money. The billing lab exists only then.
+export function isTossTestMode(): boolean {
+  const keys = [
+    process.env.TOSS_BILLING_SECRET_KEY,
+    process.env.TOSS_PAYMENT_SECRET_KEY,
+  ].filter((key): key is string => Boolean(key));
+  return keys.length > 0 && keys.every((key) => key.startsWith("test_"));
+}
+
+// One Toss API call as the billing lab shows it.
+export type TossCallRecord = {
+  flow: TossPaymentFlow;
+  method: string;
+  path: string;
+  testCode: string | null;
+  requestBody: unknown;
+  status: number | null;
+  responseBody: unknown;
+  error: string | null;
+  durationMs: number;
+};
+
+type TossLabContext = { testCode: string | null; calls: TossCallRecord[] };
+const labContext = new AsyncLocalStorage<TossLabContext>();
+
+// Runs fn with every Toss call it makes recorded and, in test mode, with
+// TossPayments-Test-Code set so Toss answers with that error instead
+// (https://docs.tosspayments.com/resources/faq). Toss ignores the header for
+// live keys; it is not even sent unless the key in use is a test key.
+// Outside this, tossRequest behaves exactly as before.
+export async function withTossLab<T>(
+  opts: { testCode?: string | null },
+  fn: () => Promise<T>,
+): Promise<{ result: T | null; error: unknown; calls: TossCallRecord[] }> {
+  const context: TossLabContext = {
+    testCode: opts.testCode || null,
+    calls: [],
+  };
+  try {
+    const result = await labContext.run(context, fn);
+    return { result, error: null, calls: context.calls };
+  } catch (error) {
+    return { result: null, error, calls: context.calls };
+  }
+}
+
+// Billing keys are long-lived card credentials, so a recorded call shows only
+// enough of one to tell keys apart.
+export function maskSecret(value: string): string {
+  return value.length <= 8
+    ? "••••"
+    : `${value.slice(0, 4)}••••${value.slice(-4)}`;
+}
+
+const MASKED_FIELDS = new Set(["billingKey", "secret", "authKey"]);
+
+function maskBody(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(maskBody);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, field]) => [
+        key,
+        MASKED_FIELDS.has(key) && typeof field === "string"
+          ? maskSecret(field)
+          : maskBody(field),
+      ]),
+    );
+  }
+  return value;
+}
+
+function maskPath(path: string): string {
+  return path.replace(
+    /^\/v1\/billing\/(?!authorizations\/)([^/?]+)/,
+    (_, key: string) => `/v1/billing/${maskSecret(decodeURIComponent(key))}`,
+  );
+}
+
 function authHeader(flow: TossPaymentFlow): string {
-  const secret =
-    flow === "billing"
-      ? process.env.TOSS_BILLING_SECRET_KEY
-      : process.env.TOSS_PAYMENT_SECRET_KEY;
+  const secret = secretKey(flow);
   if (!secret) {
     throw new Error(
       flow === "billing"
@@ -116,18 +199,52 @@ async function tossRequest<T>(
     idempotencyKey?: string;
   } = {},
 ): Promise<T> {
-  const res = await fetch(`${TOSS_API}${path}`, {
-    method: init.method ?? "POST",
-    headers: {
-      Authorization: authHeader(flow),
-      "Content-Type": "application/json",
-      ...(init.idempotencyKey
-        ? { "Idempotency-Key": init.idempotencyKey }
-        : {}),
-    },
-    body: init.body == null ? undefined : JSON.stringify(init.body),
-    signal: AbortSignal.timeout(TOSS_REQUEST_TIMEOUT_MS),
-  });
+  const lab = labContext.getStore();
+  const testCode =
+    lab?.testCode && secretKey(flow)?.startsWith("test_") ? lab.testCode : null;
+  const method = init.method ?? "POST";
+  const record: TossCallRecord | null = lab
+    ? {
+        flow,
+        method,
+        path: maskPath(path),
+        testCode,
+        requestBody: init.body == null ? null : maskBody(init.body),
+        status: null,
+        responseBody: null,
+        error: null,
+        durationMs: 0,
+      }
+    : null;
+  if (record) lab!.calls.push(record);
+  const startedAt = Date.now();
+
+  let res: Response;
+  try {
+    res = await fetch(`${TOSS_API}${path}`, {
+      method,
+      headers: {
+        Authorization: authHeader(flow),
+        "Content-Type": "application/json",
+        ...(init.idempotencyKey
+          ? { "Idempotency-Key": init.idempotencyKey }
+          : {}),
+        ...(testCode ? { "TossPayments-Test-Code": testCode } : {}),
+      },
+      body: init.body == null ? undefined : JSON.stringify(init.body),
+      signal: AbortSignal.timeout(TOSS_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (record) {
+      record.error = error instanceof Error ? error.message : String(error);
+      record.durationMs = Date.now() - startedAt;
+    }
+    throw error;
+  }
+  if (record) {
+    record.status = res.status;
+    record.durationMs = Date.now() - startedAt;
+  }
 
   // A gateway in front of Toss can answer with an HTML error page. That is
   // still a response with a status, so it must surface as a TossApiError (a 5xx
@@ -136,8 +253,10 @@ async function tossRequest<T>(
   let data: Record<string, unknown>;
   try {
     const text = await res.text();
+    if (record) record.responseBody = text.slice(0, 4000);
     // A successful DELETE may answer with no body at all.
     data = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
+    if (record) record.responseBody = maskBody(data);
   } catch {
     throw new TossApiError(
       `Toss API returned an unreadable response (${res.status})`,

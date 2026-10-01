@@ -17,6 +17,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { labAccounts, LAB_TEST_CODES } from "@/lib/billing-lab";
+import { isTossTestMode } from "@/lib/toss";
+import { BillingLab } from "./BillingLab";
 import { ReconcilePaymentButton } from "./ReconcilePaymentButton";
 
 function formatDate(value: Date | string | null) {
@@ -66,6 +69,9 @@ export default async function PaymentOperatorPage() {
     payments.map((payment) => payment.user_id),
   );
 
+  // Only with test keys: the lab charges and refunds for real.
+  const lab = isTossTestMode() ? await labAccounts() : null;
+
   const pending = payments.filter((payment) => payment.status === "pending");
   const errors = payments.filter((payment) => payment.reconciliation_error);
   const failed = payments.filter((payment) =>
@@ -91,6 +97,8 @@ export default async function PaymentOperatorPage() {
             <Link href="/admin/board">게시판 관리 →</Link>
           </Button>
         </div>
+
+        {lab ? <BillingLab accounts={lab} testCodes={LAB_TEST_CODES} /> : null}
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="border-2 border-border bg-card p-4">

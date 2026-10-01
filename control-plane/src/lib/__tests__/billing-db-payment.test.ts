@@ -49,6 +49,8 @@ const { refundPayment } =
   require("@/lib/refunds") as typeof import("@/lib/refunds");
 const { syncPaymentRefunds } =
   require("@/lib/refund-sync") as typeof import("@/lib/refund-sync");
+const { runLabAction } =
+  require("@/lib/billing-lab") as typeof import("@/lib/billing-lab");
 const { deleteRetiredBillingKeys, retireBillingKey } =
   require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
 const { deleteUserRow } =
@@ -1522,6 +1524,132 @@ integration("payments against the database", () => {
         .where("order_id", "=", orderId)
         .execute();
       expect(row).toEqual({ status: "canceled", refunded_amount: 12000 });
+    });
+  });
+
+  describe("the billing lab", () => {
+    const keys = {
+      billing: process.env.TOSS_BILLING_SECRET_KEY,
+      payment: process.env.TOSS_PAYMENT_SECRET_KEY,
+    };
+    beforeEach(() => {
+      process.env.TOSS_BILLING_SECRET_KEY = "test_sk_billing";
+      process.env.TOSS_PAYMENT_SECRET_KEY = "test_sk_payment";
+    });
+    afterAll(() => {
+      for (const [name, value] of [
+        ["TOSS_BILLING_SECRET_KEY", keys.billing],
+        ["TOSS_PAYMENT_SECRET_KEY", keys.payment],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    });
+
+    async function activeSubscription() {
+      const periodEnd = new Date(Date.now() + 20 * DAY);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "lab-key-0001",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      return { userId, subId, periodEnd };
+    }
+
+    test("refuses to run with a live key", async () => {
+      process.env.TOSS_BILLING_SECRET_KEY = "live_sk_billing";
+      const { subId } = await activeSubscription();
+
+      await expect(
+        runLabAction({ action: "charge", subscriptionId: subId }),
+      ).rejects.toThrow("테스트 키");
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+    });
+
+    test("charges now through the renewal code and shows what changed", async () => {
+      const { subId, periodEnd } = await activeSubscription();
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+
+      const result = await runLabAction({
+        action: "charge",
+        subscriptionId: subId,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.before!.payments).toHaveLength(0);
+      expect(result.after!.payments).toEqual([
+        expect.objectContaining({ status: "done", amount: 1000 }),
+      ]);
+      // Renewing early stacks on the period still running.
+      expect(result.after!.subscription!.current_period_start).toBe(
+        periodEnd.toISOString(),
+      );
+      // The key is shown masked, never whole.
+      expect(result.after!.subscription!.billing_key).toBe("lab-••••0001");
+      expect(JSON.stringify(result)).not.toContain("lab-key-0001");
+    });
+
+    test("a forced decline is counted like the cron counts it", async () => {
+      const { subId } = await activeSubscription();
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("한도초과", 403, "REJECT_CARD_PAYMENT"),
+      );
+
+      const result = await runLabAction({
+        action: "charge",
+        subscriptionId: subId,
+        testCode: "REJECT_CARD_PAYMENT",
+      });
+
+      expect(result.after!.subscription).toMatchObject({
+        status: "active",
+        failed_charge_count: 1,
+      });
+      expect(result.after!.payments[0]).toMatchObject({ status: "failed" });
+    });
+
+    test("moving past the grace period lets a decline end in past_due", async () => {
+      const { subId } = await activeSubscription();
+      await runLabAction({
+        action: "advance",
+        subscriptionId: subId,
+        to: "past_grace",
+      });
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("한도초과", 403, "REJECT_CARD_PAYMENT"),
+      );
+
+      const result = await runLabAction({
+        action: "charge",
+        subscriptionId: subId,
+      });
+
+      expect(result.after!.subscription!.status).toBe("past_due");
+    });
+
+    test("a deleted billing key arrives as a webhook and cancels", async () => {
+      const { subId } = await activeSubscription();
+      toss.deleteBillingKey
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(
+          new toss.TossApiError("없음", 404, "NOT_FOUND_BILLING"),
+        );
+
+      const result = await runLabAction({
+        action: "billing-deleted",
+        subscriptionId: subId,
+      });
+
+      expect(result.message).toContain("HTTP 404 NOT_FOUND_BILLING");
+      expect(result.after!.subscription).toMatchObject({
+        status: "canceled",
+        billing_key: null,
+      });
+      expect(result.after!.retiredKeys).toEqual([]);
     });
   });
 });

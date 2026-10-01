@@ -63,13 +63,18 @@ function renewalAttemptKey(sub: DueSubscription) {
 //
 // `now` decides what is due; the lease itself is wall-clock time, taken per
 // batch, so a later batch in a long run does not start with an aged lease.
-async function claimDueSubscriptions(now: Date, seen: number[]) {
+async function claimDueSubscriptions(
+  now: Date,
+  seen: number[],
+  only: number[] | null,
+) {
   const leasedAt = new Date();
   const staleLeaseBefore = new Date(
     leasedAt.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000,
   );
   const notSeen =
     seen.length > 0 ? sql`AND NOT (id = ANY(${seen}::int[]))` : sql``;
+  const onlyThese = only ? sql`AND id = ANY(${only}::int[])` : sql``;
 
   const result = await sql<DueSubscription>`
     UPDATE subscriptions
@@ -85,6 +90,7 @@ async function claimDueSubscriptions(now: Date, seen: number[]) {
           OR charging_started_at < ${staleLeaseBefore}
         )
         ${notSeen}
+        ${onlyThese}
       ORDER BY next_billing_at ASC, id ASC
       FOR UPDATE SKIP LOCKED
       LIMIT ${BATCH_SIZE}
@@ -309,10 +315,19 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
   );
 }
 
-export async function chargeDueSubscriptions(now = new Date()) {
+// `subscriptionIds` limits the run to those subscriptions (the billing lab
+// charges one at a time); the cron charges everything due.
+export async function chargeDueSubscriptions(
+  now = new Date(),
+  opts: { subscriptionIds?: number[] } = {},
+) {
   const seen: number[] = [];
   for (;;) {
-    const due = await claimDueSubscriptions(now, seen);
+    const due = await claimDueSubscriptions(
+      now,
+      seen,
+      opts.subscriptionIds ?? null,
+    );
     if (due.length === 0) break;
     seen.push(...due.map((sub) => sub.id));
     await chargeClaimedSubscriptions(due, now);

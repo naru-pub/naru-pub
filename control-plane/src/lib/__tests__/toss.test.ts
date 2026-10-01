@@ -15,6 +15,8 @@ import {
   isDefinitiveTossFailure,
   issueBillingKey,
   isOneTimeYears,
+  isTossTestMode,
+  withTossLab,
   isPurchasableOneTimeYears,
   newOrderId,
   oneTimeAmount,
@@ -103,6 +105,71 @@ describe("Toss payment requests", () => {
     // Toss caps idempotency keys at 300 characters.
     expect(keys[0].length).toBeLessThanOrEqual(300);
     expect(keys[0]).not.toContain(authKey);
+  });
+
+  // The billing lab charges and refunds for real; it may only exist where no
+  // key can move real money.
+  test("test mode means every configured key is a test key", () => {
+    expect(isTossTestMode()).toBe(true);
+    process.env.TOSS_PAYMENT_SECRET_KEY = "live_sk_payment";
+    expect(isTossTestMode()).toBe(false);
+    delete process.env.TOSS_PAYMENT_SECRET_KEY;
+    expect(isTossTestMode()).toBe(true);
+    delete process.env.TOSS_BILLING_SECRET_KEY;
+    expect(isTossTestMode()).toBe(false);
+  });
+
+  test("the lab records calls with billing keys masked", async () => {
+    jest.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({ billingKey: "billing-key-secret", status: "DONE" }),
+    } as Response);
+
+    const { calls } = await withTossLab(
+      { testCode: "REJECT_CARD_PAYMENT" },
+      () =>
+        chargeBillingKey({
+          billingKey: "billing-key-secret",
+          customerKey: "customer",
+          amount: 1000,
+          orderId: "order",
+          orderName: "monthly",
+          idempotencyKey: "order",
+        }),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: "POST",
+      path: "/v1/billing/bill••••cret",
+      testCode: "REJECT_CARD_PAYMENT",
+      status: 200,
+      responseBody: { billingKey: "bill••••cret", status: "DONE" },
+    });
+    expect(JSON.stringify(calls)).not.toContain("billing-key-secret");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "TossPayments-Test-Code": "REJECT_CARD_PAYMENT",
+        }),
+      }),
+    );
+  });
+
+  test("the test code is never sent with a live key, nor outside the lab", async () => {
+    process.env.TOSS_BILLING_SECRET_KEY = "live_sk_billing";
+    await withTossLab({ testCode: "REJECT_CARD_PAYMENT" }, () =>
+      deleteBillingKey("key"),
+    );
+    process.env.TOSS_BILLING_SECRET_KEY = "test_billing_secret";
+    await deleteBillingKey("key");
+
+    for (const [, init] of jest.mocked(fetch).mock.calls) {
+      expect(init?.headers).not.toHaveProperty("TossPayments-Test-Code");
+    }
   });
 
   test("one-time confirmation retries use the same idempotency key", async () => {
