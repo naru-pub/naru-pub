@@ -56,7 +56,6 @@ export default async function AdminOverviewPage() {
   const f = PAYMENT_FILTERS;
   const dayAgo = webhookWindowStart("24h", now);
   const weekAgo = webhookWindowStart("7d", now);
-  const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const [
     payments,
@@ -93,6 +92,9 @@ export default async function AdminOverviewPage() {
         sql<number>`count(*) filter (where ${f.failed_7d.condition(now)})::int`.as(
           "failed7",
         ),
+        sql<number>`count(*) filter (where ${f.orphaned.condition(now)})::int`.as(
+          "orphaned",
+        ),
       ])
       .executeTakeFirstOrThrow(),
     db
@@ -127,9 +129,6 @@ export default async function AdminOverviewPage() {
           "unsent",
         ),
         sql<Date | null>`max(emailed_at)`.as("lastEmailed"),
-        sql<number>`count(*) filter (where kind = 'charge_orphaned' and created_at >= ${monthAgo})::int`.as(
-          "orphaned",
-        ),
       ])
       .executeTakeFirstOrThrow(),
     db
@@ -186,7 +185,7 @@ export default async function AdminOverviewPage() {
 
       <section className="space-y-2">
         <h2 className="font-semibold">결제</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <Stat
             label={f.paid_30d.label}
             value={formatKrw(payments.paid30Amount)}
@@ -216,6 +215,13 @@ export default async function AdminOverviewPage() {
             value={payments.failed7}
             detail="거절·실패한 주문"
             href="/admin/payments?filter=failed_7d"
+          />
+          <Stat
+            label={f.orphaned.label}
+            value={payments.orphaned}
+            detail="Toss는 승인, 원장은 끝난 주문"
+            href="/admin/payments?filter=orphaned"
+            alert={payments.orphaned > 0}
           />
         </div>
       </section>
@@ -280,13 +286,6 @@ export default async function AdminOverviewPage() {
             value={live ? events.unsent : "-"}
             detail={live ? "몇 분 안에 한 통으로 발송" : "운영 환경에서만 발송"}
             href="/admin/events?unsent=1"
-          />
-          <Stat
-            label="결제됐으나 기간 미부여 (30일)"
-            value={events.orphaned}
-            detail="Toss는 승인, 원장은 이미 끝난 주문 — 환불하거나 기간을 부여"
-            href="/admin/events?kind=charge_orphaned"
-            alert={events.orphaned > 0}
           />
         </div>
       </section>

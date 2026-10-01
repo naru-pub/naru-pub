@@ -22,6 +22,8 @@ import {
   type PaymentFilterKey,
 } from "../_components/metrics";
 import { ReconcilePaymentButton } from "../_components/ReconcilePaymentButton";
+import { RecoverChargeButton } from "../_components/RecoverChargeButton";
+import { RECOVERABLE_STATUSES } from "@/lib/payment-reconciliation";
 import { requireOperator } from "../_components/requireOperator";
 
 export const metadata: Metadata = { title: "결제 · 운영 · 나루" };
@@ -222,6 +224,9 @@ export default async function PaymentOperatorPage({
                 <TableCell>
                   <div className="flex flex-wrap gap-2">
                     <ReconcilePaymentButton paymentId={payment.id} />
+                    {RECOVERABLE_STATUSES.includes(payment.status) ? (
+                      <RecoverChargeButton paymentId={payment.id} />
+                    ) : null}
                     {payment.status === "done" && !payment.refunded_amount ? (
                       <RefundPaymentButton
                         paymentId={payment.id}

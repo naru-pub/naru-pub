@@ -595,3 +595,80 @@ export async function reconcilePayment(
     throw error;
   }
 }
+
+// The ledger states a charge can be orphaned under: an order settled as
+// expired, failed or declined that Toss nonetheless approved (charge_orphaned).
+// Nothing looks at these rows again on its own.
+export const RECOVERABLE_STATUSES = ["expired", "failed", "aborted"];
+
+export type RecoveryResult =
+  | { state: "recovered"; result: ReconciliationResult }
+  | { state: "not_paid"; tossStatus: string | null };
+
+export class RecoveryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RecoveryError";
+  }
+}
+
+// An operator's fix for an orphaned charge: if Toss says the order was paid,
+// the row goes back to pending and the ordinary reconciliation grants it —
+// the period, the receipt, a one-time purchase's switch from recurring — as if
+// the charge had landed normally. A paid row can then be refunded like any
+// other, if refunding is the right call (the supporter was also charged for a
+// retry, say). An order Toss did not complete is left as it is.
+export async function recoverOrphanedCharge(
+  paymentId: string,
+): Promise<RecoveryResult> {
+  const payment = await db
+    .selectFrom("payments")
+    .select(["id", "order_id", "amount", "status", "toss_flow", "attempt_key"])
+    .where("id", "=", paymentId)
+    .executeTakeFirstOrThrow();
+  if (!RECOVERABLE_STATUSES.includes(payment.status)) {
+    throw new RecoveryError(
+      `${payment.status} 상태의 결제는 복구 대상이 아닙니다.`,
+    );
+  }
+
+  let tossPayment: TossPaymentResult;
+  try {
+    tossPayment = await getPaymentByOrderId(
+      payment.order_id,
+      paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
+    );
+  } catch (error) {
+    if (error instanceof TossApiError && error.status === 404) {
+      return { state: "not_paid", tossStatus: null };
+    }
+    throw error;
+  }
+  if (
+    tossPayment.orderId !== payment.order_id ||
+    tossPayment.totalAmount !== payment.amount
+  ) {
+    throw new RecoveryError(
+      `Toss 결제가 주문과 맞지 않습니다 (금액 ${tossPayment.totalAmount}/${payment.amount}).`,
+    );
+  }
+  if (tossPayment.status !== "DONE") {
+    return { state: "not_paid", tossStatus: tossPayment.status };
+  }
+
+  const reopened = await db
+    .updateTable("payments")
+    .set({ status: "pending", reconciliation_error: null })
+    .where("id", "=", payment.id)
+    .where("status", "in", RECOVERABLE_STATUSES)
+    .executeTakeFirst();
+  if (Number(reopened.numUpdatedRows ?? 0) === 0) {
+    throw new RecoveryError(
+      "결제 상태가 그사이 바뀌었습니다. 다시 확인해 주세요.",
+    );
+  }
+  console.log(
+    `[payments] recovering orphaned charge: payment ${payment.id} (${payment.status}) is DONE at Toss`,
+  );
+  return { state: "recovered", result: await reconcilePayment(payment.id) };
+}

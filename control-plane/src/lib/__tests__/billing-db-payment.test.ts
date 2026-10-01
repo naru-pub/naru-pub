@@ -50,7 +50,7 @@ const {
 } = require("@/lib/subscriptions") as typeof import("@/lib/subscriptions");
 const { chargeDueSubscriptions } =
   require("@/lib/subscription-renewals") as typeof import("@/lib/subscription-renewals");
-const { reconcilePayment } =
+const { reconcilePayment, recoverOrphanedCharge } =
   require("@/lib/payment-reconciliation") as typeof import("@/lib/payment-reconciliation");
 const { refundPayment } =
   require("@/lib/refunds") as typeof import("@/lib/refunds");
@@ -1509,6 +1509,86 @@ integration("payments against the database", () => {
       expect(orphaned[0].summary).toContain(`pk-${attempt.order_id}`);
     });
 
+    describe("recovering it", () => {
+      async function orphaned() {
+        const due = await dueSubscription();
+        toss.chargeBillingKey.mockImplementation(async (params) => {
+          await db
+            .updateTable("payments")
+            .set({ status: "expired" })
+            .where("order_id", "=", params.orderId)
+            .execute();
+          return tossPayment(params.orderId, params.amount);
+        });
+        await chargeDueSubscriptions();
+        const [attempt] = await attempts(due.subId);
+        const row = await db
+          .selectFrom("payments")
+          .select("id")
+          .where("order_id", "=", attempt.order_id)
+          .executeTakeFirstOrThrow();
+        return { ...due, paymentId: row.id, orderId: attempt.order_id };
+      }
+
+      function orphanedRows() {
+        return db
+          .selectFrom("payments")
+          .select("id")
+          .where(PAYMENT_FILTERS.orphaned.condition(new Date()))
+          .execute();
+      }
+
+      test("a charge Toss approved is granted, and leaves the list", async () => {
+        const { userId, subId, periodEnd, paymentId, orderId } =
+          await orphaned();
+        expect(await orphanedRows()).toEqual([{ id: paymentId }]);
+        toss.getPaymentByOrderId.mockResolvedValue(tossPayment(orderId, 1000));
+
+        expect(await recoverOrphanedCharge(paymentId)).toEqual({
+          state: "recovered",
+          result: { state: "done" },
+        });
+
+        const [attempt] = await attempts(subId);
+        expect(attempt.status).toBe("done");
+        expect((await supporterUntil(userId))! > periodEnd).toBe(true);
+        expect((await subscription(subId)).status).toBe("active");
+        expect(await orphanedRows()).toEqual([]);
+        expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledTimes(1);
+      });
+
+      test("an order Toss did not complete is left alone", async () => {
+        const { userId, periodEnd, paymentId, orderId } = await orphaned();
+        toss.getPaymentByOrderId.mockResolvedValue(
+          tossPayment(orderId, 1000, { status: "CANCELED" }),
+        );
+
+        expect(await recoverOrphanedCharge(paymentId)).toEqual({
+          state: "not_paid",
+          tossStatus: "CANCELED",
+        });
+        expect(await supporterUntil(userId)).toEqual(periodEnd);
+        expect(await orphanedRows()).toEqual([{ id: paymentId }]);
+      });
+
+      test("a payment that is not settled cannot be recovered", async () => {
+        const { subId } = await dueSubscription();
+        toss.chargeBillingKey.mockImplementation(async (params) =>
+          tossPayment(params.orderId, params.amount),
+        );
+        await chargeDueSubscriptions();
+        const row = await db
+          .selectFrom("payments")
+          .select("id")
+          .where("subscription_id", "=", subId)
+          .executeTakeFirstOrThrow();
+
+        await expect(recoverOrphanedCharge(row.id)).rejects.toMatchObject({
+          name: "RecoveryError",
+        });
+      });
+    });
+
     test("an ordinary renewal flags nothing", async () => {
       await dueSubscription();
       toss.chargeBillingKey.mockImplementation(async (params) =>
@@ -2873,6 +2953,7 @@ integration("payments against the database", () => {
       expect(await select("pending")).toEqual(["waiting", "waiting-broken"]);
       expect(await select("errors")).toEqual(["done-broken", "waiting-broken"]);
       expect(await select("failed_7d")).toEqual(["declined-recent"]);
+      expect(await select("orphaned")).toEqual([]);
     });
 
     test("the supporter count agrees with the entitlement rule", async () => {

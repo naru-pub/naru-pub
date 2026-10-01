@@ -18,7 +18,8 @@ export type PaymentFilterKey =
   | "refunded_30d"
   | "pending"
   | "errors"
-  | "failed_7d";
+  | "failed_7d"
+  | "orphaned";
 
 export const PAYMENT_FILTERS: Record<
   PaymentFilterKey,
@@ -39,7 +40,7 @@ export const PAYMENT_FILTERS: Record<
   pending: {
     label: "대기 중",
     description:
-      "결과를 아직 모르는 주문입니다. 5분마다 Toss와 대사하고, Toss에 없는 주문은 30분 뒤 만료합니다.",
+      "결과를 아직 모르는 주문입니다. 5분마다 Toss와 대사하고, Toss에 없는 주문은 45분 뒤 만료합니다.",
     condition: () => sql<boolean>`payments.status = 'pending'`,
   },
   errors: {
@@ -55,6 +56,13 @@ export const PAYMENT_FILTERS: Record<
       "지난 7일 안에 만든 주문 가운데 Toss가 거절했거나(aborted) 실패로 확정된 주문입니다. 결제창을 닫아 만료된 주문은 빠집니다.",
     condition: (now) =>
       sql<boolean>`payments.status in ('failed', 'aborted') and payments.created_at >= ${daysAgo(now, 7)}`,
+  },
+  orphaned: {
+    label: "결제됐으나 기간 미부여",
+    description:
+      "Toss는 승인했는데 원장은 이미 만료·실패로 끝낸 주문입니다(charge_orphaned). 'Toss에서 복구'로 기간을 부여한 뒤, 필요하면 환불하세요.",
+    condition: () =>
+      sql<boolean>`payments.status in ('expired', 'failed', 'aborted') and exists (select 1 from payment_events where payment_events.payment_id = payments.id and payment_events.kind = 'charge_orphaned')`,
   },
 };
 
