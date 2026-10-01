@@ -355,19 +355,9 @@ export async function executeMedia(command: MediaCommand) {
   throw new DataError(405, "Method not allowed.");
 }
 
-// Media live under <user id>/. Users who had a sequence number before
-// 1790824144110 have their older uploads under that number, so both prefixes
-// are cleared.
+// Media live under <user id>/.
 export async function deleteUserMedia(userId: string) {
-  const legacy = await db
-    .selectFrom("legacy_ids")
-    .select("old_id")
-    .where("table_name", "=", "users")
-    .where("new_id", "=", userId)
-    .executeTakeFirst();
-  for (const prefix of [userId, legacy?.old_id].filter(Boolean)) {
-    await deletePrefix(`${prefix}/`);
-  }
+  await deletePrefix(`${userId}/`);
 }
 
 async function deletePrefix(prefix: string) {

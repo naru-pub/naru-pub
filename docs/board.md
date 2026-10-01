@@ -14,8 +14,7 @@ addresses can't be guessed or walked in order, while ids still sort by creation
 time — reply threads order by their id path. Posts made before migration
 `1790824144110` keep the random v4 ids they were published with. Template files
 and previews live under `_templates/<template id>/`; the template that existed
-before that migration was copied from its old number's prefix
-(`copy-legacy-template-storage`).
+before that migration was copied once from its old number's prefix.
 
 Code: `control-plane/src/lib/board/` (logic), `src/app/(main)/board/` (pages),
 `src/app/(main)/api/board/` (JSON routes). Schema: migration

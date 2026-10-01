@@ -217,12 +217,6 @@ export interface HomeDirectorySizeHistory {
   user_id: string | null;
 }
 
-export interface LegacyIds {
-  new_id: string;
-  old_id: Int8;
-  table_name: string;
-}
-
 export interface PageviewDailyStats {
   date: Timestamp;
   unique_visitors: Generated<number>;
@@ -475,7 +469,6 @@ export interface DB {
   github_deployments: GithubDeployments;
   home_directory_exports: HomeDirectoryExports;
   home_directory_size_history: HomeDirectorySizeHistory;
-  legacy_ids: LegacyIds;
   pageview_daily_stats: PageviewDailyStats;
   pageviews: Pageviews;
   password_reset_tokens: PasswordResetTokens;
