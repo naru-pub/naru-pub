@@ -400,6 +400,21 @@ export interface Subscriptions {
   user_id: string;
 }
 
+export interface TossCalls {
+  created_at: Generated<Timestamp>;
+  duration_ms: number;
+  error: string | null;
+  error_code: string | null;
+  flow: string;
+  http_status: number | null;
+  id: Generated<string>;
+  method: string;
+  order_id: string | null;
+  path: string;
+  request_body: unknown | null;
+  response_body: unknown | null;
+}
+
 export interface TossWebhookDeliveries {
   duration_ms: number;
   event_type: string;
@@ -479,6 +494,7 @@ export interface DB {
   site_data_files: SiteDataFiles;
   site_data_rate_limits: SiteDataRateLimits;
   subscriptions: Subscriptions;
+  toss_calls: TossCalls;
   toss_webhook_deliveries: TossWebhookDeliveries;
   user_keys: UserKeys;
   users: Users;

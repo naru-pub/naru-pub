@@ -259,20 +259,59 @@ async function tossRequest<T>(
   const testCode =
     lab?.testCode && secretKey(flow)?.startsWith("test_") ? lab.testCode : null;
   const method = init.method ?? "POST";
-  const record: TossCallRecord | null = lab
-    ? {
-        flow,
-        method,
-        path: maskPath(path),
-        testCode,
-        requestBody: init.body == null ? null : maskBody(init.body),
-        status: null,
-        responseBody: null,
-        error: null,
-        durationMs: 0,
-      }
-    : null;
-  if (record) lab!.calls.push(record);
+  // Every call is recorded: shown by the billing lab when it runs inside
+  // one, and kept in toss_calls (recordTossCall) either way.
+  const record: TossCallRecord = {
+    flow,
+    method,
+    path: maskPath(path),
+    testCode,
+    requestBody: init.body == null ? null : maskBody(init.body),
+    status: null,
+    responseBody: null,
+    error: null,
+    durationMs: 0,
+  };
+  if (lab) lab.calls.push(record);
+  const startedAt = Date.now();
+  try {
+    return await sendTossRequest<T>(flow, path, init, method, testCode, record);
+  } finally {
+    record.durationMs = Date.now() - startedAt;
+    await tossCallRecorder?.(record, orderIdOf(path, init.body));
+  }
+}
+
+// Where calls are kept (toss_calls), set by lib/toss-calls.ts so this module
+// stays free of the database; unset (unit tests, scripts) nothing is kept.
+type TossCallRecorder = (
+  record: TossCallRecord,
+  orderId: string | null,
+) => Promise<void>;
+let tossCallRecorder: TossCallRecorder | null = null;
+
+export function setTossCallRecorder(recorder: TossCallRecorder | null) {
+  tossCallRecorder = recorder;
+}
+
+function orderIdOf(path: string, body: unknown): string | null {
+  const fromBody =
+    body && typeof body === "object"
+      ? (body as { orderId?: unknown }).orderId
+      : undefined;
+  if (typeof fromBody === "string") return fromBody;
+  const match = /^\/v1\/payments\/orders\/([^/?]+)/.exec(path);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function sendTossRequest<T>(
+  flow: TossPaymentFlow,
+  path: string,
+  init: { body?: unknown; idempotencyKey?: string },
+  method: string,
+  testCode: string | null,
+  record: TossCallRecord,
+): Promise<T> {
   const startedAt = Date.now();
 
   let res: Response;
@@ -291,16 +330,12 @@ async function tossRequest<T>(
       signal: AbortSignal.timeout(TOSS_REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    if (record) {
-      record.error = error instanceof Error ? error.message : String(error);
-      record.durationMs = Date.now() - startedAt;
-    }
+    record.error = error instanceof Error ? error.message : String(error);
+    record.durationMs = Date.now() - startedAt;
     throw error;
   }
-  if (record) {
-    record.status = res.status;
-    record.durationMs = Date.now() - startedAt;
-  }
+  record.status = res.status;
+  record.durationMs = Date.now() - startedAt;
 
   // A gateway in front of Toss can answer with an HTML error page. That is
   // still a response with a status, so it must surface as a TossApiError (a 5xx
@@ -309,10 +344,10 @@ async function tossRequest<T>(
   let data: Record<string, unknown>;
   try {
     const text = await res.text();
-    if (record) record.responseBody = text.slice(0, 4000);
+    record.responseBody = text.slice(0, 4000);
     // A successful DELETE may answer with no body at all.
     data = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
-    if (record) record.responseBody = maskBody(data);
+    record.responseBody = maskBody(data);
   } catch {
     throw new TossApiError(
       `Toss API returned an unreadable response (${res.status})`,

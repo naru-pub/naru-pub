@@ -11,6 +11,7 @@ import {
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { retireBillingKey } from "@/lib/billing-keys";
 import { withAccountLock } from "@/lib/account-lock";
+import { lookupOrder } from "@/lib/toss-gateway";
 import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
 import {
   notePaymentEvent,
@@ -201,10 +202,16 @@ export async function POST(request: NextRequest) {
       .executeTakeFirst();
     if (!ledger) return respond(200, "ignored: unknown order");
 
-    const payment = await getPaymentByOrderId(
+    const found = await lookupOrder(
       orderId,
       paymentFlowForRecord(ledger.toss_flow, ledger.attempt_key),
     );
+    if (found.kind === "not_found") {
+      return respond(200, "ignored: Toss has no such order");
+    }
+    // A lookup that failed is retried by Toss (503 below).
+    if (found.kind === "unknown") throw found.error;
+    const payment = found.payment;
     delivery.tossStatus = payment.status;
     // Toss's checklist: the looked-up payment must match on orderId, amount
     // and MID before anything is written.

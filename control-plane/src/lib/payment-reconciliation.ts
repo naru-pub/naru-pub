@@ -21,6 +21,7 @@ import {
   retireUnusedSignupKey,
 } from "@/lib/subscriptions";
 import { withAccountLock } from "@/lib/account-lock";
+import { confirmOrder, lookupOrder } from "@/lib/toss-gateway";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payment-events";
 
@@ -162,51 +163,48 @@ async function reconcilePaymentCore(
     payment.subscription_id != null &&
     (payment.attempt_key?.startsWith("subscription_initial:") ?? false);
 
-  let tossPayment: TossPaymentResult;
-  try {
-    tossPayment = await getPaymentByOrderId(
-      payment.order_id,
-      paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
-    );
-  } catch (error) {
-    if (error instanceof TossApiError && error.status === 404) {
-      // Under the account lock no charge of this order is in flight here, and
-      // the last one sent has had UNCONFIRMED_EXPIRY_MS to reach Toss.
-      if (
-        payment.status === "pending" &&
-        Date.now() - lastAttemptAt(payment).getTime() > UNCONFIRMED_EXPIRY_MS
-      ) {
-        const outcome = await db.transaction().execute(async (trx) => {
-          const expired = await trx
-            .updateTable("payments")
-            .set({ status: "expired" })
-            .where("id", "=", payment.id)
-            .where("status", "=", "pending")
-            .executeTakeFirst();
-          if (Number(expired.numUpdatedRows ?? 0) > 0) {
-            await recordPaymentEvent(trx, {
-              kind: "order_expired",
-              userId: payment.user_id,
-              paymentId: payment.id,
-              subscriptionId: payment.subscription_id,
-              summary: `주문 ${payment.order_id} (${won(payment.amount)})이 Toss에 없어 만료 처리${initialAttempt ? " · 가입에 등록한 카드는 폐기" : ""}`,
-            });
-          }
-          return {
-            retiredKey: initialAttempt
-              ? await retireUnusedSignupKey(trx, payment.subscription_id!)
-              : null,
-          };
-        });
-        if (!opts.deferKeyDeletion) {
-          await deleteRetiredBillingKey(outcome.retiredKey);
+  const found = await lookupOrder(
+    payment.order_id,
+    paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
+  );
+  if (found.kind === "unknown") throw found.error;
+  if (found.kind === "not_found") {
+    // Under the account lock no charge of this order is in flight here, and
+    // the last one sent has had UNCONFIRMED_EXPIRY_MS to reach Toss.
+    if (
+      payment.status === "pending" &&
+      Date.now() - lastAttemptAt(payment).getTime() > UNCONFIRMED_EXPIRY_MS
+    ) {
+      const outcome = await db.transaction().execute(async (trx) => {
+        const expired = await trx
+          .updateTable("payments")
+          .set({ status: "expired" })
+          .where("id", "=", payment.id)
+          .where("status", "=", "pending")
+          .executeTakeFirst();
+        if (Number(expired.numUpdatedRows ?? 0) > 0) {
+          await recordPaymentEvent(trx, {
+            kind: "order_expired",
+            userId: payment.user_id,
+            paymentId: payment.id,
+            subscriptionId: payment.subscription_id,
+            summary: `주문 ${payment.order_id} (${won(payment.amount)})이 Toss에 없어 만료 처리${initialAttempt ? " · 가입에 등록한 카드는 폐기" : ""}`,
+          });
         }
-        return { state: "expired" };
+        return {
+          retiredKey: initialAttempt
+            ? await retireUnusedSignupKey(trx, payment.subscription_id!)
+            : null,
+        };
+      });
+      if (!opts.deferKeyDeletion) {
+        await deleteRetiredBillingKey(outcome.retiredKey);
       }
-      return { state: "pending" };
+      return { state: "expired" };
     }
-    throw error;
+    return { state: "pending" };
   }
+  let tossPayment = found.payment;
 
   if (
     tossPayment.orderId !== payment.order_id ||
@@ -592,31 +590,25 @@ async function confirmAuthenticatedPayment(
   payment: { id: string; order_id: string; amount: number },
   inProgress: TossPaymentResult,
 ): Promise<TossPaymentResult> {
-  await db
-    .updateTable("payments")
-    .set({ charge_attempted_at: new Date() })
-    .where("id", "=", payment.id)
-    .execute();
-  try {
-    const confirmed = await confirmPayment(
-      {
-        paymentKey: inProgress.paymentKey,
-        orderId: payment.order_id,
-        amount: payment.amount,
-      },
-      `${payment.order_id}:${randomUUID()}`,
-    );
-    if (
-      confirmed.orderId === payment.order_id &&
-      confirmed.totalAmount === payment.amount
-    ) {
-      return confirmed;
-    }
-  } catch (error) {
-    console.error(
-      `Reconciling payment ${payment.id}: confirming the authenticated payment failed: ${describeTossError(error)}`,
-    );
-  }
+  const outcome = await confirmOrder({
+    paymentKey: inProgress.paymentKey,
+    orderId: payment.order_id,
+    amount: payment.amount,
+    firstKey: `${payment.order_id}:${randomUUID()}`,
+    retryOnce: false,
+    beforeSend: async () => {
+      await db
+        .updateTable("payments")
+        .set({ charge_attempted_at: new Date() })
+        .where("id", "=", payment.id)
+        .execute();
+    },
+  });
+  if (outcome.kind === "approved") return outcome.payment;
+  if (outcome.kind === "declined" && outcome.payment) return outcome.payment;
+  console.error(
+    `Reconciling payment ${payment.id}: confirming the authenticated payment did not approve it: ${describeTossError(outcome.error)}`,
+  );
   return inProgress;
 }
 
@@ -752,18 +744,14 @@ async function recoverLocked(paymentId: string): Promise<RecoveryResult> {
     );
   }
 
-  let tossPayment: TossPaymentResult;
-  try {
-    tossPayment = await getPaymentByOrderId(
-      payment.order_id,
-      paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
-    );
-  } catch (error) {
-    if (error instanceof TossApiError && error.status === 404) {
-      return { state: "not_paid", tossStatus: null };
-    }
-    throw error;
-  }
+  const found = await lookupOrder(
+    payment.order_id,
+    paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
+  );
+  if (found.kind === "not_found")
+    return { state: "not_paid", tossStatus: null };
+  if (found.kind === "unknown") throw found.error;
+  const tossPayment = found.payment;
   if (
     tossPayment.orderId !== payment.order_id ||
     tossPayment.totalAmount !== payment.amount

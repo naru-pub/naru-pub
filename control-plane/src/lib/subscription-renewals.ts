@@ -17,7 +17,7 @@ import {
   TossApiError,
   TossPaymentResult,
 } from "@/lib/toss";
-import { settleFailedOrder } from "@/lib/toss-orders";
+import { chargeOrder } from "@/lib/toss-gateway";
 import {
   notePaymentEvent,
   recordPaymentEvent,
@@ -446,10 +446,9 @@ function declinedOrder(attempt: PaymentAttempt) {
   );
 }
 
-// Charges one claimed attempt and says what became of it. A failed call is
-// not taken as a failed payment until the order agrees (settleFailedOrder):
-// Toss can answer an approved order with an error, and a failure counts
-// against the card and may end in past_due.
+// Charges one attempt and says what became of it (lib/toss-gateway): a
+// failed call is not a failed payment until the order agrees, and a failure
+// counts against the card and may end in past_due.
 async function chargeAttempt(
   sub: DueSubscription,
   attempt: PaymentAttempt,
@@ -463,74 +462,31 @@ async function chargeAttempt(
       keepAttemptStatus: true,
     };
   }
-  try {
-    const existingPayment = await getPaymentByOrderId(
-      attempt.order_id,
-      "billing",
-    );
-    if (existingPayment.status === "DONE") {
-      return { state: "paid", payment: existingPayment };
-    }
-    if (existingPayment.status === "ABORTED") {
-      // Toss already declined this order, and an orderId is never
-      // reused; charging it again would only replay the decline.
-      return {
-        state: "refused",
-        error: declinedOrder(attempt),
-        keepAttemptStatus: false,
-      };
-    }
-  } catch (error) {
-    if (!(error instanceof TossApiError && error.status === 404)) {
-      return {
-        state: "unknown",
-        error,
-        sent: attempt.charge_attempted_at != null,
-      };
-    }
+  const outcome = await chargeOrder({
+    billingKey: sub.toss_billing_key,
+    customerKey: sub.toss_customer_key,
+    amount: sub.amount,
+    orderId: attempt.order_id,
+    orderName: PLAN_ORDER_NAMES[sub.billing_interval as BillingInterval],
+    sentBefore: attempt.charge_attempted_at != null,
+    // Recorded before the call: an order Toss has not heard of is expired 45
+    // minutes after its last attempt, not its creation, so a charge Toss may
+    // still be approving is never expired under it.
+    beforeSend: async () => {
+      await db
+        .updateTable("payments")
+        .set({ charge_attempted_at: new Date() })
+        .where("id", "=", attempt.id)
+        .execute();
+    },
+  });
+  if (outcome.kind === "approved") {
+    return { state: "paid", payment: outcome.payment };
   }
-
-  // Recorded before the call: an order Toss has not heard of is expired 45
-  // minutes after its last attempt, not its creation, so a charge Toss may
-  // still be approving is never expired under it.
-  await db
-    .updateTable("payments")
-    .set({ charge_attempted_at: new Date() })
-    .where("id", "=", attempt.id)
-    .execute();
-
-  let payment: TossPaymentResult;
-  try {
-    payment = await chargeBillingKey({
-      billingKey: sub.toss_billing_key,
-      customerKey: sub.toss_customer_key,
-      amount: sub.amount,
-      orderId: attempt.order_id,
-      orderName: PLAN_ORDER_NAMES[sub.billing_interval as BillingInterval],
-      idempotencyKey: attempt.order_id,
-    });
-  } catch (error) {
-    const settled = await settleFailedOrder({
-      orderId: attempt.order_id,
-      amount: sub.amount,
-      flow: "billing",
-      error,
-    });
-    if (settled.state === "paid") {
-      return { state: "paid", payment: settled.payment };
-    }
-    return settled.state === "refused"
-      ? { state: "refused", error, keepAttemptStatus: false }
-      : { state: "unknown", error, sent: true };
+  if (outcome.kind === "declined") {
+    return { state: "refused", error: outcome.error, keepAttemptStatus: false };
   }
-  if (payment.status !== "DONE") {
-    return {
-      state: "unknown",
-      error: new Error(`unexpected payment status: ${payment.status}`),
-      sent: true,
-    };
-  }
-  return { state: "paid", payment };
+  return { state: "unknown", error: outcome.error, sent: outcome.sent };
 }
 
 // Toss may have completed the request. Preserve the attempt so the next run

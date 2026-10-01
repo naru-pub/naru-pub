@@ -2,7 +2,8 @@ import { sql } from "kysely";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import { notePaymentEvent } from "@/lib/payment-events";
-import { deleteBillingKey, maskSecret, TossApiError } from "@/lib/toss";
+import { maskSecret } from "@/lib/toss";
+import { deleteKey } from "@/lib/toss-gateway";
 
 // Every way a billing key leaves subscriptions.toss_billing_key goes through
 // retireBillingKey: a cancel, a refund, a one-time switch, a new card, an
@@ -83,15 +84,6 @@ const RETRY_AFTER = "1 hour";
 const MAX_RETRY_AFTER = "1 day";
 export const STUCK_AFTER_ATTEMPTS = 5;
 
-// Toss answers a key it no longer has with a not-found error. That key is as
-// deleted as it will ever be.
-function alreadyGone(error: unknown): boolean {
-  return (
-    error instanceof TossApiError &&
-    (error.status === 404 || (error.code ?? "").startsWith("NOT_FOUND"))
-  );
-}
-
 // Deletes the billing keys queued in retired_billing_keys (see the migration
 // that adds it) at Toss. The row, which holds the key in plain text, is removed
 // as soon as Toss confirms; a failure stays queued and is retried later.
@@ -157,10 +149,10 @@ async function deleteQueuedKey(
     );
     return false;
   }
-  try {
-    await deleteBillingKey(row.billing_key);
-  } catch (error) {
-    if (!alreadyGone(error)) {
+  const deleted = await deleteKey(row.billing_key);
+  if (deleted.kind === "failed") {
+    const error = deleted.error;
+    {
       await db
         .updateTable("retired_billing_keys")
         .set((eb) => ({

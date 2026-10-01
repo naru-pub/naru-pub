@@ -243,6 +243,14 @@ export async function prunePaymentLogs(now = new Date()) {
       new Date(now.getTime() - WEBHOOK_DELIVERY_RETENTION_DAYS * DAY_MS),
     )
     .executeTakeFirst();
+  const calls = await db
+    .deleteFrom("toss_calls")
+    .where(
+      "created_at",
+      "<",
+      new Date(now.getTime() - WEBHOOK_DELIVERY_RETENTION_DAYS * DAY_MS),
+    )
+    .executeTakeFirst();
   const events = await db
     .deleteFrom("payment_events")
     .where(
@@ -256,6 +264,7 @@ export async function prunePaymentLogs(now = new Date()) {
     .executeTakeFirst();
   return {
     deliveries: Number(deliveries.numDeletedRows ?? 0),
+    tossCalls: Number(calls.numDeletedRows ?? 0),
     events: Number(events.numDeletedRows ?? 0),
   };
 }

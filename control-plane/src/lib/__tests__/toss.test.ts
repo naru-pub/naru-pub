@@ -25,7 +25,7 @@ import {
   TossApiError,
   withNewOrderId,
 } from "@/lib/toss";
-import { settleFailedOrder } from "@/lib/toss-orders";
+import { settleOrder } from "@/lib/toss-gateway";
 
 describe("Toss payment requests", () => {
   const originalBillingSecret = process.env.TOSS_BILLING_SECRET_KEY;
@@ -456,7 +456,7 @@ describe("settling a failed charge", () => {
   }
 
   function settle(error: unknown) {
-    return settleFailedOrder({
+    return settleOrder({
       orderId: "order",
       amount: 1000,
       flow: "billing",
@@ -487,7 +487,7 @@ describe("settling a failed charge", () => {
       status: "DONE",
       totalAmount: 1000,
     });
-    expect(await settle(temporary)).toMatchObject({ state: "paid" });
+    expect(await settle(temporary)).toMatchObject({ kind: "approved" });
     expect(fetch).toHaveBeenCalledWith(
       "https://api.tosspayments.com/v1/payments/orders/order",
       expect.objectContaining({ method: "GET" }),
@@ -496,16 +496,16 @@ describe("settling a failed charge", () => {
 
   test("a decline for an order Toss never recorded is refused", async () => {
     lookUpReturns(404, { code: "NOT_FOUND_PAYMENT", message: "없음" });
-    expect(await settle(declined)).toEqual({
-      state: "refused",
+    expect(await settle(declined)).toMatchObject({
+      kind: "declined",
       payment: null,
     });
   });
 
   test("a temporary fault for an order Toss never recorded stays unknown", async () => {
     lookUpReturns(404, { code: "NOT_FOUND_PAYMENT", message: "없음" });
-    expect(await settle(temporary)).toEqual({
-      state: "unknown",
+    expect(await settle(temporary)).toMatchObject({
+      kind: "unknown",
       tossStatus: null,
     });
   });
@@ -517,7 +517,7 @@ describe("settling a failed charge", () => {
       status: "ABORTED",
       totalAmount: 1000,
     });
-    expect(await settle(temporary)).toMatchObject({ state: "refused" });
+    expect(await settle(temporary)).toMatchObject({ kind: "declined" });
   });
 
   test("an order still waiting for approval stays unknown", async () => {
@@ -527,8 +527,8 @@ describe("settling a failed charge", () => {
       status: "IN_PROGRESS",
       totalAmount: 1000,
     });
-    expect(await settle(temporary)).toEqual({
-      state: "unknown",
+    expect(await settle(temporary)).toMatchObject({
+      kind: "unknown",
       tossStatus: "IN_PROGRESS",
     });
   });
@@ -540,13 +540,13 @@ describe("settling a failed charge", () => {
       status: "DONE",
       totalAmount: 100,
     });
-    expect(await settle(temporary)).toMatchObject({ state: "unknown" });
+    expect(await settle(temporary)).toMatchObject({ kind: "unknown" });
   });
 
   test("a lookup that fails leaves the order unknown", async () => {
     global.fetch = jest
       .fn<typeof fetch>()
       .mockRejectedValue(new TypeError("fetch failed"));
-    expect(await settle(declined)).toMatchObject({ state: "unknown" });
+    expect(await settle(declined)).toMatchObject({ kind: "unknown" });
   });
 });

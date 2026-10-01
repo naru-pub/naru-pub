@@ -43,7 +43,7 @@ import {
   TossApiError,
   TossPaymentResult,
 } from "@/lib/toss";
-import { settleFailedOrder } from "@/lib/toss-orders";
+import { chargeOrder, issueKey, type IssueOutcome } from "@/lib/toss-gateway";
 
 // The subscribe flow, step by step: prepareSubscription records a card
 // registration and the chosen plan and hands back the customerKey for
@@ -344,7 +344,7 @@ async function getOrCreateInitialChargeAttempt(opts: {
 
   const pending = await db
     .selectFrom("payments")
-    .select(["id", "order_id", "status"])
+    .select(["id", "order_id", "status", "charge_attempted_at"])
     .where("subscription_id", "=", opts.subscriptionId)
     .where("attempt_key", "like", `${prefix}%`)
     .where("status", "=", "pending")
@@ -373,13 +373,13 @@ async function getOrCreateInitialChargeAttempt(opts: {
           amount: opts.amount,
           status: "pending",
         })
-        .returning(["id", "order_id", "status"])
+        .returning(["id", "order_id", "status", "charge_attempted_at"])
         .executeTakeFirstOrThrow(),
     );
   } catch (error) {
     const concurrent = await db
       .selectFrom("payments")
-      .select(["id", "order_id", "status"])
+      .select(["id", "order_id", "status", "charge_attempted_at"])
       .where("subscription_id", "=", opts.subscriptionId)
       .where("attempt_key", "like", `${prefix}%`)
       .where("status", "=", "pending")
@@ -498,6 +498,18 @@ async function failFirstCharge(opts: {
   await deleteRetiredBillingKey(retired);
 }
 
+// A key Toss would not issue: refused on its merits (expired or used authKey,
+// card refused) — the supporter starts over — or not known, in which case the
+// same authKey's idempotency key hands back any key issued, on a retry.
+function issueFailure(issued: Exclude<IssueOutcome, { kind: "issued" }>) {
+  return issued.kind === "refused"
+    ? fail(402, issued.error.message || "카드를 등록하지 못했습니다.")
+    : fail(
+        503,
+        "카드 등록 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
+      );
+}
+
 type ConfirmOutcome = SignupResult<{
   message: string;
   scheduled?: boolean;
@@ -592,21 +604,9 @@ export async function confirmSubscription(opts: {
     // The key this registration already adopted — a callback retried after
     // an unresolved first charge — or a new one from the authKey.
     if (sub.card_registration_interval != null || !sub.toss_billing_key) {
-      let billingKey: string;
-      try {
-        billingKey = (await issueBillingKey(authKey, customerKey)).billingKey;
-      } catch (err) {
-        // A rejected authKey (expired, already used, card refused) is the
-        // supporter's to retry from the start. Anything else may have issued
-        // a key, which the same authKey's idempotency key will hand back.
-        if (isDefinitiveTossFailure(err)) {
-          return fail(402, err.message || "카드를 등록하지 못했습니다.");
-        }
-        return fail(
-          503,
-          "카드 등록 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
-        );
-      }
+      const issued = await issueKey(authKey, customerKey);
+      if (issued.kind !== "issued") return issueFailure(issued);
+      const billingKey = issued.billingKey;
       if (
         !(await adoptSignupKey({
           subscriptionId: sub.id,
@@ -688,116 +688,65 @@ async function confirmAdoptedSignup(opts: {
     userId,
     amount: sub.amount,
   });
-  let payment: TossPaymentResult | undefined;
-  try {
-    try {
-      const existingPayment = await getPaymentByOrderId(
-        attempt.order_id,
-        "billing",
-      );
-      if (existingPayment.status === "DONE") {
-        payment = existingPayment;
-      }
-    } catch (err) {
-      if (!(err instanceof TossApiError && err.status === 404)) {
-        throw err;
-      }
-    }
-
-    payment ??= await chargeBillingKey({
-      billingKey,
-      customerKey,
-      amount: sub.amount,
-      orderId: attempt.order_id,
-      orderName: PLAN_ORDER_NAMES[interval],
-      idempotencyKey: attempt.order_id,
-    });
-  } catch (err) {
-    // A failed call is not yet a failed charge: Toss may have completed it.
-    // Only the order's own outcome decides.
-    const settled = await settleFailedOrder({
-      orderId: attempt.order_id,
-      amount: sub.amount,
-      flow: "billing",
-      error: err,
-    });
-    if (settled.state === "unknown") {
-      // Keep the attempt pending, and the key with it, so the next callback
-      // or the reconciler settles this orderId.
-      await notePaymentEvent({
-        kind: "charge_unresolved",
-        userId,
-        paymentId: attempt.id,
-        subscriptionId: sub.id,
-        summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): ${describeTossError(err)}`,
-      });
-      return fail(
-        503,
-        "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
-      );
-    }
-    if (settled.state === "refused") {
-      await failFirstCharge({
-        userId,
-        subscriptionId: sub.id,
-        paymentId: attempt.id,
-        amount: sub.amount,
-        reason: describeTossError(err),
-        set: settled.payment
-          ? {
-              ...paymentProviderMetadata(settled.payment, "billing"),
-              toss_payment_key: settled.payment.paymentKey,
-              raw: JSON.stringify(settled.payment),
-            }
-          : { raw: JSON.stringify({ error: describeTossError(err) }) },
-      });
-      return fail(
-        402,
-        err instanceof TossApiError && err.message
-          ? err.message
-          : "결제가 완료되지 않았습니다.",
-      );
-    }
-    payment = settled.payment;
-  }
-
-  // An answer that is neither approved nor ended (ABORTED, EXPIRED) is not a
-  // decline: Toss may still approve it, as the renewal treats it. The key and
-  // the order stay for the reconciler.
-  if (
-    payment.status !== "DONE" &&
-    payment.status !== "ABORTED" &&
-    payment.status !== "EXPIRED"
-  ) {
+  const outcome = await chargeOrder({
+    billingKey,
+    customerKey,
+    amount: sub.amount,
+    orderId: attempt.order_id,
+    orderName: PLAN_ORDER_NAMES[interval],
+    sentBefore: attempt.charge_attempted_at != null,
+    beforeSend: async () => {
+      await db
+        .updateTable("payments")
+        .set({ charge_attempted_at: new Date() })
+        .where("id", "=", attempt.id)
+        .execute();
+    },
+  });
+  if (outcome.kind === "unknown") {
+    // Keep the attempt pending, and the key with it, so the next callback or
+    // the reconciler settles this orderId.
     await notePaymentEvent({
       kind: "charge_unresolved",
       userId,
       paymentId: attempt.id,
       subscriptionId: sub.id,
-      summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): Toss 상태 ${payment.status}`,
+      summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): ${
+        outcome.tossStatus
+          ? `Toss 상태 ${outcome.tossStatus}`
+          : describeTossError(outcome.error)
+      }`,
     });
     return fail(
       503,
       "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
     );
   }
-  if (payment.status !== "DONE") {
+  if (outcome.kind === "declined") {
     await failFirstCharge({
       userId,
       subscriptionId: sub.id,
       paymentId: attempt.id,
       amount: sub.amount,
-      reason: `Toss 상태 ${payment.status}`,
-      set: {
-        ...paymentProviderMetadata(payment, "billing"),
-        toss_payment_key: payment.paymentKey,
-        order_id: payment.orderId ?? attempt.order_id,
-        amount: sub.amount,
-        raw: JSON.stringify(payment),
-      },
+      reason: outcome.payment
+        ? `Toss 상태 ${outcome.payment.status}`
+        : describeTossError(outcome.error),
+      set: outcome.payment
+        ? {
+            ...paymentProviderMetadata(outcome.payment, "billing"),
+            toss_payment_key: outcome.payment.paymentKey,
+            raw: JSON.stringify(outcome.payment),
+          }
+        : { raw: JSON.stringify({ error: describeTossError(outcome.error) }) },
     });
-    return fail(402, "결제가 완료되지 않았습니다.");
+    return fail(
+      402,
+      outcome.error instanceof TossApiError && outcome.error.message
+        ? outcome.error.message
+        : "결제가 완료되지 않았습니다.",
+    );
   }
+  const payment = outcome.payment;
 
   const period = await applySuccessfulCharge({
     subscriptionId: sub.id,
@@ -884,18 +833,9 @@ async function swapCard(opts: {
     return fail(409, PREVIOUS_CHARGE_PENDING_MESSAGE);
   }
 
-  let billingKey: string;
-  try {
-    billingKey = (await issueBillingKey(authKey, customerKey)).billingKey;
-  } catch (err) {
-    if (isDefinitiveTossFailure(err)) {
-      return fail(402, err.message || "카드를 등록하지 못했습니다.");
-    }
-    return fail(
-      503,
-      "카드 등록 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
-    );
-  }
+  const issued = await issueKey(authKey, customerKey);
+  if (issued.kind !== "issued") return issueFailure(issued);
+  const billingKey = issued.billingKey;
 
   const changed = {
     ok: true as const,

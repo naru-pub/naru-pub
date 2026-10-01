@@ -7,7 +7,8 @@ import {
   type ReconciliationResult,
 } from "@/lib/payment-reconciliation";
 import { recordPaymentEvent } from "@/lib/payment-events";
-import { cancelPayment, paymentFlowForRecord, TossApiError } from "@/lib/toss";
+import { paymentFlowForRecord } from "@/lib/toss";
+import { cancelOrder } from "@/lib/toss-gateway";
 
 // 판매 정책의 환불 조건: 결제일로부터 7일 안에는 이유를 묻지 않고 전액 환불.
 // 이 상수와 아래 판정 함수가 그 문장의 구현이므로, components/SupportPolicy의
@@ -238,13 +239,12 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
   const planRunningBefore = await runningPlanId(payment.user_id);
 
   let refunded: ReconciliationResult | null = null;
-  try {
-    await cancelPayment({
-      flow: paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
-      paymentKey: payment.toss_payment_key,
-      cancelReason: opts.reason.slice(0, 200),
-    });
-  } catch (error) {
+  const canceled = await cancelOrder({
+    flow: paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
+    paymentKey: payment.toss_payment_key,
+    cancelReason: opts.reason.slice(0, 200),
+  });
+  if (canceled.kind !== "canceled") {
     // Toss refuses to cancel a payment that is already canceled — with
     // ALREADY_CANCELED_PAYMENT or NOT_CANCELABLE_PAYMENT, and the latter also
     // covers other refusals — and a call that got no answer (a timeout, a
@@ -254,10 +254,8 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
     // recurring billing like any other.
     const result = await reconcilePayment(payment.id).catch(() => null);
     if (result?.state !== "refunded") {
-      // Toss answered and did not cancel (a 4xx — NOT_CANCELABLE_PAYMENT, a
-      // temporary PROVIDER_ERROR): the supporter can try again. A 5xx or a
-      // dropped call may have canceled all the same.
-      if (error instanceof TossApiError && error.status < 500) {
+      // Toss answered and did not cancel: the supporter can try again.
+      if (canceled.kind === "refused") {
         // Not canceled, so the choice made for this attempt must not carry
         // over to a refund made later another way — the Toss dashboard, say.
         if (keepPlan) {
@@ -267,7 +265,7 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
             .where("id", "=", payment.id)
             .execute();
         }
-        throw error;
+        throw canceled.error;
       }
       // No answer either way. The webhook and the refund sweep will see the
       // cancel if it happened; until then the supporter is told so rather
