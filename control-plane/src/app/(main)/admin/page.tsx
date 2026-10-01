@@ -3,6 +3,7 @@ import Link from "next/link";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import {
+  FAILURE_EVENT_KINDS,
   PAYMENT_EVENT_LABELS,
   type PaymentEventKind,
 } from "@/lib/payments/payment-events";
@@ -123,6 +124,10 @@ export default async function AdminOverviewPage() {
       .executeTakeFirstOrThrow(),
     db
       .selectFrom("payment_events")
+      // Test mode posts only failures; the rest are never waiting.
+      .$if(!isTossLiveMode(), (qb) =>
+        qb.where("kind", "in", [...FAILURE_EVENT_KINDS]),
+      )
       .select([
         sql<number>`count(*) filter (where notified_at is null)::int`.as(
           "unsent",
@@ -181,9 +186,7 @@ export default async function AdminOverviewPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         <Badge variant={live ? "default" : "outline"}>Toss {mode} 키</Badge>
-        {live
-          ? `결제 이벤트는 운영자 Discord 채널에 알립니다${events.lastNotified ? ` (마지막 ${formatDate(events.lastNotified)})` : ""}.`
-          : "이 환경에서는 결제 이벤트를 알리지 않습니다."}
+        {`${live ? "결제 이벤트는" : "결제 실패 이벤트만"} 운영자 Discord 채널에 알립니다${events.lastNotified ? ` (마지막 ${formatDate(events.lastNotified)})` : ""}.`}
       </div>
 
       <section className="space-y-2">
@@ -286,13 +289,12 @@ export default async function AdminOverviewPage() {
           />
           <Stat
             label="알림 대기 중 이벤트"
-            value={live ? events.unsent : "-"}
-            detail={live ? "몇 분 안에 한 통으로 발송" : "운영 환경에서만 발송"}
+            value={events.unsent}
+            detail={live ? "몇 분 안에 한 메시지로" : "테스트 키라 실패만"}
             href="/admin/events?unsent=1"
             // The digest goes out within 15 minutes; an event waiting longer
             // means the digest job or the Discord webhook is failing.
             alert={
-              live &&
               events.oldestUnsent != null &&
               now.getTime() - new Date(events.oldestUnsent).getTime() >
                 30 * 60 * 1000

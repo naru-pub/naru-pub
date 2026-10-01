@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Bell, BellOff } from "lucide-react";
 import { db } from "@/lib/database";
 import {
+  FAILURE_EVENT_KINDS,
   PAYMENT_EVENT_LABELS,
   type PaymentEventKind,
 } from "@/lib/payments/payment-events";
@@ -84,15 +85,21 @@ export default async function PaymentEventsPage({
     .limit(200)
     .execute();
 
-  const notifying = isTossLiveMode() && operatorAlertsConfigured();
+  const configured = operatorAlertsConfigured();
+  const live = isTossLiveMode();
+  // Posted to Discord: every event in live mode, failures in test mode.
+  const notifying = (kind: string) =>
+    configured && (live || FAILURE_EVENT_KINDS.has(kind as PaymentEventKind));
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         결제·정기 결제·환불·웹훅이 바꾼 상태를 최근 200건까지 보여 줍니다.{" "}
-        {notifying
-          ? "운영 환경이라 운영자 Discord 채널에 알립니다 — 이어서 일어난 이벤트는 2분 동안 새 이벤트가 없을 때(최대 15분) 한 메시지로 묶습니다."
-          : "Toss 라이브 키가 아니거나 Discord 웹훅이 설정되지 않은 환경이라 알리지 않습니다."}
+        {!configured
+          ? "Discord 웹훅이 설정되지 않은 환경이라 알리지 않습니다."
+          : live
+            ? "운영 환경이라 운영자 Discord 채널에 알립니다 — 결제 실패·연체·작업 실패 같은 실패는 1분 안에, 나머지는 2분 동안 새 이벤트가 없을 때(최대 15분) 한 메시지로 묶어서."
+            : "테스트 키 환경이라 결제 실패·연체·작업 실패 같은 실패만 운영자 Discord 채널에 1분 안에 알립니다."}
       </p>
 
       <div className="flex flex-wrap gap-2 text-sm">
@@ -178,7 +185,8 @@ export default async function PaymentEventsPage({
                     </span>
                   ) : (
                     <span className="flex items-center gap-1">
-                      <BellOff size={14} /> {notifying ? "대기" : "알리지 않음"}
+                      <BellOff size={14} />{" "}
+                      {notifying(event.kind) ? "대기" : "알리지 않음"}
                     </span>
                   )}
                 </TableCell>

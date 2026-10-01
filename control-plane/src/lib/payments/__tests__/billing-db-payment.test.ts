@@ -3866,11 +3866,15 @@ integration("payments against the database", () => {
     });
 
     describe("the operator digest", () => {
-      async function eventAt(secondsAgo: number, summary: string) {
+      async function eventAt(
+        secondsAgo: number,
+        summary: string,
+        kind: "charge_succeeded" | "charge_failed" = "charge_succeeded",
+      ) {
         await db
           .insertInto("payment_events")
           .values({
-            kind: "charge_succeeded",
+            kind,
             summary,
             created_at: new Date(Date.now() - secondsAgo * 1000),
           })
@@ -3889,7 +3893,9 @@ integration("payments against the database", () => {
         await eventAt(300, "first");
         await eventAt(30, "second");
 
-        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+        expect(
+          await sendPaymentEventDigest({ enabled: true, live: true }),
+        ).toEqual({
           state: "waiting",
           pending: 2,
         });
@@ -3901,7 +3907,9 @@ integration("payments against the database", () => {
         await eventAt(300, "second");
         await eventAt(200, "third");
 
-        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+        expect(
+          await sendPaymentEventDigest({ enabled: true, live: true }),
+        ).toEqual({
           state: "sent",
           events: 3,
         });
@@ -3914,7 +3922,9 @@ integration("payments against the database", () => {
           expect.stringMatching(/\[결제 완료\] third$/),
         ]);
 
-        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+        expect(
+          await sendPaymentEventDigest({ enabled: true, live: true }),
+        ).toEqual({
           state: "idle",
         });
         expect(alerts.sendOperatorAlert).toHaveBeenCalledTimes(1);
@@ -3924,9 +3934,48 @@ integration("payments against the database", () => {
         await eventAt(20 * 60, "long ago");
         await eventAt(10, "just now");
 
-        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+        expect(
+          await sendPaymentEventDigest({ enabled: true, live: true }),
+        ).toEqual({
           state: "sent",
           events: 2,
+        });
+      });
+
+      test("a failure is posted at once, with what else is pending", async () => {
+        await eventAt(30, "routine");
+        await eventAt(10, "declined", "charge_failed");
+
+        expect(
+          await sendPaymentEventDigest({ enabled: true, live: true }),
+        ).toEqual({
+          state: "sent",
+          events: 2,
+        });
+      });
+
+      test("in test mode only failures are posted, marked as tests", async () => {
+        await eventAt(600, "routine");
+        await eventAt(10, "declined", "charge_failed");
+
+        expect(
+          await sendPaymentEventDigest({ enabled: true, live: false }),
+        ).toEqual({
+          state: "sent",
+          events: 1,
+        });
+        const [message] = alerts.sendOperatorAlert.mock.calls[0];
+        expect(message.title).toMatch(
+          /^\[나루 결제·테스트\] .*결제 실패: declined$/,
+        );
+        expect(
+          (await events()).find((event) => event.summary === "routine")!
+            .notified_at,
+        ).toBeNull();
+        expect(
+          await sendPaymentEventDigest({ enabled: true, live: false }),
+        ).toEqual({
+          state: "idle",
         });
       });
 
@@ -3936,11 +3985,13 @@ integration("payments against the database", () => {
           new Error("discord down"),
         );
 
-        await expect(sendPaymentEventDigest({ enabled: true })).rejects.toThrow(
-          "discord down",
-        );
+        await expect(
+          sendPaymentEventDigest({ enabled: true, live: true }),
+        ).rejects.toThrow("discord down");
         expect((await events())[0].notified_at).toBeNull();
-        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+        expect(
+          await sendPaymentEventDigest({ enabled: true, live: true }),
+        ).toEqual({
           state: "sent",
           events: 1,
         });

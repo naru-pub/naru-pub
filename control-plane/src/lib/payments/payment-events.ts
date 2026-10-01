@@ -31,6 +31,25 @@ export const PAYMENT_EVENT_LABELS = {
 
 export type PaymentEventKind = keyof typeof PAYMENT_EVENT_LABELS;
 
+// Failures: a payment that did not go through or whose outcome is unknown, a
+// supporter falling past due, and the payment machinery itself going wrong.
+// These reach the operators at once and in test mode too; the rest wait for a
+// quiet moment and are posted only in live mode.
+export const FAILURE_EVENT_KINDS: ReadonlySet<PaymentEventKind> = new Set([
+  "charge_failed",
+  "charge_unresolved",
+  "charge_orphaned",
+  "past_due",
+  "key_deletion_stuck",
+  "job_failed",
+  "invariant_violation",
+  "toss_mismatch",
+] as const);
+
+function isFailure(kind: string): boolean {
+  return FAILURE_EVENT_KINDS.has(kind as PaymentEventKind);
+}
+
 export function won(amount: number): string {
   return new Intl.NumberFormat("ko-KR").format(amount) + "원";
 }
@@ -90,20 +109,23 @@ export async function notePaymentEvent(
 
 // Events are merged into one message while they keep coming: a digest goes out
 // once nothing new has arrived for QUIET_MS, or once its oldest event has
-// waited MAX_WAIT_MS — so a renewal run, a decline and its grace notice, or a
-// refund and the cancel it causes arrive as one message, and none waits long.
+// waited MAX_WAIT_MS — so a renewal run, or a refund and the cancel it causes,
+// arrive as one message, and none waits long. A failure does not wait: the
+// next run (every minute) posts it with whatever else is pending.
 const QUIET_MS = 2 * 60 * 1000;
 const MAX_WAIT_MS = 15 * 60 * 1000;
 const MAX_EVENTS_PER_DIGEST = 300;
 
 function digestSubject(
   events: Array<{ kind: string; loginName: string | null; summary: string }>,
+  live: boolean,
 ): string {
+  const tag = live ? "[나루 결제]" : "[나루 결제·테스트]";
   if (events.length === 1) {
     const [event] = events;
     const label =
       PAYMENT_EVENT_LABELS[event.kind as PaymentEventKind] ?? event.kind;
-    const subject = `[나루 결제] ${event.loginName ?? "(삭제된 계정)"} ${label}: ${event.summary}`;
+    const subject = `${tag} ${event.loginName ?? "(삭제된 계정)"} ${label}: ${event.summary}`;
     return subject.length > 120 ? `${subject.slice(0, 119)}…` : subject;
   }
   const counts = new Map<string, number>();
@@ -112,7 +134,7 @@ function digestSubject(
       PAYMENT_EVENT_LABELS[event.kind as PaymentEventKind] ?? event.kind;
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
-  return `[나루 결제] ${events.length}건: ${[...counts]
+  return `${tag} ${events.length}건: ${[...counts]
     .map(([label, count]) => `${label} ${count}`)
     .join(" · ")}`;
 }
@@ -123,12 +145,15 @@ export type DigestResult =
   | { state: "waiting"; pending: number }
   | { state: "sent"; events: number };
 
+// In test mode (any Toss key not live) only failures are posted; the routine
+// events stay unposted, shown as such on /admin/events.
 export async function sendPaymentEventDigest(
-  opts: { now?: Date; enabled?: boolean } = {},
+  opts: { now?: Date; enabled?: boolean; live?: boolean } = {},
 ): Promise<DigestResult> {
-  if (!(opts.enabled ?? (isTossLiveMode() && operatorAlertsConfigured()))) {
+  if (!(opts.enabled ?? operatorAlertsConfigured())) {
     return { state: "disabled" };
   }
+  const live = opts.live ?? isTossLiveMode();
   const now = opts.now ?? new Date();
 
   return db.transaction().execute(async (trx) => {
@@ -137,6 +162,7 @@ export async function sendPaymentEventDigest(
       .selectFrom("payment_events")
       .select(["id", "created_at", "kind", "summary", "user_id"])
       .where("notified_at", "is", null)
+      .$if(!live, (qb) => qb.where("kind", "in", [...FAILURE_EVENT_KINDS]))
       .orderBy("id", "asc")
       .limit(MAX_EVENTS_PER_DIGEST)
       .forUpdate()
@@ -149,7 +175,8 @@ export async function sendPaymentEventDigest(
     const quiet = now.getTime() - newest >= QUIET_MS;
     const waitedLongEnough = now.getTime() - oldest >= MAX_WAIT_MS;
     const full = pending.length === MAX_EVENTS_PER_DIGEST;
-    if (!quiet && !waitedLongEnough && !full) {
+    const failure = pending.some((event) => isFailure(event.kind));
+    if (!quiet && !waitedLongEnough && !full && !failure) {
       return { state: "waiting" as const, pending: pending.length };
     }
 
@@ -177,6 +204,7 @@ export async function sendPaymentEventDigest(
             : null,
           summary: event.summary,
         })),
+        live,
       ),
       lines: pending.map((event) => {
         const who = event.user_id
