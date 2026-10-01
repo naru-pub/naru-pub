@@ -5,9 +5,13 @@ import {
   validateRequest,
 } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import {
+  ListObjectsV2Command,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+} from "@aws-sdk/client-s3";
 import { s3Client } from "@/lib/s3";
-import { getUserHomeDirectory } from "@/lib/site-urls";
+import { getSiteScreenshotKey, getUserHomeDirectory } from "@/lib/site-urls";
 import { dispatchActorDelete } from "@/lib/federation";
 import { deleteCustomDomainsForUser } from "@/lib/customDomains";
 import { verify } from "@node-rs/argon2";
@@ -103,8 +107,15 @@ export async function POST(request: NextRequest) {
     }
 
     await deleteUserMedia(user.id);
-    // Template snapshots live outside the home directory.
+    // Template snapshots and the site screenshot live outside the home
+    // directory.
     await deleteUserTemplateObjects(user.id);
+    await s3Client.send(
+      new DeleteObjectCommand({
+        Bucket: process.env.S3_BUCKET_NAME!,
+        Key: getSiteScreenshotKey(user.loginName),
+      }),
+    );
 
     // Federate the account deletion before the row (and its keys/followers)
     // cascade away. Failure here must not block deletion.

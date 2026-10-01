@@ -88,14 +88,16 @@ Code: `control-plane/src/lib/board/` (logic), `src/app/(main)/board/` (pages),
   which runs in the jobs image where Chromium is, listens for it and runs
   `update-screenshots --templates` straight away. That run serves each
   version's stored files from a loopback web server inside the container,
-  screenshots it, and uploads it to the screenshots bucket as
-  `_templates/<id>/v<n>.png`. The 15-minute screenshot run also picks up
-  anything missed. A version that still has no preview after a day is no
-  longer tried. `update-screenshots --templates --force` renders every live
+  screenshots it, and uploads it to the site bucket as
+  `_templates/<id>/v<n>.png`, beside the version's files. (Site screenshots
+  are in the same bucket, as `_screenshots/<login name>.png`.) The 15-minute
+  screenshot run also picks up anything missed. A version that still has no
+  preview after a day is no longer tried. `update-screenshots --templates --force` renders every live
   version again.
 - **Deletion**: deleting a template post removes its R2 files and previews.
   The database rows stay, so the record of who applied it is kept. Deleting an
-  account also removes that user's `_templates/` objects.
+  account also removes that user's `_templates/` objects and their site
+  screenshot.
 
 ## Routes
 

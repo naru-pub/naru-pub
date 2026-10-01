@@ -6,7 +6,11 @@ import { db } from "@/lib/database";
 import { dispatchActorUpdate } from "@/lib/federation";
 import { s3Client } from "@/lib/s3";
 import { templateFileKey, templatePreviewKey } from "@/lib/board/preview";
-import { getHomepageUrl, getRenderedSiteUrl } from "@/lib/site-urls";
+import {
+  getHomepageUrl,
+  getRenderedSiteUrl,
+  getSiteScreenshotKey,
+} from "@/lib/site-urls";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { Browser, chromium } from "playwright";
 
@@ -149,8 +153,8 @@ async function renderUser(browser: Browser, user: TargetUser): Promise<void> {
 
   await s3Client.send(
     new PutObjectCommand({
-      Bucket: process.env.S3_BUCKET_NAME_SCREENSHOTS!,
-      Key: `${user.login_name}.png`,
+      Bucket: process.env.S3_BUCKET_NAME!,
+      Key: getSiteScreenshotKey(user.login_name),
       Body: screenshot,
       ContentType: "image/png",
     }),
@@ -256,7 +260,7 @@ async function renderTemplate(
   }
   await s3Client.send(
     new PutObjectCommand({
-      Bucket: process.env.S3_BUCKET_NAME_SCREENSHOTS!,
+      Bucket: process.env.S3_BUCKET_NAME!,
       Key: templatePreviewKey(target.template_id, target.version),
       Body: screenshot,
       ContentType: "image/png",

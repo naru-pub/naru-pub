@@ -14,11 +14,22 @@ export function getHomepageUrl(username: string) {
     : `http://${username}.${process.env.NEXT_PUBLIC_DOMAIN}`;
 }
 
+// The public URL of an object in the site bucket.
+export function getSiteBucketUrl(key: string) {
+  return `https://r2.${process.env.NEXT_PUBLIC_DOMAIN}/${key}`;
+}
+
+// Screenshots live in the site bucket beside the sites, under a prefix no
+// login name can take.
+export function getSiteScreenshotKey(username: string) {
+  return `_screenshots/${username}.png`;
+}
+
 export function getRenderedSiteUrl(
   username: string,
   version?: Date | string | null,
 ) {
-  const base = `https://r2-screenshots.${process.env.NEXT_PUBLIC_DOMAIN}/${username}.png`;
+  const base = getSiteBucketUrl(getSiteScreenshotKey(username));
   if (!version) return base;
   const stamp =
     version instanceof Date

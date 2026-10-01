@@ -39,7 +39,7 @@ const nextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "r2-screenshots.naru.pub",
+        hostname: "r2.naru.pub",
         pathname: "/**",
       },
     ],

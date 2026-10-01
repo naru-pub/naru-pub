@@ -2,6 +2,8 @@
 // templates.ts so the screenshot CLI can use them without the web server's
 // modules.
 
+import { getSiteBucketUrl } from "@/lib/site-urls";
+
 // A template's snapshots, in the site bucket.
 export function templatePrefix(templateId: string): string {
   return `_templates/${templateId}/`;
@@ -15,10 +17,9 @@ export function templateFileKey(
   return `${templatePrefix(templateId)}v${version}/${path}`;
 }
 
-// Previews live beside the site screenshots, under a prefix no login name can
-// take.
+// Previews live in the site bucket beside the version's files.
 export function templatePreviewKey(templateId: string, version: number) {
-  return `_templates/${templateId}/v${version}.png`;
+  return `${templatePrefix(templateId)}v${version}.png`;
 }
 
 export function getTemplatePreviewUrl(
@@ -28,7 +29,7 @@ export function getTemplatePreviewUrl(
 ): string | null {
   if (!renderedAt) return null;
   const stamp = new Date(renderedAt).getTime();
-  return `https://r2-screenshots.${process.env.NEXT_PUBLIC_DOMAIN}/${templatePreviewKey(templateId, version)}?v=${stamp}`;
+  return `${getSiteBucketUrl(templatePreviewKey(templateId, version))}?v=${stamp}`;
 }
 
 // Publishing a template version notifies this Postgres channel, and cron,

@@ -800,10 +800,6 @@ export async function applyTemplate(
 // soft-deleted), so the record of who applied it is kept.
 export async function deleteTemplateObjects(templateId: string): Promise<void> {
   await storage.deletePrefix(templatePrefix(templateId));
-  const screenshots = process.env.S3_BUCKET_NAME_SCREENSHOTS;
-  if (screenshots) {
-    await storage.deletePrefix(templatePrefix(templateId), screenshots);
-  }
 }
 
 // Account deletion: the rows cascade with the user, but R2 does not.
