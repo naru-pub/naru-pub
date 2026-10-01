@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertSameOriginRequest } from "@/lib/utils";
 import { deleteSessionCookie, invalidateSession, validateRequest } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
+    try {
+      assertSameOriginRequest(request);
+    } catch {
+      return NextResponse.json(
+        { success: false, message: "잘못된 요청입니다." },
+        { status: 400 },
+      );
+    }
+
     const { session } = await validateRequest();
     if (!session) {
       return NextResponse.json(

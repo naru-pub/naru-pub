@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertSameOriginRequest } from "@/lib/utils";
 import { randomUUID } from "crypto";
 import { validateRequest } from "@/lib/auth";
 import {
@@ -18,6 +19,15 @@ import { canStartOneTimePurchase } from "@/lib/support-purchases";
 // authoritative amount for requestPayment.
 export async function POST(request: NextRequest) {
   try {
+    try {
+      assertSameOriginRequest(request);
+    } catch {
+      return NextResponse.json(
+        { success: false, message: "잘못된 요청입니다." },
+        { status: 400 },
+      );
+    }
+
     const { user } = await validateRequest();
     if (!user) {
       return NextResponse.json(

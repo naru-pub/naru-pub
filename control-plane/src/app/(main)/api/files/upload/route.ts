@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertSameOriginRequest } from "@/lib/utils";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { validateRequest } from "@/lib/auth";
 import { s3Client } from "@/lib/s3";
@@ -154,6 +155,15 @@ async function uploadSingleFile(user: User, directory: string, file: File) {
 
 export async function POST(request: NextRequest) {
   try {
+    try {
+      assertSameOriginRequest(request);
+    } catch {
+      return NextResponse.json(
+        { success: false, message: "잘못된 요청입니다." },
+        { status: 400 },
+      );
+    }
+
     const { user } = await validateRequest();
     if (!user) {
       return NextResponse.json(

@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertSameOriginRequest } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { sendVerificationEmail, generateVerificationToken } from "@/lib/email";
 
 export async function POST(request: NextRequest) {
   try {
+    try {
+      assertSameOriginRequest(request);
+    } catch {
+      return NextResponse.json(
+        { success: false, message: "잘못된 요청입니다." },
+        { status: 400 },
+      );
+    }
+
     const { user } = await validateRequest();
     if (!user) {
       return NextResponse.json(
