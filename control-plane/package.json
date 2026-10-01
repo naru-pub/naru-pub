@@ -44,9 +44,9 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.892.0",
     "@aws-sdk/s3-request-presigner": "^3.1023.0",
-    "@fedify/fedify": "^2.3.8",
-    "@fedify/next": "^2.3.8",
-    "@fedify/postgres": "^2.3.8",
+    "@fedify/fedify": "^2.4.0",
+    "@fedify/next": "^2.4.0",
+    "@fedify/postgres": "^2.4.0",
     "@hookform/resolvers": "^5.2.2",
     "@js-temporal/polyfill": "^0.5.1",
     "@logtape/logtape": "^2.0.5",

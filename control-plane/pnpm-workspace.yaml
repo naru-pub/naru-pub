@@ -3,6 +3,15 @@ allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@fedify/fedify@2.4.0'
+  - '@fedify/next@2.4.0'
+  - '@fedify/postgres@2.4.0'
+  - '@fedify/uri-template@2.4.0'
+  - '@fedify/vocab-runtime@2.4.0'
+  - '@fedify/vocab-tools@2.4.0'
+  - '@fedify/vocab@2.4.0'
+  - '@fedify/webfinger@2.4.0'
 onlyBuiltDependencies:
   - "@sentry/cli"
   - esbuild
