@@ -24,7 +24,7 @@ export const EMAIL_VERIFICATION_REQUIRED_MESSAGE =
 // 보이지 않는다는 원칙은 그대로다.
 //
 // 기간이 끝난 계정도 참으로 둔다. 영수증은 결제가 끝난 뒤에 더 필요하다.
-export async function hasSupportRelationship(userId: number): Promise<boolean> {
+export async function hasSupportRelationship(userId: string): Promise<boolean> {
   const row = await db
     .selectFrom("users")
     .select((eb) => [

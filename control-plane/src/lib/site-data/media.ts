@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { uuidv7 } from "@/lib/uuid";
 import {
   DeleteObjectCommand,
   DeleteObjectsCommand,
@@ -69,7 +69,7 @@ type MediaCommand = {
   site: string;
   path: string[];
   method: string;
-  adminUserId?: number;
+  adminUserId?: string;
   // Mutable: tokenScope reports the expiry the renewed token now has.
   bearer?: { token: string; origin: string | null; expiresAt?: number };
   body?: Record<string, unknown>;
@@ -233,7 +233,7 @@ export async function executeMedia(command: MediaCommand) {
   const id = command.path[0] ? name(command.path[0]) : undefined;
   if (command.method === "POST" && command.path.length === 0) {
     const input = uploadInput(command.body || {});
-    const fileId = randomUUID();
+    const fileId = uuidv7();
     const extension = input.filename.includes(".")
       ? input.filename
           .split(".")
@@ -355,13 +355,28 @@ export async function executeMedia(command: MediaCommand) {
   throw new DataError(405, "Method not allowed.");
 }
 
-export async function deleteUserMedia(userId: number) {
+// Media live under <user id>/. Users who had a sequence number before
+// 1790824144110 have their older uploads under that number, so both prefixes
+// are cleared.
+export async function deleteUserMedia(userId: string) {
+  const legacy = await db
+    .selectFrom("legacy_ids")
+    .select("old_id")
+    .where("table_name", "=", "users")
+    .where("new_id", "=", userId)
+    .executeTakeFirst();
+  for (const prefix of [userId, legacy?.old_id].filter(Boolean)) {
+    await deletePrefix(`${prefix}/`);
+  }
+}
+
+async function deletePrefix(prefix: string) {
   let continuationToken: string | undefined;
   do {
     const page = await s3Client.send(
       new ListObjectsV2Command({
         Bucket: mediaBucket(),
-        Prefix: `${userId}/`,
+        Prefix: prefix,
         ContinuationToken: continuationToken,
       }),
     );

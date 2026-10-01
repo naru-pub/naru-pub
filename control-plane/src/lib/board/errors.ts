@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { assertJsonContentType } from "@/lib/utils";
 import type { NextRequest } from "next/server";
+import { parseUuid } from "@/lib/uuid";
 
 // A failure the person can act on. Its message is shown as is.
 export class BoardError extends Error {
@@ -50,25 +51,13 @@ export async function readJson(
   return body as Record<string, unknown>;
 }
 
-// Route params and body fields that name a row. Ids are bigserial, so they are
-// kept as strings of digits rather than numbers.
+// Route params and body fields that name a row. Every board row is keyed by a
+// UUID (posts since 1790747807041, the rest since 1790824144110).
 export function parseId(value: unknown): string {
-  const text = typeof value === "number" ? String(value) : value;
-  if (typeof text !== "string" || !/^[1-9][0-9]{0,17}$/.test(text)) {
-    throw new BoardError(404, "찾을 수 없습니다.");
-  }
-  return text;
+  const id = parseUuid(value);
+  if (!id) throw new BoardError(404, "찾을 수 없습니다.");
+  return id;
 }
 
-// A board post's id: a UUID, unlike the sequence numbers other board rows use.
-export function parsePostId(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      value,
-    )
-  ) {
-    throw new BoardError(404, "찾을 수 없습니다.");
-  }
-  return value.toLowerCase();
-}
+// A board post's id. Kept as its own name for the call sites that take one.
+export const parsePostId = parseId;

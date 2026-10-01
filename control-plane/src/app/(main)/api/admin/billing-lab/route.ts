@@ -6,12 +6,6 @@ import { isTossTestMode } from "@/lib/toss";
 import { assertJsonContentType } from "@/lib/utils";
 import { parseUuid } from "@/lib/uuid";
 
-function positiveInt(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
-    ? value
-    : null;
-}
-
 function testCode(value: unknown): string | undefined {
   return typeof value === "string" && /^[A-Z_]{0,64}$/.test(value)
     ? value || undefined
@@ -21,7 +15,7 @@ function testCode(value: unknown): string | undefined {
 function parseAction(body: Record<string, unknown>): LabAction | null {
   const subscriptionId = parseUuid(body.subscriptionId);
   const paymentId = parseUuid(body.paymentId);
-  const userId = positiveInt(body.userId);
+  const userId = parseUuid(body.userId);
   switch (body.action) {
     case "inspect":
       return userId ? { action: "inspect", userId } : null;

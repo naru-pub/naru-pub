@@ -16,7 +16,7 @@ import { deleteBillingKey, maskSecret, TossApiError } from "@/lib/toss";
 // A test fails if anything else writes toss_billing_key = null.
 export async function retireBillingKey(
   trx: Executor,
-  subscription: { subscriptionId: string } | { userId: number },
+  subscription: { subscriptionId: string } | { userId: string },
   opts: { deletedAtToss?: boolean } = {},
 ): Promise<string | null> {
   const row = await trx

@@ -1,0 +1,15 @@
+{
+  "dialect": "postgres",
+  "outFile": "src/lib/db.d.ts",
+  "excludePattern": "{kysely_*,fedify_*}",
+  "typeMapping": { "jsonb": "unknown" },
+  "overrides": {
+    "columns": {
+      "board_posts.kind": "\"site\" | \"template\" | \"question\" | \"chat\"",
+      "board_templates.license": "\"cc-by-4.0\" | \"cc-by-sa-4.0\" | \"cc0-1.0\"",
+      "board_notifications.reason": "\"reply_to_post\" | \"reply_to_reply\"",
+      "board_replies.path": "ColumnType<string[], never, never>",
+      "board_template_versions.data_collections": "ColumnType<import(\"./board/template-collections\").BoardTemplateCollection[], string | undefined, string>"
+    }
+  }
+}

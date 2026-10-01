@@ -19,7 +19,7 @@ export type SupporterFeatureUse = {
   lastUsedAt: Date;
 };
 
-async function record(userId: number, feature: Feature): Promise<void> {
+async function record(userId: string, feature: Feature): Promise<void> {
   const now = new Date();
   const existing = await db
     .selectFrom("supporter_feature_uses")
@@ -52,7 +52,7 @@ async function record(userId: number, feature: Feature): Promise<void> {
 
 // Fire-and-forget: the ledger is billing bookkeeping, so failing to write it
 // must never fail the feature the user actually asked for.
-export function noteSupporterFeatureUse(userId: number, feature: Feature) {
+export function noteSupporterFeatureUse(userId: string, feature: Feature) {
   void record(userId, feature).catch((error) => {
     console.error(
       `Failed to record supporter feature use (${feature}) for user ${userId}`,
@@ -62,7 +62,7 @@ export function noteSupporterFeatureUse(userId: number, feature: Feature) {
 }
 
 export async function getSupporterFeatureUses(
-  userId: number,
+  userId: string,
 ): Promise<SupporterFeatureUse[]> {
   const rows = await db
     .selectFrom("supporter_feature_uses")
@@ -78,7 +78,7 @@ export async function getSupporterFeatureUses(
 }
 
 export async function getLastSupporterFeatureUse(
-  userId: number,
+  userId: string,
 ): Promise<Date | null> {
   const uses = await getSupporterFeatureUses(userId);
   return uses[0]?.lastUsedAt ?? null;
@@ -87,9 +87,9 @@ export async function getLastSupporterFeatureUse(
 // The /admin listing shows usage next to every payment, so it reads the ledger
 // for a whole page of payments at once instead of per row.
 export async function getSupporterFeatureUsesForUsers(
-  userIds: number[],
-): Promise<Map<number, SupporterFeatureUse[]>> {
-  const byUser = new Map<number, SupporterFeatureUse[]>();
+  userIds: string[],
+): Promise<Map<string, SupporterFeatureUse[]>> {
+  const byUser = new Map<string, SupporterFeatureUse[]>();
   if (userIds.length === 0) return byUser;
   const rows = await db
     .selectFrom("supporter_feature_uses")

@@ -90,7 +90,7 @@ export class RefundError extends Error {
 // already cancels the subscription that a refunded renewal belongs to, but a
 // refunded one-time donation has no subscription of its own, so the account's
 // recurring plan is stopped here as well.
-async function stopRecurringBilling(userId: number): Promise<boolean> {
+async function stopRecurringBilling(userId: string): Promise<boolean> {
   const { stopped, billingKey } = await db
     .transaction()
     .execute(async (trx) => {

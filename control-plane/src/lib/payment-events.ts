@@ -43,7 +43,7 @@ export async function recordPaymentEvent(
   event: {
     kind: PaymentEventKind;
     summary: string;
-    userId?: number | null;
+    userId?: string | null;
     paymentId?: string | null;
     subscriptionId?: string | null;
   },
@@ -137,7 +137,7 @@ export async function sendPaymentEventDigest(
 
     const userIds = [
       ...new Set(pending.map((event) => event.user_id).filter((id) => id)),
-    ] as number[];
+    ] as string[];
     const users =
       userIds.length > 0
         ? await trx

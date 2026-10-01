@@ -5,10 +5,10 @@ import { addPaymentGrace } from "@/lib/subscriptions";
 const ABANDONED_PENDING_DOMAIN_DAYS = 14;
 
 type DomainToDelete = {
-  id: number;
+  id: string;
   hostname: string;
   cloudflare_hostname_id: string;
-  user_id: number;
+  user_id: string;
 };
 
 async function deleteDomain(domain: DomainToDelete, reason: string) {

@@ -34,7 +34,7 @@ import { Browser, chromium } from "playwright";
 // handful of sites; anything the timeout cuts off is picked up next time.
 const DEFAULT_CONCURRENCY = 2;
 
-type TargetUser = { id: number; login_name: string };
+type TargetUser = { id: string; login_name: string };
 
 // Board templates waiting for a preview. A render that keeps failing stops
 // being retried after a day.

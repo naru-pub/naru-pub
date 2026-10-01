@@ -93,7 +93,7 @@ async function settlePendingCharges(subscriptionId: string): Promise<boolean> {
 }
 
 export async function prepareSubscription(opts: {
-  userId: number;
+  userId: string;
   interval: BillingInterval;
   now?: Date;
 }): Promise<SignupResult<{ customerKey: string }>> {
@@ -203,7 +203,7 @@ export async function prepareSubscription(opts: {
 
 async function getOrCreateInitialChargeAttempt(opts: {
   subscriptionId: string;
-  userId: number;
+  userId: string;
   amount: number;
 }) {
   const prefix = `subscription_initial:${opts.subscriptionId}:`;
@@ -296,7 +296,7 @@ async function stillConfirmable(subscriptionId: string, billingKey: string) {
 
 // A first charge that failed for good ends this signup's use of its key.
 async function failFirstCharge(opts: {
-  userId: number;
+  userId: string;
   subscriptionId: string;
   paymentId: string;
   amount: number;
@@ -349,7 +349,7 @@ function alreadySettled(sub: {
 }
 
 export async function confirmSubscription(opts: {
-  userId: number;
+  userId: string;
   authKey: string;
   customerKey: string;
 }): Promise<ConfirmOutcome> {
@@ -428,7 +428,7 @@ async function confirmClaimedSubscription(opts: {
     amount: number;
     toss_billing_key: string | null;
   };
-  userId: number;
+  userId: string;
   userRow: {
     email: string | null;
     email_verified_at: Date | null;

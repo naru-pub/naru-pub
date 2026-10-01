@@ -38,7 +38,7 @@ async function calculateUserHomeDirectorySize(
 }
 
 async function processUserBatch(
-  users: Array<{ id: number; login_name: string }>,
+  users: Array<{ id: string; login_name: string }>,
 ) {
   const batchPromises = users.map(async (user) => {
     try {

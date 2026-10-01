@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 
 type CustomDomain = {
-  id: number;
+  id: string;
   hostname: string;
   cloudflareStatus: string;
   sslStatus: string | null;
@@ -62,11 +62,11 @@ export default function CustomDomainsCard({
   target: string;
 }) {
   const [hostname, setHostname] = useState("");
-  const [pendingId, setPendingId] = useState<number | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   async function submitDomain(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setPendingId(0);
+    setPendingId("new");
 
     try {
       const response = await fetch("/api/account/custom-domains", {
@@ -90,7 +90,7 @@ export default function CustomDomainsCard({
     }
   }
 
-  async function refreshDomain(id: number) {
+  async function refreshDomain(id: string) {
     setPendingId(id);
 
     try {
@@ -114,7 +114,7 @@ export default function CustomDomainsCard({
     }
   }
 
-  async function deleteDomain(id: number) {
+  async function deleteDomain(id: string) {
     setPendingId(id);
 
     try {

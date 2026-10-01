@@ -11,7 +11,7 @@ import UserAgentsTable from "./user-agents-table";
 import { userHasFeature } from "@/lib/entitlements";
 import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 
-async function getDailyPageviews(userId: number) {
+async function getDailyPageviews(userId: string) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -44,7 +44,7 @@ async function getDailyPageviews(userId: number) {
   return chartData;
 }
 
-async function getTopPages(userId: number) {
+async function getTopPages(userId: string) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -69,7 +69,7 @@ async function getTopPages(userId: number) {
   }));
 }
 
-async function getTopReferrers(userId: number) {
+async function getTopReferrers(userId: string) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -119,7 +119,7 @@ function parseBrowserName(ua: string): string {
   return "(기타)";
 }
 
-async function getUserAgentBreakdown(userId: number) {
+async function getUserAgentBreakdown(userId: string) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -149,7 +149,7 @@ async function getUserAgentBreakdown(userId: number) {
     .slice(0, 10);
 }
 
-async function getStats(userId: number) {
+async function getStats(userId: string) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);

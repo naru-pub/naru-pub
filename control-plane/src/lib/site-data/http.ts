@@ -129,7 +129,7 @@ export async function dataRequest(
   if (request.method === "OPTIONS")
     return new Response(null, { status: 204, headers });
   try {
-    let adminUserId: number | undefined;
+    let adminUserId: string | undefined;
     if (admin) {
       // Never elevate cross-origin requests using ambient owner cookies.
       sameOrigin(request);

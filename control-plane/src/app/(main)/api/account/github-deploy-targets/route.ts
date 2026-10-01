@@ -5,6 +5,7 @@ import { userHasFeature } from "@/lib/entitlements";
 import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { assertJsonContentType } from "@/lib/utils";
 import { upsertGitHubDeployTarget } from "@/lib/deploy/siteDeploy";
+import { parseUuid } from "@/lib/uuid";
 
 export async function GET() {
   const { user } = await validateRequest();
@@ -108,8 +109,8 @@ export async function DELETE(request: NextRequest) {
     }
 
     const body = await request.json();
-    const id = Number(body.id);
-    if (!Number.isSafeInteger(id)) {
+    const id = parseUuid(body.id);
+    if (!id) {
       return NextResponse.json(
         { success: false, message: "id is required" },
         { status: 400 },

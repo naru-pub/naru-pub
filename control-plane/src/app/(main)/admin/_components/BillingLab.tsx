@@ -36,7 +36,7 @@ type LabResult = {
 type Run = { id: number; label: string; at: string; result: LabResult };
 
 export type LabAccount = {
-  userId: number;
+  userId: string;
   loginName: string;
   subscriptionId: string | null;
   subscriptionStatus: string | null;

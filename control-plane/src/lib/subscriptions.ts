@@ -55,7 +55,7 @@ function assertGrantable(paymentId: string, status: string) {
 // billing exists, the same transaction disables it so only prepaid access
 // remains.
 export async function applyOneTimePayment(opts: {
-  userId: number;
+  userId: string;
   amount: number;
   years: number;
   payment: TossPaymentResult;
@@ -189,7 +189,7 @@ export async function applyOneTimePayment(opts: {
 // revive auto-renewal.
 export async function applySuccessfulCharge(opts: {
   subscriptionId: string;
-  userId: number;
+  userId: string;
   interval: BillingInterval;
   amount: number;
   from: Date; // base for the new period (now for first charge, current_period_end for renewals)

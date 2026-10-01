@@ -33,7 +33,7 @@ export type DataCommand = {
   site: string;
   path: string[];
   method: string;
-  adminUserId?: number;
+  adminUserId?: string;
   // Mutable: tokenScope reports the expiry the renewed token now has.
   bearer?: { token: string; origin: string | null; expiresAt?: number };
   clientIp?: string;

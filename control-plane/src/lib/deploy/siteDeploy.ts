@@ -58,7 +58,7 @@ export function changedManifestPaths(
 }
 
 type UserRow = {
-  id: number;
+  id: string;
 };
 
 function deploymentId() {
@@ -218,7 +218,7 @@ async function calculateUserHomeDirectorySize(loginName: string) {
   return totalSize;
 }
 
-async function updateUserHomeDirectorySize(userId: number, loginName: string) {
+async function updateUserHomeDirectorySize(userId: string, loginName: string) {
   const directorySize = await calculateUserHomeDirectorySize(loginName);
   const now = new Date();
 

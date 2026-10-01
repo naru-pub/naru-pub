@@ -29,7 +29,7 @@ export async function requireVerifiedUser(): Promise<User> {
 
 export function canModerate(
   user: Pick<User, "id" | "loginName"> | null,
-  authorId: number,
+  authorId: string,
 ): boolean {
   return !!user && (user.id === authorId || isBoardAdmin(user));
 }

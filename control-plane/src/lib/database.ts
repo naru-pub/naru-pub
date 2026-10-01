@@ -50,7 +50,7 @@ export async function requestDeadline(
  * Records a site edit by updating site_updated_at and incrementing daily edit stats.
  * Use this instead of directly updating site_updated_at.
  */
-export async function recordSiteEdit(userId: number): Promise<void> {
+export async function recordSiteEdit(userId: string): Promise<void> {
   // Update site_updated_at
   await db
     .updateTable("users")

@@ -14,7 +14,7 @@ const SESSION_EXPIRES_IN_MS = 1000 * 60 * 60 * 24 * 30;
 const SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 400;
 
 export interface User {
-  id: number;
+  id: string;
   loginName: string;
   createdAt: Date;
   email: string | null;
@@ -24,12 +24,12 @@ export interface User {
 
 export interface Session {
   id: string;
-  userId: number;
+  userId: string;
   expiresAt: Date;
   fresh: boolean;
 }
 
-export async function createSession(userId: number): Promise<Session> {
+export async function createSession(userId: string): Promise<Session> {
   const id = generateId(40);
   const expiresAt = new Date(Date.now() + SESSION_EXPIRES_IN_MS);
   await db

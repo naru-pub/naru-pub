@@ -221,7 +221,7 @@ export async function deleteCloudflareCustomHostnameIfExists(
   }
 }
 
-export async function deleteCustomDomainsForUser(userId: number) {
+export async function deleteCustomDomainsForUser(userId: string) {
   const domains = await db
     .selectFrom("custom_domains")
     .select(["id", "hostname", "cloudflare_hostname_id"])

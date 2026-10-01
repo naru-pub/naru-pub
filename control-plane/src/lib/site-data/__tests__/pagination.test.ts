@@ -26,7 +26,7 @@ const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 integration("sorted database pagination", () => {
   let ready = false,
-    owner: number;
+    owner: string;
   const call = (method: string, path: string[], extra = {}) =>
     executeData({
       site: "sorting",
@@ -40,7 +40,7 @@ integration("sorted database pagination", () => {
     ready = true;
     owner = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name) values ('sorting') returning id`.execute(
         db,
       )

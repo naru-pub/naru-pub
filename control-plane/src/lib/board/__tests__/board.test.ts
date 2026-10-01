@@ -146,7 +146,7 @@ integration("board", () => {
         body: "도메인이 안 돼요",
       });
       expect(first).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
       await createReply(carol, first, { parentId: null, body: "반가워요" });
 

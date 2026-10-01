@@ -23,8 +23,8 @@ const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 integration("website owner authorization", () => {
   let ready = false,
-    owner: number,
-    bob: number,
+    owner: string,
+    bob: string,
     registrationId: string;
   const redirectUri = "https://alice.example/admin.html",
     origin = "https://alice.example";
@@ -69,14 +69,14 @@ integration("website owner authorization", () => {
     ready = true;
     owner = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name) values ('alice') returning id`.execute(
         db,
       )
     ).rows[0].id;
     bob = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name) values ('bob') returning id`.execute(db)
     ).rows[0].id;
     await sql`insert into sessions values ('alice-session', ${owner}, now() + interval '1 hour'), ('bob-session', ${bob}, now() + interval '1 hour')`.execute(

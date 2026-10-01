@@ -30,7 +30,7 @@ const BATCH_SIZE = 10;
 
 type DueSubscription = {
   id: string;
-  user_id: number;
+  user_id: string;
   status: string;
   charging_started_at: Date;
   billing_interval: string;

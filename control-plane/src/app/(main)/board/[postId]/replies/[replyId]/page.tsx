@@ -10,9 +10,8 @@ import {
 } from "../../../_components/ReplyThread";
 import { formatRelative } from "../../../_components/format";
 
-const POST_ID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const ID = /^[1-9][0-9]{0,17}$/;
+// Post and reply ids are both UUIDs.
+const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 // One reply and everything under it: the permalink, and where a thread too
 // long or too deep for its page continues.
@@ -22,7 +21,7 @@ export default async function ReplyPage({
   params: Promise<{ postId: string; replyId: string }>;
 }) {
   const { postId, replyId } = await params;
-  if (!POST_ID.test(postId) || !ID.test(replyId)) notFound();
+  if (!ID.test(postId) || !ID.test(replyId)) notFound();
 
   const { user } = await validateRequest();
   const post = await getPost(postId, user);

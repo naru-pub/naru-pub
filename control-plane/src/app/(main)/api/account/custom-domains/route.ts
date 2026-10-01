@@ -4,6 +4,7 @@ import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
 import { userHasFeature } from "@/lib/entitlements";
 import { noteSupporterFeatureUse } from "@/lib/feature-usage";
+import { parseUuid } from "@/lib/uuid";
 import {
   createCloudflareCustomHostname,
   deleteCloudflareCustomHostnameIfExists,
@@ -168,8 +169,8 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const { id } = await request.json();
-    if (typeof id !== "number") {
+    const id = parseUuid((await request.json())?.id);
+    if (!id) {
       return NextResponse.json(
         { success: false, message: "유효하지 않은 도메인입니다." },
         { status: 400 },
@@ -236,8 +237,8 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const { id } = await request.json();
-    if (typeof id !== "number") {
+    const id = parseUuid((await request.json())?.id);
+    if (!id) {
       return NextResponse.json(
         { success: false, message: "유효하지 않은 도메인입니다." },
         { status: 400 },

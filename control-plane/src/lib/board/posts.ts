@@ -161,7 +161,7 @@ export interface PostDetail {
   kind: PostKind;
   title: string;
   body: string;
-  userId: number;
+  userId: string;
   authorLoginName: string;
   authorSiteRenderedAt: Date | null;
   createdAt: Date;
@@ -244,7 +244,7 @@ export function validatePostBody(value: unknown): string {
   return body;
 }
 
-export async function assertCanPost(userId: number): Promise<void> {
+export async function assertCanPost(userId: string): Promise<void> {
   await assertUnderHourlyLimit("board_posts", userId, POSTS_PER_HOUR);
 }
 
@@ -308,7 +308,7 @@ export async function deletePost(
   id: string,
 ): Promise<{
   kind: PostKind;
-  authorId: number;
+  authorId: string;
   templateId: string | null;
   federatedNoteIri: string | null;
 }> {

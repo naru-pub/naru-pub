@@ -105,7 +105,7 @@ async function makeUser(supporterUntil: Date | null = null) {
 }
 
 async function makeSubscription(
-  userId: number,
+  userId: string,
   values: {
     status: string;
     billingKey?: string | null;
@@ -141,7 +141,7 @@ async function makeSubscription(
 }
 
 async function makePendingPayment(opts: {
-  userId: number;
+  userId: string;
   subscriptionId: string | null;
   attemptKey: string;
   orderId: string;
@@ -170,7 +170,7 @@ function subscription(id: string) {
     .executeTakeFirstOrThrow();
 }
 
-async function supporterUntil(userId: number) {
+async function supporterUntil(userId: string) {
   const row = await db
     .selectFrom("users")
     .select("supporter_until")
@@ -775,7 +775,7 @@ integration("payments against the database", () => {
   });
 
   describe("refunds", () => {
-    async function paidPayment(userId: number) {
+    async function paidPayment(userId: string) {
       const paymentId = await makePendingPayment({
         userId,
         subscriptionId: null,
@@ -990,7 +990,7 @@ integration("payments against the database", () => {
       return { userId, subId, customerKey };
     }
 
-    function confirm(userId: number, customerKey: string) {
+    function confirm(userId: string, customerKey: string) {
       return confirmSubscription({ userId, authKey: "auth", customerKey });
     }
 

@@ -18,7 +18,7 @@ export interface ReplyItem {
   // null once deleted; a deleted reply is kept only while it has live replies
   // under it, so the thread around it still reads.
   body: string | null;
-  userId: number;
+  userId: string;
   authorLoginName: string;
   createdAt: Date;
   editedAt: Date | null;
@@ -53,7 +53,7 @@ export async function listReplies(
     .where("r.post_id", "=", postId)
     .orderBy("r.path");
   if (rootReplyId) {
-    query = query.where(sql<boolean>`r.path @> array[${rootReplyId}::bigint]`);
+    query = query.where(sql<boolean>`r.path @> array[${rootReplyId}::uuid]`);
   }
   const rows = await query.limit(MAX_THREAD_REPLIES + 1).execute();
   const truncated = rows.length > MAX_THREAD_REPLIES;
@@ -131,7 +131,7 @@ export async function createReply(
 
     let parent: {
       id: string;
-      user_id: number;
+      user_id: string;
       depth: number;
       path: string[];
       parent_id: string | null;
@@ -162,9 +162,8 @@ export async function createReply(
         : null;
     }
 
-    const { id } = await sql<{ id: string }>`
-      select nextval(pg_get_serial_sequence('board_replies', 'id'))::text as id
-    `
+    // The id is needed before the insert: it ends the reply's own path.
+    const { id } = await sql<{ id: string }>`select uuid_v7()::text as id`
       .execute(tx)
       .then((result) => result.rows[0]);
     const depth = attachTo ? attachTo.depth + 1 : 0;
@@ -173,7 +172,7 @@ export async function createReply(
     await sql`
       insert into board_replies (id, post_id, parent_id, user_id, depth, path, body)
       values (${id}, ${postId}, ${attachTo?.id ?? null}, ${user.id}, ${depth},
-              ${path}::bigint[], ${body})
+              ${path}::uuid[], ${body})
     `.execute(tx);
 
     await tx
@@ -187,7 +186,7 @@ export async function createReply(
       .where("id", "=", postId)
       .execute();
 
-    const notify = new Map<number, "reply_to_post" | "reply_to_reply">();
+    const notify = new Map<string, "reply_to_post" | "reply_to_reply">();
     if (answered && answered.user_id !== user.id) {
       notify.set(answered.user_id, "reply_to_reply");
     }
@@ -258,7 +257,7 @@ export async function deleteReply(user: User, id: string): Promise<string> {
       .updateTable("board_posts")
       .set({
         reply_count: sql`greatest(reply_count - 1, 0)`,
-        solved_reply_id: sql`case when solved_reply_id = ${id}::bigint then null else solved_reply_id end`,
+        solved_reply_id: sql`case when solved_reply_id = ${id}::uuid then null else solved_reply_id end`,
       })
       .where("id", "=", reply.post_id)
       .execute();
@@ -321,7 +320,7 @@ export interface NotificationItem {
 }
 
 export async function listNotifications(
-  userId: number,
+  userId: string,
   limit = 50,
 ): Promise<NotificationItem[]> {
   const rows = await db
@@ -359,7 +358,7 @@ export async function listNotifications(
   }));
 }
 
-export async function countUnreadNotifications(userId: number): Promise<{
+export async function countUnreadNotifications(userId: string): Promise<{
   count: number;
   from: string[];
 }> {
@@ -382,7 +381,7 @@ export async function countUnreadNotifications(userId: number): Promise<{
 }
 
 export async function markNotificationsRead(
-  userId: number,
+  userId: string,
   ids: string[] | null,
 ): Promise<void> {
   let query = db
@@ -399,7 +398,7 @@ export async function markNotificationsRead(
 
 // Opening a thread reads every notification about replies in it.
 export async function markPostNotificationsRead(
-  userId: number,
+  userId: string,
   postId: string,
 ): Promise<void> {
   await db

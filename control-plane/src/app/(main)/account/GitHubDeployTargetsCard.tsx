@@ -17,7 +17,7 @@ import {
 } from "@/lib/deploy/githubWorkflow";
 
 type GitHubDeployTarget = {
-  id: number;
+  id: string;
   githubRepository: string;
   githubRef: string;
   targetPrefix: string;
@@ -68,7 +68,7 @@ export default function GitHubDeployTargetsCard({
   const [githubRepository, setGithubRepository] = useState("");
   const [branch, setBranch] = useState("main");
   const [targetPrefix, setTargetPrefix] = useState("/");
-  const [pendingId, setPendingId] = useState<number | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   const sortedTargets = useMemo(
     () => targets.filter((target) => target.enabled),
@@ -77,7 +77,7 @@ export default function GitHubDeployTargetsCard({
 
   async function addTarget(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setPendingId(0);
+    setPendingId("new");
 
     try {
       const response = await fetch("/api/account/github-deploy-targets", {
@@ -107,7 +107,7 @@ export default function GitHubDeployTargetsCard({
     }
   }
 
-  async function deleteTarget(id: number) {
+  async function deleteTarget(id: string) {
     setPendingId(id);
 
     try {

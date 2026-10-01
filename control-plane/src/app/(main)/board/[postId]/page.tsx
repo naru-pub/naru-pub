@@ -61,7 +61,7 @@ export default async function PostPage({
   ]);
   const appliers = template
     ? await listTemplateAppliers(template.id)
-    : new Map<number, number>();
+    : new Map<string, number>();
   if (user) await markPostNotificationsRead(user.id, post.id);
 
   const viewer = user

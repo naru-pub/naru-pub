@@ -1,7 +1,7 @@
 import { sql } from "kysely";
 import { db, recordSiteEdit } from "@/lib/database";
 import type { User } from "@/lib/auth";
-import type { BoardTemplateCollection } from "@/lib/db";
+import type { BoardTemplateCollection } from "@/lib/board/template-collections";
 import {
   ALLOWED_FILE_EXTENSIONS,
   FILE_EXTENSION_MIMETYPE_MAP,
@@ -182,7 +182,7 @@ function validateSelection(value: unknown): string[] {
 // The author's own collections, by name, to be created empty for whoever
 // applies the template. Only their permissions travel, never documents.
 async function resolveCollections(
-  userId: number,
+  userId: string,
   value: unknown,
 ): Promise<BoardTemplateCollection[]> {
   if (value === undefined || value === null) return [];
@@ -513,7 +513,7 @@ export async function getTemplateForPost(
 // The users who applied a template, for the "적용함" badge on their replies.
 export async function listTemplateAppliers(
   templateId: string,
-): Promise<Map<number, number>> {
+): Promise<Map<string, number>> {
   const rows = await db
     .selectFrom("board_template_applications as a")
     .innerJoin("board_template_versions as v", "v.id", "a.version_id")
@@ -807,7 +807,7 @@ export async function deleteTemplateObjects(templateId: string): Promise<void> {
 }
 
 // Account deletion: the rows cascade with the user, but R2 does not.
-export async function deleteUserTemplateObjects(userId: number): Promise<void> {
+export async function deleteUserTemplateObjects(userId: string): Promise<void> {
   const templates = await db
     .selectFrom("board_templates")
     .select("id")

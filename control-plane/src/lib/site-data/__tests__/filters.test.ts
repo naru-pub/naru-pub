@@ -89,7 +89,7 @@ const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 integration("indexed filtered queries", () => {
   let ready = false,
-    owner: number;
+    owner: string;
   const call = (method: string, path: string[], extra = {}) =>
     executeData({
       site: "filter-test",
@@ -103,7 +103,7 @@ integration("indexed filtered queries", () => {
     ready = true;
     owner = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name) values ('filter-test') returning id`.execute(
         db,
       )

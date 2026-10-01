@@ -103,7 +103,7 @@ export function sortings(raw?: string): Sort[] {
 }
 
 export function encodeCursor(
-  scope: number,
+  scope: string,
   sort: Sort,
   id: string,
   value: string | null,
@@ -127,7 +127,7 @@ export function encodeCursor(
 }
 export function decodeCursor(
   pageToken: string | undefined,
-  scope: number,
+  scope: string,
   sort: Sort,
   fingerprint?: string,
   kind: CursorKind = "d",
@@ -174,7 +174,7 @@ export function decodeCursor(
 }
 
 export function encodeMultiCursor(
-  scope: number,
+  scope: string,
   sorts: Sort[],
   id: string,
   values: string[],
@@ -196,7 +196,7 @@ export function encodeMultiCursor(
 
 export function decodeMultiCursor(
   pageToken: string | undefined,
-  scope: number,
+  scope: string,
   sorts: Sort[],
   fingerprint?: string,
 ) {

@@ -54,7 +54,7 @@ export type UserEntitlement = {
 // Resolves a user's current entitlement. A user is a supporter if they have a
 // permanent comp or a paid-through date that has not passed the grace window.
 export async function getUserEntitlement(
-  userId: number,
+  userId: string,
   executor: Executor = db,
 ): Promise<UserEntitlement> {
   const row = await executor
@@ -106,14 +106,14 @@ export async function getUserEntitlement(
 // Resolves every feature at once. The nav needs the whole set on every page
 // load, and calling userHasFeature per feature would repeat the same
 // entitlement lookup once for each of them.
-export async function getUserFeatures(userId: number): Promise<Set<Feature>> {
+export async function getUserFeatures(userId: string): Promise<Set<Feature>> {
   const ent = await getUserEntitlement(userId);
   if (!ent.isSupporter) return new Set();
   return new Set(PLAN_FEATURES[ent.plan ?? "supporter"] ?? []);
 }
 
 export async function userHasFeature(
-  userId: number,
+  userId: string,
   feature: Feature,
   executor: Executor = db,
 ): Promise<boolean> {

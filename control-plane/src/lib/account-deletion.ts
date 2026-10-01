@@ -7,7 +7,7 @@ import type { Executor } from "@/lib/entitlements";
 // once its transaction commits.
 export async function deleteUserRow(
   trx: Executor,
-  userId: number,
+  userId: string,
 ): Promise<string | null> {
   const billingKey = await retireBillingKey(trx, { userId });
   await trx.deleteFrom("users").where("id", "=", userId).execute();

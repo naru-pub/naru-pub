@@ -1,4 +1,5 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { uuidv7 } from "@/lib/uuid";
 import { Kysely, sql } from "kysely";
 import type { DB } from "@/lib/db";
 import { db } from "@/lib/database";
@@ -106,7 +107,7 @@ export function sameCallback(registered: string, requested: string) {
 // Removing or de-verifying a custom domain therefore invalidates its access.
 async function assertSiteOrigin(
   tx: Kysely<DB>,
-  userId: number,
+  userId: string,
   redirectUri: string,
 ) {
   const owner = await tx
@@ -142,7 +143,7 @@ async function assertSiteOrigin(
     );
 }
 
-async function lockOwner(tx: Kysely<DB>, userId: number) {
+async function lockOwner(tx: Kysely<DB>, userId: string) {
   await tx
     .selectFrom("users")
     .select("id")
@@ -150,7 +151,7 @@ async function lockOwner(tx: Kysely<DB>, userId: number) {
     .forUpdate()
     .executeTakeFirstOrThrow();
 }
-async function scope(tx: Kysely<DB>, userId: number, names: string[]) {
+async function scope(tx: Kysely<DB>, userId: string, names: string[]) {
   const rows = await tx
     .selectFrom("site_data_collections")
     .select(["id", "name"])
@@ -178,7 +179,7 @@ async function clearClientGrants(tx: Kysely<DB>, id: string) {
     .execute();
 }
 export async function updateClient(
-  userId: number,
+  userId: string,
   id: string,
   body: Record<string, unknown>,
 ) {
@@ -237,7 +238,7 @@ export async function updateClient(
 }
 
 export async function registerClient(
-  userId: number,
+  userId: string,
   body: Record<string, unknown>,
 ) {
   const redirectUri = callbackUrl(body.redirectUri).href;
@@ -267,7 +268,7 @@ export async function registerClient(
     return tx
       .insertInto("site_data_clients")
       .values({
-        id: randomUUID(),
+        id: uuidv7(),
         user_id: userId,
         redirect_uri: redirectUri,
         token_lifetime_seconds: lifetime,
@@ -277,7 +278,7 @@ export async function registerClient(
       .executeTakeFirstOrThrow();
   });
 }
-export async function removeClient(userId: number, id: string) {
+export async function removeClient(userId: string, id: string) {
   await db.transaction().execute(async (tx) => {
     await lockOwner(tx, userId);
     await tx
@@ -287,7 +288,7 @@ export async function removeClient(userId: number, id: string) {
       .execute();
   });
 }
-export async function revokeClientTokens(userId: number, id: string) {
+export async function revokeClientTokens(userId: string, id: string) {
   await db.transaction().execute(async (tx) => {
     await lockOwner(tx, userId);
     const client = await tx
@@ -324,7 +325,7 @@ export function authorizationInput(body: Record<string, unknown>) {
 }
 async function authorizationDetails(
   tx: Kysely<DB>,
-  userId: number,
+  userId: string,
   input: AuthorizationInput,
 ) {
   const owner = await tx
@@ -383,7 +384,7 @@ export type AuthorizationSetup = {
 };
 async function setupNeeded(
   tx: Kysely<DB>,
-  userId: number,
+  userId: string,
   input: AuthorizationInput,
 ): Promise<AuthorizationSetup | null> {
   const owner = await tx
@@ -421,7 +422,7 @@ async function setupNeeded(
   if (client && !create.length && !extend.length) return null;
   return { register: !client, create, extend };
 }
-export function authorizationSetup(userId: number, input: AuthorizationInput) {
+export function authorizationSetup(userId: string, input: AuthorizationInput) {
   return setupNeeded(db, userId, input);
 }
 
@@ -432,7 +433,7 @@ export function authorizationSetup(userId: number, input: AuthorizationInput) {
  * outstanding sign-ins, as editing it in the control panel does.
  */
 export async function prepareAuthorization(
-  userId: number,
+  userId: string,
   input: AuthorizationInput,
 ) {
   await db.transaction().execute(async (tx) => {
@@ -475,7 +476,7 @@ export async function prepareAuthorization(
       await tx
         .insertInto("site_data_clients")
         .values({
-          id: randomUUID(),
+          id: uuidv7(),
           user_id: userId,
           redirect_uri: callbackUrl(input.redirectUri).href,
           token_lifetime_seconds: TOKEN_SECONDS,
@@ -499,13 +500,13 @@ export async function prepareAuthorization(
 }
 
 export async function previewAuthorization(
-  userId: number,
+  userId: string,
   input: AuthorizationInput,
 ) {
   return authorizationDetails(db, userId, input);
 }
 export async function approveAuthorization(
-  userId: number,
+  userId: string,
   sessionId: string,
   input: AuthorizationInput,
 ) {
@@ -705,7 +706,7 @@ function renewal(grant: {
  */
 export async function tokenScope(
   tx: Kysely<DB>,
-  userId: number,
+  userId: string,
   bearer: { token: string; origin: string | null; expiresAt?: number },
 ) {
   const { token, origin } = bearer;
@@ -811,7 +812,7 @@ export async function refusePublicWriteOverLimit(
 
 export async function limitPublicWrite(
   tx: Kysely<DB>,
-  userId: number,
+  userId: string,
   clientIp?: string,
 ) {
   const window = currentWindow();

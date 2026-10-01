@@ -14,7 +14,7 @@ export interface ThreadReply {
   parentId: string | null;
   depth: number;
   body: string | null;
-  userId: number;
+  userId: string;
   authorLoginName: string;
   time: string;
   edited: boolean;
@@ -25,7 +25,7 @@ export interface ThreadReply {
 }
 
 export interface ThreadViewer {
-  id: number;
+  id: string;
   isAdmin: boolean;
   canWrite: boolean;
 }
@@ -42,7 +42,7 @@ export function ReplyThread({
   depthOffset = 0,
 }: {
   postId: string;
-  postAuthorId: number;
+  postAuthorId: string;
   replies: ThreadReply[];
   viewer: ThreadViewer | null;
   isQuestion: boolean;

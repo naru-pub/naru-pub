@@ -96,7 +96,7 @@ async function dispatchForUser(loginName: string, force: boolean) {
   }
 }
 
-async function activityCount(userId: number): Promise<number> {
+async function activityCount(userId: string): Promise<number> {
   const row = await db
     .selectFrom("activities")
     .select((eb) => eb.fn.countAll<string>().as("count"))

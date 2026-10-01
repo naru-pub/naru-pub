@@ -146,7 +146,7 @@ integration("SDK and data API contract", () => {
     };
     const userId = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name) values ('alice') returning id`.execute(
         db,
       )

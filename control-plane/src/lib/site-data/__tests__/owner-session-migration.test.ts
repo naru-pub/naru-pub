@@ -36,7 +36,7 @@ integration("stable client and owner session migration", () => {
     await down(db);
     const owner = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name) values ('migrate') returning id`.execute(
         db,
       )

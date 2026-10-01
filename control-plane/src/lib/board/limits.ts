@@ -9,7 +9,7 @@ type Counted = "board_posts" | "board_replies" | "board_template_applications";
 // needed.
 export async function assertUnderHourlyLimit(
   table: Counted,
-  userId: number,
+  userId: string,
   limit: number,
 ): Promise<void> {
   const row = await db

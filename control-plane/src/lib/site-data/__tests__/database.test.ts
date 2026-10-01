@@ -12,8 +12,8 @@ const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 integration("site database integration", () => {
   let initialized = false;
-  let owner: number;
-  let other: number;
+  let owner: string;
+  let other: string;
   const call = (
     method: string,
     path: string[],
@@ -34,7 +34,7 @@ integration("site database integration", () => {
     initialized = true;
     owner = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name) values ('alice') returning id`.execute(
         db,
       )
@@ -73,7 +73,7 @@ integration("site database integration", () => {
   test("rejects sites whose owner is not a supporter", async () => {
     const denied = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name, supporter_comp) values ('not-enabled', false) returning id`.execute(
         db,
       )
@@ -93,7 +93,7 @@ integration("site database integration", () => {
   test("allows sites whose owner has paid", async () => {
     const paid = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name, supporter_comp, supporter_until)
         values ('paid', false, now() + interval '30 days') returning id`.execute(
         db,
@@ -161,7 +161,7 @@ integration("site database integration", () => {
   test("tenant isolation, pagination, replacement and cascade", async () => {
     other = (
       await sql<{
-        id: number;
+        id: string;
       }>`insert into users(login_name) values ('bob') returning id`.execute(db)
     ).rows[0].id;
     await expect(

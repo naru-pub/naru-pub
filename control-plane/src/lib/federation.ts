@@ -170,7 +170,7 @@ async function upsertRemoteActor(actor: {
   preferredUsername?: unknown;
   name?: unknown;
   url?: unknown;
-}): Promise<number | null> {
+}): Promise<string | null> {
   if (!actor.id || !actor.inboxId) return null;
 
   const preferredUsername =
@@ -475,7 +475,7 @@ const COOLDOWN_WINDOW = sql<Date>`now() - interval '24 hours'`;
  *
  * Calling this on a user that doesn't qualify is a safe no-op.
  */
-export async function dispatchSiteUpdate(userId: number): Promise<void> {
+export async function dispatchSiteUpdate(userId: string): Promise<void> {
   const claimed = await db
     .updateTable("users")
     .set({ last_activity_sent_at: sql`now()` })
@@ -567,7 +567,7 @@ export async function dispatchSiteUpdate(userId: number): Promise<void> {
  * their cached actor — most notably, the icon that points at the rendered
  * site screenshot. Safe to call on users with zero followers (no-op).
  */
-export async function dispatchActorUpdate(userId: number): Promise<void> {
+export async function dispatchActorUpdate(userId: string): Promise<void> {
   const user = await db
     .selectFrom("users")
     .select(["login_name"])
@@ -608,7 +608,7 @@ export async function dispatchActorUpdate(userId: number): Promise<void> {
  * a user that no longer exists.
  */
 export async function dispatchActorDelete(
-  userId: number,
+  userId: string,
   loginName: string,
 ): Promise<void> {
   const baseUrl = new URL(process.env.BASE_URL ?? "http://localhost:3000");
@@ -748,7 +748,7 @@ export async function dispatchTemplatePost(postId: string): Promise<void> {
  * followers, and the Create dropped from the outbox.
  */
 export async function dispatchNoteDelete(
-  userId: number,
+  userId: string,
   noteIri: string,
 ): Promise<void> {
   const user = await db

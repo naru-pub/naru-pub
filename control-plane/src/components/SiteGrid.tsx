@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { getHomepageUrl, getRenderedSiteUrl } from "@/lib/site-urls";
 
 export interface SiteGridUser {
-  id: number;
+  id: string;
   login_name: string;
   site_rendered_at: Date | null;
 }

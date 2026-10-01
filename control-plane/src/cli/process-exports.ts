@@ -17,7 +17,7 @@ import { join } from "path";
 import { Readable } from "stream";
 import { readFile } from "fs/promises";
 
-async function processExport(exportRow: { id: number; user_id: number }) {
+async function processExport(exportRow: { id: string; user_id: string }) {
   const user = await db
     .selectFrom("users")
     .select(["login_name", "email"])

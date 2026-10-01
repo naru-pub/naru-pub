@@ -24,7 +24,7 @@
     "test:coverage": "jest --coverage",
     "test:file": "jest src/lib/actions/__tests__/file.test.ts",
     "test:validation": "jest src/lib/actions/__tests__/file-validation.test.ts",
-    "kysely-codegen": "kysely-codegen --out-file=src/lib/db.d.ts",
+    "kysely-codegen": "kysely-codegen --config-file .kysely-codegenrc.json",
     "migrate": "tsx src/cli/migrate.ts",
     "migrate-down": "tsx src/cli/migrate-down.ts",
     "update-screenshots": "tsx src/cli/update-screenshots.tsx",

@@ -36,7 +36,7 @@ export const LAB_TEST_CODES = [
 ] as const;
 
 export type LabAction =
-  | { action: "inspect"; userId: number }
+  | { action: "inspect"; userId: string }
   | { action: "charge"; subscriptionId: string; testCode?: string }
   | {
       action: "advance";
@@ -47,7 +47,7 @@ export type LabAction =
   | { action: "refund"; paymentId: string; testCode?: string }
   | { action: "payment-webhook"; paymentId: string }
   | { action: "billing-deleted"; subscriptionId: string }
-  | { action: "process-key-queue"; userId?: number };
+  | { action: "process-key-queue"; userId?: string };
 
 type Row = Record<string, string | number | boolean | null>;
 
@@ -89,7 +89,7 @@ function plain(row: Record<string, unknown>): Row {
   );
 }
 
-export async function labSnapshot(userId: number): Promise<LabSnapshot> {
+export async function labSnapshot(userId: string): Promise<LabSnapshot> {
   const user = await db
     .selectFrom("users")
     .select(["id", "login_name", "supporter_comp", "supporter_until"])
@@ -211,7 +211,7 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
     throw new LabError("테스트 키(test_…)로 설정된 환경에서만 쓸 수 있습니다.");
   }
 
-  let userId: number | null = null;
+  let userId: string | null = null;
   let testCode: string | undefined;
   let run: () => Promise<string>;
 

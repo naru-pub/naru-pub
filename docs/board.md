@@ -9,9 +9,13 @@ pictures, questions and chat as a list.
 Below them come the ads, the usage notice, and 최근 업데이트된, which shows
 the 24 most recently updated sites. `/sites` lists all of them, 48 per page.
 
-Post ids are random UUIDs (`gen_random_uuid()`), so `/board/<id>` addresses can't be
-guessed or walked in order. Replies, templates and versions keep sequence
-numbers.
+Every board row is keyed by a UUIDv7 (`uuid_v7()`), so `/board/<id>` and reply
+addresses can't be guessed or walked in order, while ids still sort by creation
+time — reply threads order by their id path. Posts made before migration
+`1790824144110` keep the random v4 ids they were published with. Template files
+and previews live under `_templates/<template id>/`; the template that existed
+before that migration was copied from its old number's prefix
+(`copy-legacy-template-storage`).
 
 Code: `control-plane/src/lib/board/` (logic), `src/app/(main)/board/` (pages),
 `src/app/(main)/api/board/` (JSON routes). Schema: migration

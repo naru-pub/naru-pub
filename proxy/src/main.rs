@@ -15,6 +15,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use uuid::Uuid;
 
 // Hosted pages are revalidated at the origin on every request, so edits appear
 // at once and pageviews are still counted, but Cloudflare keeps the last good
@@ -48,7 +49,7 @@ struct AppState {
 
 #[derive(Clone, Debug)]
 struct SiteOwner {
-    user_id: i32,
+    user_id: Uuid,
     login_name: String,
 }
 
@@ -187,7 +188,7 @@ async fn resolve_site_owner(
             return Ok(None);
         }
 
-        let user: Option<(i32, String)> =
+        let user: Option<(Uuid, String)> =
             sqlx::query_as("SELECT id, login_name FROM users WHERE login_name = $1")
                 .bind(login_name)
                 .fetch_optional(db_pool)
@@ -199,7 +200,7 @@ async fn resolve_site_owner(
         }));
     }
 
-    let domain: Option<(i32, String)> = sqlx::query_as(
+    let domain: Option<(Uuid, String)> = sqlx::query_as(
         "SELECT users.id, users.login_name
      FROM custom_domains
      INNER JOIN users ON users.id = custom_domains.user_id
@@ -281,7 +282,7 @@ fn directory_redirect(uri: &hyper::Uri, decoded_path: &str) -> Option<String> {
 // Record a pageview in the database (fire-and-forget)
 fn record_pageview(
     db_pool: PgPool,
-    user_id: i32,
+    user_id: Uuid,
     path: String,
     client_ip: IpAddr,
     referrer: Option<String>,
