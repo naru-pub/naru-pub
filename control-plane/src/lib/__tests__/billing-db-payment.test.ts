@@ -2658,6 +2658,8 @@ integration("payments against the database", () => {
       expect(checkedOrders()).not.toEqual(expect.arrayContaining(notDue));
     });
 
+    // 1,203 rows: half a second here, near Jest's 5-second default on a slow
+    // CI runner.
     test("has no cap on how many payments one run checks", async () => {
       for (let i = 0; i < 1203; i++) {
         await paid(3, null, `many-${i}`);
@@ -2667,7 +2669,7 @@ integration("payments against the database", () => {
 
       expect(result).toMatchObject({ checked: 1203, incomplete: false });
       expect(new Set(checkedOrders()).size).toBe(1203);
-    });
+    }, 30_000);
 
     test("a run out of time leaves the rest first in line", async () => {
       const longest = await paid(200, 60);
