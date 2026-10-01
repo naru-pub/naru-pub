@@ -3,7 +3,6 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
 import { userHasFeature } from "@/lib/entitlements";
-import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { parseUuid } from "@/lib/uuid";
 import {
   createCloudflareCustomHostname,
@@ -127,8 +126,6 @@ export async function POST(request: NextRequest) {
       }
       throw error;
     }
-
-    noteSupporterFeatureUse(user.id, "custom_domains");
 
     return NextResponse.json({
       success: true,

@@ -399,13 +399,6 @@ export interface Subscriptions {
   user_id: string;
 }
 
-export interface SupporterFeatureUses {
-  feature: string;
-  first_used_at: Generated<Timestamp>;
-  last_used_at: Generated<Timestamp>;
-  user_id: string;
-}
-
 export interface TossWebhookDeliveries {
   duration_ms: number;
   event_type: string;
@@ -485,7 +478,6 @@ export interface DB {
   site_data_files: SiteDataFiles;
   site_data_rate_limits: SiteDataRateLimits;
   subscriptions: Subscriptions;
-  supporter_feature_uses: SupporterFeatureUses;
   toss_webhook_deliveries: TossWebhookDeliveries;
   user_keys: UserKeys;
   users: Users;

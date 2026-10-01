@@ -12,7 +12,6 @@ import * as Sentry from "@sentry/nextjs";
 import { sql } from "kysely";
 import { db, recordSiteEdit } from "@/lib/database";
 import { userHasFeature } from "@/lib/entitlements";
-import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { extractHtmlTitle } from "@/lib/html";
 import {
   ALLOWED_FILE_EXTENSIONS,
@@ -375,7 +374,6 @@ export async function createGitHubDeploymentPlan(params: {
   if (!(await userHasFeature(target.user_id, "github_deploys"))) {
     throw new Error("GitHub deploys are available to supporters only");
   }
-  noteSupporterFeatureUse(target.user_id, "github_deploys");
 
   assertGitHubClaimsAllowed(params.claims, target);
 

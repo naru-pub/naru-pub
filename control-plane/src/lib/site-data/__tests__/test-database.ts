@@ -60,10 +60,6 @@ import {
   up as slideTokensUp,
   down as slideTokensDown,
 } from "@/migrations/1790110700000_slide_site_data_access_tokens";
-import {
-  up as featureUseUp,
-  down as featureUseDown,
-} from "@/migrations/1788473207664_add_supporter_feature_uses";
 
 import {
   up as orderingUp,
@@ -99,7 +95,6 @@ export async function setupTestDatabase() {
   await fileVersionUp(db);
   await dropFileMetadataUp(db);
   await dropFileVersionUp(db);
-  await featureUseUp(db);
   await dropSiteClientsUp(db);
   await slideTokensUp(db);
   await orderingUp(db);
@@ -108,7 +103,6 @@ export async function teardownTestDatabase() {
   await orderingDown(db);
   await slideTokensDown(db);
   await dropSiteClientsDown(db);
-  await featureUseDown(db);
   await dropFileVersionDown(db);
   await dropFileMetadataDown(db);
   await fileVersionDown(db);

@@ -27,7 +27,6 @@ import {
   refusePublicWriteOverLimit,
 } from "./owner-auth";
 import { userHasFeature } from "@/lib/entitlements";
-import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 
 export type DataCommand = {
   site: string;
@@ -170,15 +169,6 @@ export async function executeData(command: DataCommand) {
     // second connection while holding the first is how the pool deadlocks.
     if (!(await userHasFeature(owner.id, "database", tx)))
       throw new DataError(403, "Database access is not enabled for this site.");
-    // Only once the request is authorized. A stranger's refused write is not
-    // the owner getting value out of a 유료 기능, and recording it here
-    // would let anyone drive ledger queries with requests that end in 403.
-    let recorded = false;
-    const noteUse = () => {
-      if (recorded || reading) return;
-      recorded = true;
-      noteSupporterFeatureUse(owner.id, "database");
-    };
     const allowedIds = command.bearer
       ? await tokenScope(tx, owner.id, command.bearer)
       : undefined;
@@ -199,7 +189,6 @@ export async function executeData(command: DataCommand) {
             .execute(),
         };
       if (method !== "POST") throw new DataError(405, "Method not allowed.");
-      noteUse();
       const collectionName = unreservedName(body.name);
       if (
         await collections()
@@ -240,7 +229,6 @@ export async function executeData(command: DataCommand) {
       if (allowedIds !== undefined)
         throw new DataError(403, "Website tokens cannot manage collections.");
       if (!admin) throw new DataError(403, "Admin access required.");
-      noteUse();
       if (method === "DELETE") {
         await tx
           .deleteFrom("site_data_collections")
@@ -471,7 +459,6 @@ export async function executeData(command: DataCommand) {
           ? `Visitors cannot add to collection ${collection.name}. Change its write access in the control panel, or sign in.`
           : `Only a signed-in owner can change documents in collection ${collection.name}.`,
       );
-    noteUse();
     // Every write below this point is reachable without an owner credential
     // when the collection allows it, so bound them all — not just creates.
     if (!admin) await limitPublicWrite(tx, owner.id, command.clientIp);
@@ -594,8 +581,6 @@ export async function executeBatch(command: DataCommand) {
       : undefined;
     if (allowedIds === undefined && command.adminUserId !== owner.id)
       throw new DataError(403, "A batch needs an owner sign-in.");
-    // Authorized, so this is the owner's own data being written.
-    noteSupporterFeatureUse(owner.id, "database");
     const collectionRows = await tx
       .selectFrom("site_data_collections")
       .selectAll()

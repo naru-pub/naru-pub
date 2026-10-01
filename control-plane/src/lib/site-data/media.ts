@@ -11,7 +11,6 @@ import { sql } from "kysely";
 import { db, requestDeadline } from "@/lib/database";
 import { s3Client } from "@/lib/s3";
 import { userHasFeature } from "@/lib/entitlements";
-import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { tokenScope } from "./owner-auth";
 import { DataError, name } from "./validation";
 import { decodeCursor, encodeCursor, sorting } from "./pagination";
@@ -154,11 +153,6 @@ export async function executeMedia(command: MediaCommand) {
     (command.method === "PUT" && command.path.length === 1);
   if (allowedIds !== undefined && !uploading)
     throw new DataError(403, "Website tokens can only upload files.");
-  // Recorded only now that the caller is known to be the owner. Uploading or
-  // removing a file is the owner using the supporter storage; serving one back
-  // is a visitor reading their site, and a refused request is neither.
-  if (command.method !== "GET") noteSupporterFeatureUse(owner.id, "database");
-
   const files = () =>
     db.selectFrom("site_data_files").where("user_id", "=", owner.id);
   const readUsage = async () => {

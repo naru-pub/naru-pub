@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { userHasFeature } from "@/lib/entitlements";
-import { noteSupporterFeatureUse } from "@/lib/feature-usage";
 import { assertJsonContentType } from "@/lib/utils";
 import { upsertGitHubDeployTarget } from "@/lib/deploy/siteDeploy";
 import { parseUuid } from "@/lib/uuid";
@@ -72,7 +71,6 @@ export async function POST(request: NextRequest) {
       githubRef: String(body.githubRef ?? ""),
       targetPrefix: body.targetPrefix,
     });
-    noteSupporterFeatureUse(user.id, "github_deploys");
 
     return NextResponse.json({ success: true });
   } catch (error) {

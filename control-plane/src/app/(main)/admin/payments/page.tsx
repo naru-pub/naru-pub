@@ -3,8 +3,6 @@ import Link from "next/link";
 import { sql } from "kysely";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { db } from "@/lib/database";
-import { FEATURE_LABELS } from "@/lib/entitlements";
-import { getSupporterFeatureUsesForUsers } from "@/lib/feature-usage";
 import { RefundPaymentButton } from "@/components/RefundPaymentButton";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -85,12 +83,6 @@ export default async function PaymentOperatorPage({
     .limit(200)
     .execute();
 
-  // 환불 판단에는 "결제 뒤에 유료 기능을 썼는가"가 필요하다. 결제마다
-  // 따로 조회하지 않고 이 목록에 등장하는 계정의 사용 기록을 한 번에 읽는다.
-  const featureUses = await getSupporterFeatureUsesForUsers(
-    payments.map((payment) => payment.user_id),
-  );
-
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2 text-sm">
@@ -137,7 +129,6 @@ export default async function PaymentOperatorPage({
               <TableHead>구독</TableHead>
               <TableHead className="text-right">결제</TableHead>
               <TableHead className="text-right">환불</TableHead>
-              <TableHead>기능 사용</TableHead>
               <TableHead>마지막 확인</TableHead>
               <TableHead>진단</TableHead>
               <TableHead>작업</TableHead>
@@ -163,48 +154,6 @@ export default async function PaymentOperatorPage({
                   {payment.refunded_amount
                     ? formatKrw(payment.refunded_amount)
                     : "-"}
-                </TableCell>
-                <TableCell className="max-w-56">
-                  {(() => {
-                    const uses = featureUses.get(payment.user_id) ?? [];
-                    if (uses.length === 0) {
-                      return (
-                        <span className="text-muted-foreground">기록 없음</span>
-                      );
-                    }
-                    const paidAt = payment.paid_at
-                      ? new Date(payment.paid_at).getTime()
-                      : null;
-                    const since =
-                      paidAt === null
-                        ? []
-                        : uses.filter(
-                            (use) => use.lastUsedAt.getTime() >= paidAt,
-                          );
-                    if (since.length === 0) {
-                      return (
-                        <span className="text-sm text-muted-foreground">
-                          결제 후 미사용 (마지막{" "}
-                          {formatDate(uses[0].lastUsedAt)})
-                        </span>
-                      );
-                    }
-                    // 환불 판정에는 쓰지 않는다. 7일 안이면 사용 여부와
-                    // 관계없이 환불되므로, 이 칸은 운영자가 계정을 이해할
-                    // 때 보는 정보다.
-                    return (
-                      <span className="text-sm break-words">
-                        {since
-                          .map(
-                            (use) => FEATURE_LABELS[use.feature] ?? use.feature,
-                          )
-                          .join(", ")}
-                        <span className="block text-xs text-muted-foreground">
-                          마지막 {formatDate(since[0].lastUsedAt)}
-                        </span>
-                      </span>
-                    );
-                  })()}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {formatDate(payment.last_reconciled_at)}
@@ -253,7 +202,7 @@ export default async function PaymentOperatorPage({
             {payments.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={10}
+                  colSpan={9}
                   className="py-10 text-center text-muted-foreground"
                 >
                   결제 내역이 없습니다.
