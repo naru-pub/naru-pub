@@ -102,7 +102,14 @@ export type ReconciliationResult =
   | { state: "done" }
   | { state: "pending" }
   | { state: "failed"; status: string }
-  | { state: "refunded"; amount: number; full: boolean }
+  | {
+      state: "refunded";
+      amount: number;
+      full: boolean;
+      // This reconciliation found the refund and stopped the account's
+      // recurring billing because of it.
+      subscriptionCanceled: boolean;
+    }
   | { state: "expired" };
 
 async function reconcilePaymentCore(
@@ -211,112 +218,140 @@ async function reconcilePaymentCore(
         payment.amount,
       );
 
-      const retiredKey = await db.transaction().execute(async (trx) => {
-        await trx
-          .updateTable("payments")
-          .set({
-            ...paymentProviderMetadata(
-              tossPayment,
-              paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
-            ),
-            toss_payment_key: tossPayment.paymentKey,
-            status,
-            refunded_amount: refundedAmount,
-            refunded_at: refundedAt,
-            raw: JSON.stringify(tossPayment),
-          })
-          .where("id", "=", payment.id)
-          .execute();
-
-        // Refunding takes back the time the refunded money paid for. Without
-        // this a chargeback bought a free supporter year: the money went back
-        // and the entitlement stayed. Recomputed from the ledger rather than
-        // subtracted, so a refund cannot disturb periods other payments paid
-        // for.
-        const ledger = await trx
-          .selectFrom("payments")
-          .select([
-            "period_start",
-            "period_end",
-            "paid_at",
-            "amount",
-            "refunded_amount",
-          ])
-          .where("user_id", "=", payment.user_id)
-          .where("period_end", "is not", null)
-          .execute();
-        const recomputed = supporterUntilFromLedger(
-          ledger.map((row) => ({
-            periodStart: row.period_start,
-            periodEnd: row.period_end,
-            paidAt: row.paid_at,
-            amount: row.amount,
-            refundedAmount: row.refunded_amount,
-          })),
-        );
-        const currentUser = await trx
-          .selectFrom("users")
-          .select("supporter_until")
-          .where("id", "=", payment.user_id)
-          .executeTakeFirst();
-        const currentUntil = currentUser?.supporter_until
-          ? new Date(currentUser.supporter_until)
-          : null;
-        // Only ever shortens. Lifetime comps live on supporter_comp and are
-        // untouched by this.
-        if (
-          currentUntil &&
-          (recomputed === null || recomputed < currentUntil)
-        ) {
+      const { retiredKey, subscriptionCanceled } = await db
+        .transaction()
+        .execute(async (trx) => {
           await trx
-            .updateTable("users")
-            .set({ supporter_until: recomputed })
-            .where("id", "=", payment.user_id)
-            .execute();
-        }
-
-        if (refundedAmount > payment.refunded_amount) {
-          await recordPaymentEvent(trx, {
-            kind: "refunded",
-            userId: payment.user_id,
-            paymentId: payment.id,
-            subscriptionId: payment.subscription_id,
-            summary: `환불 ${won(refundedAmount)} / ${won(payment.amount)} (주문 ${payment.order_id}) · 이용 기한은 ${recomputed ? recomputed.toISOString().slice(0, 10) : "없음"}으로 다시 계산${payment.subscription_id ? " · 정기 결제 취소" : ""}`,
-          });
-        } else if (status !== payment.status && refundedAmount === 0) {
-          await recordPaymentEvent(trx, {
-            kind: status === "expired" ? "order_expired" : "charge_failed",
-            userId: payment.user_id,
-            paymentId: payment.id,
-            subscriptionId: payment.subscription_id,
-            summary: `주문 ${payment.order_id} (${won(payment.amount)}): Toss 상태 ${tossPayment.status}`,
-          });
-        }
-
-        if (refundedAmount > 0 && payment.subscription_id) {
-          await trx
-            .updateTable("subscriptions")
+            .updateTable("payments")
             .set({
-              status: "canceled",
-              next_billing_at: null,
-              charging_started_at: null,
-              canceled_at: refundedAt ?? new Date(),
-              updated_at: new Date(),
+              ...paymentProviderMetadata(
+                tossPayment,
+                paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
+              ),
+              toss_payment_key: tossPayment.paymentKey,
+              status,
+              refunded_amount: refundedAmount,
+              refunded_at: refundedAt,
+              raw: JSON.stringify(tossPayment),
             })
-            .where("id", "=", payment.subscription_id)
+            .where("id", "=", payment.id)
             .execute();
-          return retireBillingKey(trx, {
-            subscriptionId: payment.subscription_id,
-          });
-        }
-        if (initialAttempt && refundedAmount === 0) {
-          return retireUnusedSignupKey(trx, payment.subscription_id!);
-        }
-        return null;
-      });
+
+          // Refunding takes back the time the refunded money paid for. Without
+          // this a chargeback bought a free supporter year: the money went back
+          // and the entitlement stayed. Recomputed from the ledger rather than
+          // subtracted, so a refund cannot disturb periods other payments paid
+          // for.
+          const ledger = await trx
+            .selectFrom("payments")
+            .select([
+              "period_start",
+              "period_end",
+              "paid_at",
+              "amount",
+              "refunded_amount",
+            ])
+            .where("user_id", "=", payment.user_id)
+            .where("period_end", "is not", null)
+            .execute();
+          const recomputed = supporterUntilFromLedger(
+            ledger.map((row) => ({
+              periodStart: row.period_start,
+              periodEnd: row.period_end,
+              paidAt: row.paid_at,
+              amount: row.amount,
+              refundedAmount: row.refunded_amount,
+            })),
+          );
+          const currentUser = await trx
+            .selectFrom("users")
+            .select("supporter_until")
+            .where("id", "=", payment.user_id)
+            .executeTakeFirst();
+          const currentUntil = currentUser?.supporter_until
+            ? new Date(currentUser.supporter_until)
+            : null;
+          // Only ever shortens. Lifetime comps live on supporter_comp and are
+          // untouched by this.
+          if (
+            currentUntil &&
+            (recomputed === null || recomputed < currentUntil)
+          ) {
+            await trx
+              .updateTable("users")
+              .set({ supporter_until: recomputed })
+              .where("id", "=", payment.user_id)
+              .execute();
+          }
+
+          // A refund ends the billing relationship, not just this one charge:
+          // whatever recurring plan the account has must not charge the card
+          // again — the refunded renewal's own subscription, or, for a refunded
+          // one-time payment, a plan started since. Done here, the first time
+          // the refund is seen, so a refund made in the Toss dashboard or one
+          // whose cancel call got no answer stops it as well as one made
+          // through refundPayment. Only then: a payment reconciled again later
+          // must not cancel a plan the supporter started after the refund.
+          const newlyRefunded = refundedAmount > payment.refunded_amount;
+          let stopped: { id: string } | undefined;
+          if (newlyRefunded) {
+            stopped = await trx
+              .updateTable("subscriptions")
+              .set({
+                status: "canceled",
+                next_billing_at: null,
+                charging_started_at: null,
+                canceled_at: refundedAt ?? new Date(),
+                updated_at: new Date(),
+              })
+              .where("user_id", "=", payment.user_id)
+              .where("status", "not in", ["canceled", "switched_to_one_time"])
+              .returning("id")
+              .executeTakeFirst();
+            await recordPaymentEvent(trx, {
+              kind: "refunded",
+              userId: payment.user_id,
+              paymentId: payment.id,
+              subscriptionId: payment.subscription_id ?? stopped?.id,
+              summary: `환불 ${won(refundedAmount)} / ${won(payment.amount)} (주문 ${payment.order_id}) · 이용 기한은 ${recomputed ? recomputed.toISOString().slice(0, 10) : "없음"}으로 다시 계산${stopped ? " · 정기 결제 취소" : ""}`,
+            });
+          } else if (status !== payment.status && refundedAmount === 0) {
+            await recordPaymentEvent(trx, {
+              kind: status === "expired" ? "order_expired" : "charge_failed",
+              userId: payment.user_id,
+              paymentId: payment.id,
+              subscriptionId: payment.subscription_id,
+              summary: `주문 ${payment.order_id} (${won(payment.amount)}): Toss 상태 ${tossPayment.status}`,
+            });
+          }
+
+          if (stopped) {
+            return {
+              subscriptionCanceled: true,
+              retiredKey: await retireBillingKey(trx, {
+                subscriptionId: stopped.id,
+              }),
+            };
+          }
+          if (initialAttempt && refundedAmount === 0) {
+            return {
+              subscriptionCanceled: false,
+              retiredKey: await retireUnusedSignupKey(
+                trx,
+                payment.subscription_id!,
+              ),
+            };
+          }
+          return { subscriptionCanceled: false, retiredKey: null };
+        });
       await deleteRetiredBillingKey(retiredKey);
       if (status === "canceled" || status === "partial_canceled") {
-        return { state: "refunded", amount: refundedAmount, full };
+        return {
+          state: "refunded",
+          amount: refundedAmount,
+          full,
+          subscriptionCanceled,
+        };
       }
       return { state: "failed", status };
     }

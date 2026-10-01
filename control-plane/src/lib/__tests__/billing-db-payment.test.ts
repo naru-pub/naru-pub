@@ -912,6 +912,62 @@ integration("payments against the database", () => {
       expect((await subscription(subId)).status).toBe("canceled");
     });
 
+    // A refund made in the Toss dashboard, or one whose cancel call got no
+    // answer, reaches 나루 only through the webhook or the refund sweep.
+    test("a one-time refund seen only by reconciliation stops recurring billing", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "later-key",
+      });
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+
+      expect(await reconcilePayment(paymentId)).toMatchObject({
+        state: "refunded",
+        subscriptionCanceled: true,
+      });
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("canceled");
+      expect(sub.toss_billing_key).toBeNull();
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("later-key");
+    });
+
+    test("a refund reconciled again does not cancel a plan started since", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      const subId = await makeSubscription(userId, { status: "active" });
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "PARTIAL_CANCELED",
+          cancels: [{ cancelAmount: 6000 }],
+        }),
+      );
+      await reconcilePayment(paymentId);
+      expect((await subscription(subId)).status).toBe("canceled");
+
+      // The supporter subscribes again; the old refund is checked again.
+      await db
+        .updateTable("subscriptions")
+        .set({ status: "active", toss_billing_key: "new-key" })
+        .where("id", "=", subId)
+        .execute();
+      expect(await reconcilePayment(paymentId)).toMatchObject({
+        state: "refunded",
+        subscriptionCanceled: false,
+      });
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("active");
+      expect(sub.toss_billing_key).toBe("new-key");
+    });
+
     test("a cancel that got no answer either way says so", async () => {
       const userId = await makeUser();
       const paymentId = await paidPayment(userId);

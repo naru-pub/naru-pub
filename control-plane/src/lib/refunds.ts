@@ -1,6 +1,9 @@
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
+import {
+  reconcilePayment,
+  type ReconciliationResult,
+} from "@/lib/payment-reconciliation";
 import { recordPaymentEvent } from "@/lib/payment-events";
 import { cancelPayment, paymentFlowForRecord, TossApiError } from "@/lib/toss";
 
@@ -85,11 +88,9 @@ export class RefundError extends Error {
   }
 }
 
-// Refunding ends the billing relationship, not just this one charge: whatever
-// bought the refunded period must not charge the card again. Reconciliation
-// already cancels the subscription that a refunded renewal belongs to, but a
-// refunded one-time donation has no subscription of its own, so the account's
-// recurring plan is stopped here as well.
+// Refunding ends the billing relationship, not just this one charge.
+// Reconciliation stops the account's recurring plan when it first sees the
+// refund; this is for a cancel Toss accepted but the lookup does not show yet.
 async function stopRecurringBilling(userId: string): Promise<boolean> {
   const { stopped, billingKey } = await db
     .transaction()
@@ -182,7 +183,7 @@ export async function refundPayment(opts: {
     }
   }
 
-  let reconciled = false;
+  let refunded: ReconciliationResult | null = null;
   try {
     await cancelPayment({
       flow: paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
@@ -208,11 +209,13 @@ export async function refundPayment(opts: {
         503,
       );
     }
-    reconciled = true;
+    refunded = result;
   }
 
-  if (!reconciled) await reconcilePayment(payment.id);
-  const subscriptionCanceled = await stopRecurringBilling(payment.user_id);
+  refunded ??= await reconcilePayment(payment.id);
+  const subscriptionCanceled =
+    (refunded.state === "refunded" && refunded.subscriptionCanceled) ||
+    (await stopRecurringBilling(payment.user_id));
 
   return {
     paymentId: payment.id,
