@@ -1,3 +1,4 @@
+/** @jest-environment node */
 import { describe, expect, test } from "@jest/globals";
 import { createHmac } from "crypto";
 import {
@@ -261,25 +262,31 @@ describe("Toss webhook request limits", () => {
     ).toBeNull();
   });
 
+  // Built from real Headers and a stream rather than `new Request`: the
+  // default Jest setup (jest.setup.js) swaps Request for a bare mock.
+  function webhookRequest(body: string, headers: Record<string, string> = {}) {
+    return {
+      headers: new Headers(headers),
+      body: new Response(body).body,
+    } as unknown as Request;
+  }
+
   test("a body past the limit is refused unread", async () => {
-    const big = new Request("http://localhost/api/webhooks/toss", {
-      method: "POST",
-      body: "x".repeat(MAX_WEBHOOK_BODY_BYTES + 1),
-    });
-    expect(await readCappedBody(big)).toBeNull();
-
-    const declared = new Request("http://localhost/api/webhooks/toss", {
-      method: "POST",
-      headers: { "content-length": String(10 * 1024 * 1024) },
-      body: "{}",
-    });
-    expect(await readCappedBody(declared)).toBeNull();
-
-    const small = new Request("http://localhost/api/webhooks/toss", {
-      method: "POST",
-      body: '{"eventType":"BILLING_DELETED"}',
-    });
-    expect(await readCappedBody(small)).toBe('{"eventType":"BILLING_DELETED"}');
+    expect(
+      await readCappedBody(
+        webhookRequest("x".repeat(MAX_WEBHOOK_BODY_BYTES + 1)),
+      ),
+    ).toBeNull();
+    expect(
+      await readCappedBody(
+        webhookRequest("{}", {
+          "content-length": String(10 * 1024 * 1024),
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      await readCappedBody(webhookRequest('{"eventType":"BILLING_DELETED"}')),
+    ).toBe('{"eventType":"BILLING_DELETED"}');
   });
 
   test("stored headers are bounded", () => {
