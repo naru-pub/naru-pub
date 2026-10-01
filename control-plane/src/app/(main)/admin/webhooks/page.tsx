@@ -149,6 +149,16 @@ export default async function WebhookDeliveriesPage({
                       {prettyPayload(delivery.payload)}
                     </pre>
                   </details>
+                  {delivery.headers && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-xs text-muted-foreground">
+                        헤더 · {delivery.signature_check ?? "서명 없음"}
+                      </summary>
+                      <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all bg-muted p-2 text-xs">
+                        {prettyPayload(delivery.headers)}
+                      </pre>
+                    </details>
+                  )}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   <Badge

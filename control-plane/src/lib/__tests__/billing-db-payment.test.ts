@@ -7,7 +7,7 @@ import {
   jest,
   test,
 } from "@jest/globals";
-import { randomUUID } from "crypto";
+import { createHmac, randomUUID } from "crypto";
 import type { TossPaymentResult } from "@/lib/toss";
 
 jest.mock("@/lib/toss", () => {
@@ -988,6 +988,42 @@ integration("payments against the database", () => {
 
       await deleteRetiredBillingKeys();
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("webhook-key");
+    });
+
+    test("a webhook is stored with its headers and signature check", async () => {
+      const rawBody = JSON.stringify({
+        eventType: "PAYMENT_STATUS_CHANGED",
+        data: { orderId: "unknown-order" },
+      });
+      const previous = process.env.TOSS_BILLING_SECRET_KEY;
+      process.env.TOSS_BILLING_SECRET_KEY = "test_sk_webhook";
+      try {
+        await tossWebhook(
+          new NextRequest("http://localhost/api/webhooks/toss", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "toss-signature": `v1:${createHmac("sha256", "test_sk_webhook").update(rawBody).digest("base64")}`,
+              cookie: "session=secret",
+            },
+            body: rawBody,
+          }),
+        );
+      } finally {
+        process.env.TOSS_BILLING_SECRET_KEY = previous;
+      }
+
+      const row = await db
+        .selectFrom("toss_webhook_deliveries")
+        .select(["headers", "signature_check", "outcome"])
+        .executeTakeFirstOrThrow();
+      expect(row.outcome).toBe("ignored: unknown order");
+      expect(row.signature_check).toBe(
+        "toss-signature verified (billing key, payload)",
+      );
+      const headers = JSON.parse(row.headers!);
+      expect(headers["toss-signature"]).toMatch(/^v1:/);
+      expect(headers).not.toHaveProperty("cookie");
     });
 
     test("a refund reconciled again does not cancel a plan started since", async () => {

@@ -127,6 +127,18 @@ function secretKey(flow: TossPaymentFlow): string | undefined {
     : process.env.TOSS_PAYMENT_SECRET_KEY;
 }
 
+// The secret keys configured, by flow. Only for checking webhook signatures
+// in this process; never logged or sent anywhere.
+export function tossSecretKeys(): Array<{
+  flow: TossPaymentFlow;
+  key: string;
+}> {
+  return (["billing", "one-time"] as const).flatMap((flow) => {
+    const key = secretKey(flow);
+    return key ? [{ flow, key }] : [];
+  });
+}
+
 // True only when Toss keys are configured and every one is a live key
 // (live_…): the environment where real money moves, i.e. production.
 export function isTossLiveMode(): boolean {

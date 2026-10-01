@@ -6,6 +6,7 @@ import {
   paymentFlowForRecord,
   paymentProviderMetadata,
   TossApiError,
+  tossSecretKeys,
 } from "@/lib/toss";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { retireBillingKey } from "@/lib/billing-keys";
@@ -19,6 +20,8 @@ import {
   formatWebhookLog,
   isTrustedWebhookSource,
   parseTossWebhook,
+  checkWebhookSignature,
+  storedWebhookHeaders,
   webhookLedgerAction,
   WebhookLogEntry,
 } from "@/lib/toss-webhooks";
@@ -39,12 +42,14 @@ function eventTypeOf(body: unknown): string {
 // and stored (toss_webhook_deliveries) for /admin.
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
+  const headers = storedWebhookHeaders(request.headers);
   const delivery: Delivery = {
     eventType: "(unparsed)",
     transmissionId: request.headers.get("tosspayments-webhook-transmission-id"),
     retriedCount: request.headers.get(
       "tosspayments-webhook-transmission-retried-count",
     ),
+    signature: null,
     subject: null,
     tossStatus: null,
     outcome: "",
@@ -60,7 +65,7 @@ export async function POST(request: NextRequest) {
     const line = formatWebhookLog(entry);
     if (httpStatus >= 500) console.error(line);
     else console.log(line);
-    await recordWebhookDelivery({ ...entry, payload });
+    await recordWebhookDelivery({ ...entry, payload, headers });
     return NextResponse.json(
       { received: httpStatus < 500 },
       { status: httpStatus },
@@ -68,6 +73,11 @@ export async function POST(request: NextRequest) {
   };
 
   const rawBody = await request.text();
+  delivery.signature = checkWebhookSignature({
+    rawBody,
+    headers,
+    keys: tossSecretKeys(),
+  });
   let body: unknown;
   try {
     body = JSON.parse(rawBody || "null");

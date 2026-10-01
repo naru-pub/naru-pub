@@ -191,6 +191,8 @@ export async function recordWebhookDelivery(delivery: {
   httpStatus: number;
   durationMs: number;
   payload: unknown;
+  headers?: Record<string, string> | null;
+  signature?: string | null;
 }): Promise<void> {
   try {
     const retried = Number(delivery.retriedCount);
@@ -212,6 +214,10 @@ export async function recordWebhookDelivery(delivery: {
           delivery.payload === undefined
             ? null
             : JSON.stringify(maskBody(delivery.payload)).slice(0, 20000),
+        headers: delivery.headers
+          ? JSON.stringify(delivery.headers).slice(0, 20000)
+          : null,
+        signature_check: delivery.signature?.slice(0, 500) ?? null,
       })
       .execute();
   } catch (error) {

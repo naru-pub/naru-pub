@@ -1,8 +1,12 @@
 import { describe, expect, test } from "@jest/globals";
+import { createHmac } from "crypto";
 import {
+  checkWebhookSignature,
   formatWebhookLog,
   isTrustedWebhookSource,
   parseTossWebhook,
+  signatureHeaderNames,
+  storedWebhookHeaders,
   webhookLedgerAction,
 } from "@/lib/toss-webhooks";
 
@@ -96,6 +100,7 @@ describe("Toss webhook log line", () => {
         eventType: "PAYMENT_STATUS_CHANGED",
         transmissionId: "whtrans_1",
         retriedCount: "2",
+        signature: null,
         subject: "2026-10-01-1234-5678",
         tossStatus: "CANCELED",
         outcome: 'reconciled payment 7: {"state":"refunded"}',
@@ -113,6 +118,7 @@ describe("Toss webhook log line", () => {
         eventType: "(unparsed)",
         transmissionId: null,
         retriedCount: null,
+        signature: null,
         subject: null,
         tossStatus: null,
         outcome: "ignored: malformed JSON",
@@ -120,5 +126,121 @@ describe("Toss webhook log line", () => {
         durationMs: 0,
       }),
     ).toBe("[toss-webhook] (unparsed) -> ignored: malformed JSON (200, 0ms)");
+  });
+
+  test("names the signature headers a delivery came with", () => {
+    expect(
+      formatWebhookLog({
+        eventType: "BILLING_DELETED",
+        transmissionId: "whtrans_2",
+        retriedCount: "0",
+        signature: "toss-signature",
+        subject: "abcd••••wxyz",
+        tossStatus: null,
+        outcome: "canceled subscription 1",
+        httpStatus: 200,
+        durationMs: 5,
+      }),
+    ).toBe(
+      "[toss-webhook] BILLING_DELETED id=whtrans_2 retry=0 signature=toss-signature subject=abcd••••wxyz -> canceled subscription 1 (200, 5ms)",
+    );
+  });
+});
+
+describe("Toss webhook headers", () => {
+  test("keeps what Toss sent but nothing that could carry a credential", () => {
+    const stored = storedWebhookHeaders(
+      new Headers({
+        "Content-Type": "application/json",
+        "Toss-Signature": "v1:abc",
+        "tosspayments-webhook-transmission-id": "whtrans_1",
+        Authorization: "Basic secret",
+        Cookie: "session=1",
+      }),
+    );
+
+    expect(stored).toEqual({
+      "content-type": "application/json",
+      "toss-signature": "v1:abc",
+      "tosspayments-webhook-transmission-id": "whtrans_1",
+    });
+    expect(signatureHeaderNames(stored)).toEqual(["toss-signature"]);
+  });
+
+  test("finds no signature where there is none", () => {
+    expect(
+      signatureHeaderNames({ "content-type": "application/json" }),
+    ).toEqual([]);
+  });
+});
+
+describe("Toss webhook signature check", () => {
+  const keys = [
+    { flow: "billing" as const, key: "live_sk_billing" },
+    { flow: "one-time" as const, key: "live_sk_payment" },
+  ];
+  const rawBody = '{"eventType":"BILLING_DELETED","data":{"billingKey":"k"}}';
+  const time = "2026-10-01T14:00:00+09:00";
+  const sign = (key: string, message: string) =>
+    createHmac("sha256", key).update(message).digest("base64");
+
+  test("verifies the documented payload:time form", () => {
+    expect(
+      checkWebhookSignature({
+        rawBody,
+        headers: {
+          "tosspayments-webhook-transmission-time": time,
+          "tosspayments-webhook-signature": `v1:${sign("live_sk_billing", `${rawBody}:${time}`)}`,
+        },
+        keys,
+      }),
+    ).toBe(
+      "tosspayments-webhook-signature verified (billing key, payload:time)",
+    );
+  });
+
+  test("verifies the body alone, and any of several values", () => {
+    expect(
+      checkWebhookSignature({
+        rawBody,
+        headers: {
+          "toss-signature": `v1:${sign("other", rawBody)}, v1:${sign("live_sk_payment", rawBody)}`,
+        },
+        keys,
+      }),
+    ).toBe("toss-signature verified (one-time key, payload)");
+  });
+
+  test("reports a signature none of the keys made", () => {
+    expect(
+      checkWebhookSignature({
+        rawBody,
+        headers: {
+          "tosspayments-webhook-transmission-time": time,
+          "toss-signature": `v1:${sign("someone else", rawBody)}`,
+        },
+        keys,
+      }),
+    ).toBe("toss-signature unverified");
+  });
+
+  test("a body changed after signing does not verify", () => {
+    expect(
+      checkWebhookSignature({
+        rawBody: rawBody.replace('"k"', '"x"'),
+        headers: { "toss-signature": `v1:${sign("live_sk_billing", rawBody)}` },
+        keys,
+      }),
+    ).toBe("toss-signature unverified");
+  });
+
+  test("says nothing of a delivery without a signature", () => {
+    expect(
+      checkWebhookSignature({
+        rawBody,
+        headers: { "content-type": "application/json" },
+        keys,
+      }),
+    ).toBeNull();
   });
 });

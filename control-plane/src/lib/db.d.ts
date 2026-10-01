@@ -413,12 +413,14 @@ export interface SupporterFeatureUses {
 export interface TossWebhookDeliveries {
   duration_ms: number;
   event_type: string;
+  headers: string | null;
   http_status: number;
   id: Generated<string>;
   outcome: string;
   payload: string | null;
   received_at: Generated<Timestamp>;
   retried_count: number | null;
+  signature_check: string | null;
   subject: string | null;
   toss_status: string | null;
   transmission_id: string | null;
