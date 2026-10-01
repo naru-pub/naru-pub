@@ -17,6 +17,7 @@
     "test:node": "node --experimental-vm-modules --test \"tests/*.test.mjs\" \"tests/*.test.ts\"",
     "test:sdk:integration": "bash scripts/test-data-sdk.sh",
     "test:data": "jest --config jest.data.config.cjs --runInBand",
+    "test:data:db": "bash scripts/test-data-sdk.sh src/lib/site-data/__tests__/",
     "test:board": "bash scripts/test-board.sh",
     "test:payments": "jest --config jest.payment.config.cjs --runInBand",
     "test:payments:db": "bash scripts/test-payments-db.sh",

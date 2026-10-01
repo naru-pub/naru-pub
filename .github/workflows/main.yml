@@ -82,6 +82,48 @@ jobs:
         env:
           NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
 
+  # Everything else in the control plane: the unit suites, then the board and
+  # site-data database tests, each against a throwaway PostgreSQL cluster its
+  # script starts. Like test-payments, part of the run deploy.sh checks.
+  test-control-plane:
+    defaults:
+      run:
+        working-directory: control-plane
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Same pnpm as the Dockerfile.
+      - run: npm install --global pnpm@11.5.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm test:data
+      - run: pnpm test:node
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-16
+      - run: pnpm test:board
+        env:
+          NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
+      - run: pnpm test:data:db
+        env:
+          NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
+
+  test-proxy:
+    defaults:
+      run:
+        working-directory: proxy
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      # Same toolchain as proxy/Dockerfile.
+      - uses: dtolnay/rust-toolchain@1.89
+      - run: cargo test --locked
+
   image-proxy:
     defaults:
       run:
