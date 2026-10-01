@@ -2,7 +2,8 @@ import { describe, expect, test } from "@jest/globals";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join, relative } from "path";
 
-// Billing keys never expire at Toss and are stored in plain text, so a key
+// Billing keys stay chargeable as long as their card and are stored in plain
+// text, so a key
 // that leaves subscriptions.toss_billing_key must be queued for deletion at
 // Toss first (lib/billing-keys.ts, retireBillingKey). Deleting a user cascades
 // to the subscription and takes the key with it, so that goes through
@@ -39,8 +40,9 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ).toEqual([]);
   });
 
-  // Setting a key is allowed only where a subscription has none: the
-  // subscribe confirm stores the key Toss just issued. Replacing one must retire the old key.
+  // Setting a key is allowed only where a subscription has none — the
+  // subscribe confirm stores the key Toss just issued — or right after
+  // retiring the old one, as a card change does.
   test("only confirm stores a new key", () => {
     expect(
       offenders(STORES_KEY, [

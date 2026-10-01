@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 
@@ -11,6 +12,11 @@ async function main() {
     .select("id")
     .where("status", "=", "pending")
     .where("created_at", "<=", staleBefore)
+    // Least recently looked at first. A row that stays pending — Toss keeps
+    // answering with an error, or its amount does not match — is then passed
+    // over for newer ones, rather than holding a place in every batch until
+    // enough of them crowd everything else out.
+    .orderBy(sql`last_reconciled_at asc nulls first`)
     .orderBy("created_at", "asc")
     .limit(BATCH_SIZE)
     .execute();

@@ -1,0 +1,91 @@
+"use client";
+
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+
+// Where requestBillingAuth sends the supporter back, for both a signup and a
+// card change. registrationId comes from the path the prepare step built; a
+// callback without one is for a registration prepared before they existed.
+function Callback({ registrationId }: { registrationId: string | null }) {
+  const router = useRouter();
+  const params = useSearchParams();
+  const ran = useRef(false);
+  const [message, setMessage] = useState("결제를 처리하고 있습니다…");
+
+  useEffect(() => {
+    if (ran.current) return;
+    ran.current = true;
+
+    const authKey = params.get("authKey");
+    const customerKey = params.get("customerKey");
+
+    // Toss redirects here without authKey when the card registration is
+    // cancelled or fails.
+    if (!authKey || !customerKey) {
+      router.replace("/support?support=canceled");
+      return;
+    }
+
+    (async () => {
+      try {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const res = await fetch("/api/account/subscription/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ authKey, customerKey, registrationId }),
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            router.replace(
+              data.cardChanged
+                ? "/support?support=card-changed"
+                : data.scheduled
+                  ? "/support?support=scheduled"
+                  : "/support?support=success",
+            );
+            return;
+          }
+          if (res.status !== 503) {
+            const query = new URLSearchParams({ support: "failed" });
+            if (data.message) query.set("message", data.message);
+            router.replace(`/support?${query}`);
+            return;
+          }
+          setMessage(data.message);
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+        setMessage(
+          "결제 확인이 지연되고 있습니다. 잠시 후 이 페이지를 새로고침해 주세요.",
+        );
+      } catch {
+        setMessage(
+          "결제 확인이 지연되고 있습니다. 잠시 후 이 페이지를 새로고침해 주세요.",
+        );
+      }
+    })();
+  }, [params, registrationId, router]);
+
+  return (
+    <div className="max-w-xl mx-auto p-8 text-center text-muted-foreground">
+      {message}
+    </div>
+  );
+}
+
+export default function SubscriptionCallback({
+  registrationId,
+}: {
+  registrationId: string | null;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <div className="max-w-xl mx-auto p-8 text-center text-muted-foreground">
+          결제를 처리하고 있습니다…
+        </div>
+      }
+    >
+      <Callback registrationId={registrationId} />
+    </Suspense>
+  );
+}

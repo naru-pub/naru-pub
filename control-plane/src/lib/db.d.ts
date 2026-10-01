@@ -384,6 +384,8 @@ export interface Subscriptions {
   amount: number;
   billing_interval: string;
   canceled_at: Timestamp | null;
+  card_registration_id: string | null;
+  card_registration_kind: "signup" | "card_change" | null;
   charging_started_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   current_period_end: Timestamp | null;

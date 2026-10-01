@@ -9,7 +9,8 @@ import { isBillingInterval } from "@/lib/toss";
 import { prepareSubscription } from "@/lib/subscription-signup";
 
 // Step 1 of the subscribe flow: records the chosen plan as an incomplete
-// subscription and returns the stable Toss customerKey for requestBillingAuth.
+// subscription and returns the stable Toss customerKey for requestBillingAuth,
+// with the registration id its callback path carries.
 export async function POST(request: NextRequest) {
   try {
     try {
@@ -54,6 +55,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       customerKey: result.customerKey,
+      registrationId: result.registrationId,
     });
   } catch (error) {
     console.error("Subscription prepare error:", error);

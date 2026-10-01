@@ -7,8 +7,8 @@ import { TossApiError } from "@/lib/toss";
 import { assertJsonContentType } from "@/lib/utils";
 import { parseUuid } from "@/lib/uuid";
 
-// 환불은 결제 내역에서 직접 신청합니다. 유료 이용자는 판매 정책의 조건(7일 이내,
-// 유료 기능 미사용)을 만족할 때 스스로 환불할 수 있고, 결제 운영자는
+// 환불은 결제 내역에서 직접 신청합니다. 유료 이용자는 판매 정책의 조건(결제일로부터
+// 7일 이내)을 만족할 때 스스로 환불할 수 있고, 결제 운영자는
 // 그 밖의 사유 — 장애 보상이나 최종 취소 — 까지 포함해 어떤 결제든 환불할 수
 // 있습니다.
 export async function POST(

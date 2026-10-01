@@ -200,7 +200,9 @@ export async function POST(request: NextRequest) {
       paymentId: pendingPayment.id,
     });
 
-    if (user.email && user.emailVerifiedAt) {
+    // A doubled callback, or the reconciler settling this order first, finds
+    // the period already granted, and its thank-you already sent.
+    if (period.granted && user.email && user.emailVerifiedAt) {
       try {
         await sendSupportThankYouEmail({
           email: user.email,

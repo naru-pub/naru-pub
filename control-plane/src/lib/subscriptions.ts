@@ -53,14 +53,15 @@ function assertGrantable(paymentId: string, status: string) {
 // Applies a one-time payment: records the ledger row and extends supporter_until,
 // stacking on top of any remaining time rather than resetting. If recurring
 // billing exists, the same transaction disables it so only prepaid access
-// remains.
+// remains. `granted` is false when the payment had already been applied, so
+// the caller's thank-you goes out once.
 export async function applyOneTimePayment(opts: {
   userId: string;
   amount: number;
   years: number;
   payment: TossPaymentResult;
   paymentId?: string;
-}): Promise<{ periodStart: Date; periodEnd: Date }> {
+}): Promise<{ periodStart: Date; periodEnd: Date; granted: boolean }> {
   if (!isOneTimeYears(opts.years)) {
     throw new Error("Invalid one-time support years");
   }
@@ -83,6 +84,7 @@ export async function applyOneTimePayment(opts: {
           return {
             periodStart: new Date(ledger.period_start),
             periodEnd: new Date(ledger.period_end),
+            granted: false,
             retiredKey: null,
           };
         }
@@ -170,7 +172,7 @@ export async function applyOneTimePayment(opts: {
         subscriptionId: switched?.id,
         summary: `한 번만 결제 ${won(opts.amount)} (${opts.years}년) · ${kstDate(periodEnd)}까지${switched ? " · 정기 결제는 한 번만 결제로 전환" : ""}`,
       });
-      return { periodStart, periodEnd, retiredKey };
+      return { periodStart, periodEnd, granted: true, retiredKey };
     });
   await deleteRetiredBillingKey(retiredKey);
   return period;
@@ -328,10 +330,13 @@ export async function applySuccessfulCharge(opts: {
 // returns null when another charge holds a live lease or the subscription is
 // not incomplete. The subscribe confirm uses this so a doubled callback cannot
 // charge the first period twice, and a stale callback cannot charge a
-// subscription that has since moved on (past_due, canceled, scheduled).
+// subscription that has since moved on (past_due, canceled, scheduled). A card
+// change claims an active or scheduled subscription the same way, so its key
+// is never swapped under a renewal charging the old one.
 export async function claimSubscriptionForConfirm(
   subscriptionId: string,
   now = new Date(),
+  statuses: string[] = ["incomplete"],
 ): Promise<Date | null> {
   const staleLeaseBefore = new Date(
     now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000,
@@ -340,7 +345,7 @@ export async function claimSubscriptionForConfirm(
     .updateTable("subscriptions")
     .set({ charging_started_at: now, updated_at: now })
     .where("id", "=", subscriptionId)
-    .where("status", "=", "incomplete")
+    .where("status", "in", statuses)
     .where((eb) =>
       eb.or([
         eb("charging_started_at", "is", null),

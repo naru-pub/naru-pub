@@ -1,7 +1,10 @@
 import { sendChargeReceipt } from "@/lib/charge-receipts";
 import { db } from "@/lib/database";
+import { sendSupportThankYouEmail } from "@/lib/email";
 import {
   BillingInterval,
+  confirmPayment,
+  describeTossError,
   getPaymentByOrderId,
   oneTimeYearsForAmount,
   paymentFlowForRecord,
@@ -17,7 +20,11 @@ import {
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payment-events";
 
-const UNCONFIRMED_EXPIRY_MS = 30 * 60 * 1000;
+// An order Toss has never heard of is given up after this long. A one-time
+// order exists at Toss only once the buyer has opened the payment window,
+// which stays open for 30 minutes, and an authenticated payment then has 10
+// more to be confirmed: an order counted from its prepare must outlast both.
+export const UNCONFIRMED_EXPIRY_MS = 45 * 60 * 1000;
 
 export function refundDetails(payment: TossPaymentResult, amount: number) {
   const cancels = payment.cancels ?? [];
@@ -118,7 +125,7 @@ async function reconcilePaymentCore(
     payment.subscription_id != null &&
     (payment.attempt_key?.startsWith("subscription_initial:") ?? false);
 
-  let tossPayment;
+  let tossPayment: TossPaymentResult;
   try {
     tossPayment = await getPaymentByOrderId(
       payment.order_id,
@@ -159,13 +166,20 @@ async function reconcilePaymentCore(
     throw error;
   }
 
-  const status = tossPayment.status.toLowerCase();
   if (
     tossPayment.orderId !== payment.order_id ||
     tossPayment.totalAmount !== payment.amount
   ) {
     throw new Error(`Toss payment mismatch for order ${payment.order_id}`);
   }
+  if (
+    tossPayment.status === "IN_PROGRESS" &&
+    payment.status === "pending" &&
+    payment.attempt_key?.startsWith("one_time:")
+  ) {
+    tossPayment = await confirmAuthenticatedPayment(payment, tossPayment);
+  }
+  const status = tossPayment.status.toLowerCase();
 
   // Persist the provider's current transaction identity even when the ledger
   // was already marked done; this backfills MID data for historic rows during
@@ -316,13 +330,22 @@ async function reconcilePaymentCore(
     if (years === null) {
       throw new Error(`Payment ${payment.id} has an invalid one-time amount`);
     }
-    await applyOneTimePayment({
+    const period = await applyOneTimePayment({
       userId: payment.user_id,
       amount: payment.amount,
       years,
       payment: tossPayment,
       paymentId: payment.id,
     });
+    // The buyer's own confirm never got this far — they left before the
+    // callback ran, or it failed — so nobody has thanked them yet.
+    if (period.granted) {
+      await sendOneTimeThankYou(
+        payment.user_id,
+        payment.amount,
+        period.periodEnd,
+      );
+    }
     return { state: "done" };
   }
 
@@ -354,6 +377,64 @@ async function reconcilePaymentCore(
   // supporter about it yet.
   if (granted) await sendChargeReceipt(payment.id);
   return { state: "done" };
+}
+
+// A one-time payment the buyer authenticated but nobody confirmed: they
+// closed the tab before the callback ran, or its confirm failed in a way that
+// left the payment open. Toss expires it 10 minutes after authentication, so
+// the reconciler confirms it itself, for the amount recorded at prepare —
+// under the order's own idempotency key, the one the callback uses, so the two
+// can never both approve it. Anything but an approval leaves the payment as
+// Toss reported it, to be settled when Toss moves it on.
+async function confirmAuthenticatedPayment(
+  payment: { id: string; order_id: string; amount: number },
+  inProgress: TossPaymentResult,
+): Promise<TossPaymentResult> {
+  try {
+    const confirmed = await confirmPayment(
+      {
+        paymentKey: inProgress.paymentKey,
+        orderId: payment.order_id,
+        amount: payment.amount,
+      },
+      payment.order_id,
+    );
+    if (
+      confirmed.orderId === payment.order_id &&
+      confirmed.totalAmount === payment.amount
+    ) {
+      return confirmed;
+    }
+  } catch (error) {
+    console.error(
+      `Reconciling payment ${payment.id}: confirming the authenticated payment failed: ${describeTossError(error)}`,
+    );
+  }
+  return inProgress;
+}
+
+async function sendOneTimeThankYou(
+  userId: string,
+  amount: number,
+  supporterUntil: Date,
+) {
+  try {
+    const user = await db
+      .selectFrom("users")
+      .select(["email", "email_verified_at", "login_name"])
+      .where("id", "=", userId)
+      .executeTakeFirst();
+    if (!user?.email || !user.email_verified_at) return;
+    await sendSupportThankYouEmail({
+      email: user.email,
+      loginName: user.login_name,
+      kind: "one_time",
+      amount,
+      supporterUntil,
+    });
+  } catch (error) {
+    console.error("Support thank-you email error:", error);
+  }
 }
 
 export async function reconcilePayment(

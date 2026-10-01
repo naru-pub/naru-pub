@@ -6,9 +6,10 @@ import { deleteBillingKey, maskSecret, TossApiError } from "@/lib/toss";
 
 // Every way a billing key leaves subscriptions.toss_billing_key goes through
 // retireBillingKey: a cancel, a refund, a one-time switch, a new card, an
-// account deletion. Keys never expire at Toss and are stored here in plain
-// text, so a key 나루 stops using must also be deleted there — and it can only
-// be deleted while someone still has it. retireBillingKey moves it into
+// account deletion. A key stays chargeable at Toss for as long as its card is
+// valid — years — and is stored here in plain text, so a key 나루 stops using
+// must also be deleted there, and it can only be deleted while someone still
+// has it. retireBillingKey moves it into
 // retired_billing_keys in the caller's transaction; after that commits, the
 // caller passes the returned key to deleteRetiredBillingKey, and the cron's
 // deleteRetiredBillingKeys retries whatever Toss did not confirm.

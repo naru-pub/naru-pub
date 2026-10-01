@@ -367,7 +367,7 @@ export function chargeBillingKey(params: {
   const { billingKey, idempotencyKey, ...body } = params;
   return tossRequest<TossPaymentResult>(
     "billing",
-    `/v1/billing/${billingKey}`,
+    `/v1/billing/${encodeURIComponent(billingKey)}`,
     {
       body,
       idempotencyKey,
@@ -407,8 +407,10 @@ export function cancelPayment(params: {
   );
 }
 
-// Deletes a billing key at Toss so it can never be charged again. Keys have no
-// expiry of their own.
+// Deletes a billing key at Toss so it can never be charged again. A key has no
+// expiry of its own beyond its card's ("빌링키의 유효기간은 빌링키와 연결된
+// 카드 유효기간과 같습니다"), and Toss cannot renew one: a reissued card needs a
+// new key (prepareCardChange).
 export async function deleteBillingKey(billingKey: string): Promise<void> {
   await tossRequest<unknown>(
     "billing",

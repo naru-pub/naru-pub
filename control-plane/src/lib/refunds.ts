@@ -190,14 +190,24 @@ export async function refundPayment(opts: {
       cancelReason: opts.reason.slice(0, 200),
     });
   } catch (error) {
-    if (!(error instanceof TossApiError)) throw error;
     // Toss refuses to cancel a payment that is already canceled — with
     // ALREADY_CANCELED_PAYMENT or NOT_CANCELABLE_PAYMENT, and the latter also
-    // covers other refusals. Ask Toss what the payment is now: if the money is
-    // already back, only the ledger is behind and reconciliation catches it
-    // up. Otherwise the refund really failed.
+    // covers other refusals — and a call that got no answer (a timeout, a
+    // dropped connection) may have canceled it all the same. Ask Toss what the
+    // payment is now: if the money is already back, only the ledger is behind
+    // and reconciliation catches it up, and the refund goes on to stop
+    // recurring billing like any other.
     const result = await reconcilePayment(payment.id).catch(() => null);
-    if (result?.state !== "refunded") throw error;
+    if (result?.state !== "refunded") {
+      if (error instanceof TossApiError) throw error;
+      // No answer either way. The webhook and the refund sweep will see the
+      // cancel if it happened; until then the supporter is told so rather
+      // than that it failed, which would invite a second request.
+      throw new RefundError(
+        "환불 결과를 확인하고 있습니다. 잠시 후 결제 내역을 다시 확인해 주세요.",
+        503,
+      );
+    }
     reconciled = true;
   }
 

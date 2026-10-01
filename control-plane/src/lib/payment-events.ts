@@ -18,6 +18,7 @@ export const PAYMENT_EVENT_LABELS = {
   refunded: "환불",
   subscription_scheduled: "정기 결제 예약",
   subscription_canceled: "정기 결제 취소",
+  card_changed: "결제 카드 변경",
   billing_key_deleted: "빌링키 삭제",
   order_expired: "주문 만료",
   key_deletion_stuck: "빌링키 삭제 지연",

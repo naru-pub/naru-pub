@@ -109,21 +109,29 @@ export default function SupportCard({
       } else {
         toast.error(message || "결제 처리에 실패했습니다.");
       }
+    } else if (support === "card-changed") {
+      toast.success("결제 카드를 변경했습니다.");
     } else if (support === "canceled") toast("결제가 취소되었습니다.");
     router.replace("/support");
   }, [params, router, untilLabel]);
 
-  async function subscribe(interval: "month" | "year") {
+  // Registers a card with Toss: prepare (a signup, or a card change) hands
+  // back the customerKey and the registration id the callback path carries.
+  async function registerCard(
+    prepareUrl: string,
+    body: unknown,
+    failMessage: string,
+  ) {
     setPending(true);
     try {
-      const res = await fetch("/api/account/subscription/prepare", {
+      const res = await fetch(prepareUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interval }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        toast.error(data.message ?? "결제를 시작할 수 없습니다.");
+        toast.error(data.message ?? failMessage);
         setPending(false);
         return;
       }
@@ -138,7 +146,7 @@ export default function SupportCard({
       const payment = tossPayments.payment({ customerKey: data.customerKey });
       await payment.requestBillingAuth({
         method: "CARD",
-        successUrl: `${window.location.origin}/account/subscription/callback`,
+        successUrl: `${window.location.origin}/account/subscription/callback/${data.registrationId}`,
         failUrl: `${window.location.origin}/support?support=failed`,
       });
       // requestBillingAuth redirects the browser; control resumes on the callback page.
@@ -146,6 +154,22 @@ export default function SupportCard({
       paymentWindowError(error);
       setPending(false);
     }
+  }
+
+  function subscribe(interval: "month" | "year") {
+    return registerCard(
+      "/api/account/subscription/prepare",
+      { interval },
+      "결제를 시작할 수 없습니다.",
+    );
+  }
+
+  function changeCard() {
+    return registerCard(
+      "/api/account/subscription/card/prepare",
+      {},
+      "카드를 변경할 수 없습니다.",
+    );
   }
 
   async function donateOnce() {
@@ -255,7 +279,8 @@ export default function SupportCard({
 
         {comp ? (
           <div className="bg-green-500/5 border-2 border-green-500 p-3 text-sm text-green-700 dark:text-green-500">
-            평생 이용 권한으로 등록되어 있습니다. 나루를 아껴 주셔서 감사합니다. 🙏
+            평생 이용 권한으로 등록되어 있습니다. 나루를 아껴 주셔서 감사합니다.
+            🙏
           </div>
         ) : (
           <div className="space-y-4">
@@ -275,9 +300,18 @@ export default function SupportCard({
                     </>
                   )}
                 </div>
-                <Button variant="outline" onClick={cancel} disabled={pending}>
-                  결제 취소
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    variant="outline"
+                    onClick={changeCard}
+                    disabled={pending}
+                  >
+                    카드 변경
+                  </Button>
+                  <Button variant="outline" onClick={cancel} disabled={pending}>
+                    결제 취소
+                  </Button>
+                </div>
               </div>
             ) : isScheduled && untilLabel ? (
               <div className="space-y-3">
@@ -286,9 +320,18 @@ export default function SupportCard({
                   <strong className="text-foreground">{untilLabel}</strong>까지
                   입니다. 이후 {intervalLabel} 정기 결제가 시작됩니다.
                 </div>
-                <Button variant="outline" onClick={cancel} disabled={pending}>
-                  정기 결제 예약 취소
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    variant="outline"
+                    onClick={changeCard}
+                    disabled={pending}
+                  >
+                    카드 변경
+                  </Button>
+                  <Button variant="outline" onClick={cancel} disabled={pending}>
+                    정기 결제 예약 취소
+                  </Button>
+                </div>
               </div>
             ) : subscription?.status === "canceled" &&
               supportActive &&
