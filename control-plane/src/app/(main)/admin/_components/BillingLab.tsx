@@ -247,7 +247,7 @@ export function BillingLab({
   accounts: LabAccount[];
   testCodes: ReadonlyArray<{ code: string; label: string }>;
 }) {
-  const [userId, setUserId] = useState<number | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [testCode, setTestCode] = useState("");
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -288,7 +288,7 @@ export function BillingLab({
   }
 
   function selectAccount(value: string) {
-    const id = Number(value) || null;
+    const id = value || null;
     setUserId(id);
     setSnapshot(null);
     if (id) void run("상태 보기", { action: "inspect", userId: id });
