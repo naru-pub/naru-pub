@@ -214,7 +214,7 @@ const { AccountBusyError, closeAccountLockPool } =
   require("@/lib/account-lock") as typeof import("@/lib/account-lock");
 const signup =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
-const { chargeDueSubscriptions, enqueueDueRenewals } =
+const { enqueueDueRenewals } =
   require("@/lib/subscription-renewals") as typeof import("@/lib/subscription-renewals");
 const { reconcilePayment } =
   require("@/lib/payment-reconciliation") as typeof import("@/lib/payment-reconciliation");
@@ -345,7 +345,7 @@ function operations(userId: string, pick: () => number): Op[] {
   return [
     {
       name: "signup",
-      weight: 3,
+      weight: 1.5,
       run: async () => {
         const prepared = await signup.prepareSubscription({
           userId,
@@ -379,50 +379,24 @@ function operations(userId: string, pick: () => number): Op[] {
     },
     {
       name: "cancel",
-      weight: 0.5,
+      weight: 0.25,
       run: () =>
         signedIn.run(userId, () =>
           cancelRoute(post("/api/account/subscription/cancel", {})),
         ),
     },
     {
-      name: "renewal",
-      weight: 4,
-      run: async () => {
-        const plan = await currentPlan(userId);
-        if (!plan || !["active", "scheduled"].includes(plan.status)) return;
-        // The plan's period has ended.
-        await db
-          .updateTable("subscriptions")
-          .set({ next_billing_at: new Date(Date.now() - 60_000) })
-          .where("id", "=", plan.id)
-          .where("status", "in", ["active", "scheduled"])
-          .execute();
-        return chargeDueSubscriptions(new Date(), {
-          subscriptionIds: [plan.id],
-        });
-      },
-    },
-    {
+      // The hourly run: renews what the clock has made due.
       name: "renewal run",
-      weight: 1.5,
+      weight: 3,
       run: async () => {
-        const plan = await currentPlan(userId);
-        if (!plan || !["active", "scheduled"].includes(plan.status)) return;
-        // Due before the last 09:00 KST, as the hourly run charges.
-        await db
-          .updateTable("subscriptions")
-          .set({ next_billing_at: new Date(Date.now() - 2 * 86_400_000) })
-          .where("id", "=", plan.id)
-          .where("status", "in", ["active", "scheduled"])
-          .execute();
         const { jobs } = await enqueueDueRenewals();
         return runJobs(jobs);
       },
     },
     {
       name: "refund",
-      weight: 1,
+      weight: 0.4,
       run: async () => {
         const paid = await db
           .selectFrom("payments")
@@ -441,7 +415,7 @@ function operations(userId: string, pick: () => number): Op[] {
     },
     {
       name: "one-time purchase",
-      weight: 0.7,
+      weight: 0.5,
       run: () =>
         signedIn.run(userId, async () => {
           const prepared = await oneTimePrepareRoute(
@@ -503,7 +477,7 @@ function operations(userId: string, pick: () => number): Op[] {
     },
     {
       name: "key deleted at Toss",
-      weight: 0.3,
+      weight: 0.15,
       run: async () => {
         const plan = await currentPlan(userId);
         if (!plan) return;
@@ -570,10 +544,12 @@ async function makeUsers(count: number, seed: number) {
 }
 
 // Lets everything left settle with Toss answering reliably: what is owed
-// gets done, what is unknown gets known.
+// gets done, what is unknown gets known. Two days pass first, so orders Toss
+// never saw are old enough to expire.
 async function settle() {
   fake.chaos = false;
-  for (let round = 0; round < 5; round++) {
+  jest.setSystemTime(Date.now() + 2 * DAY_MS);
+  for (let round = 0; round < 3; round++) {
     const pending = await db
       .selectFrom("payments")
       .select("id")
@@ -584,22 +560,12 @@ async function settle() {
         if (!expected(error)) throw error;
       });
     }
-    // Orders Toss never saw are expired once old enough.
-    const dayAgo = new Date(Date.now() - 86_400_000);
-    await sql`
-      update payments
-      set created_at = ${dayAgo},
-          charge_attempted_at = case when charge_attempted_at is null
-                                     then null else ${dayAgo}::timestamptz end
-      where status = 'pending'
-    `.execute(db);
   }
-  await deleteRetiredBillingKeys(new Date(Date.now() + 2 * 86_400_000));
-  await db
-    .updateTable("payment_jobs")
-    .set({ run_at: new Date(Date.now() - 1000) })
-    .where("done_at", "is", null)
-    .execute();
+  await deleteRetiredBillingKeys(new Date(Date.now() + 2 * DAY_MS));
+  // Job times are the database's clock, which the simulated one runs ahead
+  // of.
+  await sql`update payment_jobs set run_at = now() - interval '1 second'
+            where done_at is null`.execute(db);
   await runDueJobs(1000);
 }
 
@@ -735,6 +701,8 @@ async function findProblems(): Promise<string[]> {
   return problems;
 }
 
+const DAY_MS = 86_400_000;
+
 async function fuzz(seed: number, steps: number) {
   await reset();
   const pick = seeded(seed);
@@ -742,6 +710,14 @@ async function fuzz(seed: number, steps: number) {
   const users = await makeUsers(3, seed);
   const unexpected: string[] = [];
   for (let step = 0; step < steps; step++) {
+    // Time passes between some steps: an hour to a month, so periods end,
+    // renewals fall due, declines run into the grace period and past due.
+    if (pick() < 0.4) {
+      const hours = [1, 9, 24, 3 * 24, 10 * 24, 31 * 24][
+        Math.floor(pick() * 6)
+      ];
+      jest.setSystemTime(Date.now() + hours * 60 * 60 * 1000);
+    }
     // A few operations at once, on random accounts.
     const batch = Array.from({ length: 1 + Math.floor(pick() * 3) }, () => {
       const userId = users[Math.floor(pick() * users.length)];
@@ -773,8 +749,13 @@ async function fuzz(seed: number, steps: number) {
       .select(["status", sql<number>`count(*)::int`.as("n")])
       .groupBy("status")
       .execute();
+    const events = await db
+      .selectFrom("payment_events")
+      .select(["kind", sql<number>`count(*)::int`.as("n")])
+      .groupBy("kind")
+      .execute();
     process.stdout.write(
-      `seed ${seed}: plans ${JSON.stringify(plans)} payments ${JSON.stringify(pays)} keys ${JSON.stringify(keys)}\n`,
+      `seed ${seed}: plans ${JSON.stringify(plans)} payments ${JSON.stringify(pays)} keys ${JSON.stringify(keys)} events ${JSON.stringify(Object.fromEntries(events.map((e) => [e.kind, e.n])))}\n`,
     );
   }
   return [...unexpected, ...(await findProblems())];
@@ -797,6 +778,29 @@ integration("payments under random concurrent operations", () => {
 
   for (const seed of seeds) {
     test(`seed ${seed}`, async () => {
+      // The clock is simulated: only Date is faked, and it moves only when
+      // the fuzzer says time passes. Timers, I/O and the database run for
+      // real (the database's own now() stays behind, which only makes what
+      // it stamps look older).
+      jest.useFakeTimers({
+        doNotFake: [
+          "hrtime",
+          "nextTick",
+          "performance",
+          "queueMicrotask",
+          "requestAnimationFrame",
+          "cancelAnimationFrame",
+          "requestIdleCallback",
+          "cancelIdleCallback",
+          "setImmediate",
+          "clearImmediate",
+          "setInterval",
+          "clearInterval",
+          "setTimeout",
+          "clearTimeout",
+        ],
+        now: Date.now(),
+      });
       const silence = jest.spyOn(console, "error").mockImplementation(() => {});
       const log = jest.spyOn(console, "log").mockImplementation(() => {});
       try {
@@ -805,6 +809,7 @@ integration("payments under random concurrent operations", () => {
           problems: [],
         });
       } finally {
+        jest.useRealTimers();
         silence.mockRestore();
         log.mockRestore();
       }

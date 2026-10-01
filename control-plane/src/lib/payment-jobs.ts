@@ -92,7 +92,7 @@ export async function runJobs(ids: Array<string | null>): Promise<void> {
 }
 
 // Runs every job that is due, oldest first, up to `limit`. The cron calls it
-// every minute.
+// every minute. Job times are all the database's clock.
 export async function runDueJobs(
   limit = 50,
 ): Promise<{ done: number; retried: number; failed: number }> {
@@ -148,7 +148,7 @@ async function runJob(id: string): Promise<JobResult> {
     await handle(payload);
     await db
       .updateTable("payment_jobs")
-      .set({ done_at: new Date(), locked_until: null, last_error: null })
+      .set({ done_at: sql<Date>`now()`, locked_until: null, last_error: null })
       .where("id", "=", id)
       .execute();
     return "done";
@@ -163,7 +163,7 @@ async function runJob(id: string): Promise<JobResult> {
         .set({
           attempts: job.attempts - 1,
           locked_until: null,
-          run_at: new Date(Date.now() + 60_000),
+          run_at: sql<Date>`now() + interval '1 minute'`,
         })
         .where("id", "=", id)
         .execute();
@@ -172,7 +172,11 @@ async function runJob(id: string): Promise<JobResult> {
     if (job.attempts >= MAX_ATTEMPTS) {
       await db
         .updateTable("payment_jobs")
-        .set({ failed_at: new Date(), locked_until: null, last_error: message })
+        .set({
+          failed_at: sql<Date>`now()`,
+          locked_until: null,
+          last_error: message,
+        })
         .where("id", "=", id)
         .execute();
       await notePaymentEvent({
@@ -186,13 +190,13 @@ async function runJob(id: string): Promise<JobResult> {
       return "failed";
     }
     // 1, 2, 4 … minutes, at most six hours.
-    const backoffMs = Math.min(2 ** (job.attempts - 1), 360) * 60_000;
+    const backoffMinutes = Math.min(2 ** (job.attempts - 1), 360);
     await db
       .updateTable("payment_jobs")
       .set({
         locked_until: null,
         last_error: message,
-        run_at: new Date(Date.now() + backoffMs),
+        run_at: sql<Date>`now() + make_interval(mins => ${backoffMinutes})`,
       })
       .where("id", "=", id)
       .execute();

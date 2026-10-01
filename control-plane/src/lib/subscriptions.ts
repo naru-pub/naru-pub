@@ -8,7 +8,7 @@ import { extendPaidTime, lockPaidTime } from "@/lib/paid-time";
 import { recordApproval } from "@/lib/payment-ledger";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import { db } from "@/lib/database";
-import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import { retireBillingKey } from "@/lib/billing-keys";
 import type { Executor } from "@/lib/entitlements";
 import {
   kstDate,

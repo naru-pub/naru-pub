@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/database";
 import {
-  getPaymentByOrderId,
   maskSecret,
   paymentFlowForRecord,
   paymentProviderMetadata,
@@ -13,11 +12,7 @@ import { endPlan } from "@/lib/subscriptions";
 import { withAccountLock } from "@/lib/account-lock";
 import { lookupOrder } from "@/lib/toss-gateway";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
-import {
-  notePaymentEvent,
-  recordPaymentEvent,
-  recordWebhookDelivery,
-} from "@/lib/payment-events";
+import { recordWebhookDelivery } from "@/lib/payment-events";
 import {
   formatWebhookLog,
   isTrustedWebhookSource,

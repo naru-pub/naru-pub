@@ -8,16 +8,12 @@ import {
 import { db } from "@/lib/database";
 import {
   BillingInterval,
-  confirmPayment,
   describeTossError,
-  getPaymentByOrderId,
   oneTimeYearsForAmount,
   paymentFlowForRecord,
   paymentProviderMetadata,
-  TossApiError,
   TossPaymentResult,
 } from "@/lib/toss";
-import type { Executor } from "@/lib/entitlements";
 import {
   applyOneTimePayment,
   applySuccessfulCharge,
@@ -26,7 +22,7 @@ import {
 } from "@/lib/subscriptions";
 import { withAccountLock } from "@/lib/account-lock";
 import { confirmOrder, lookupOrder } from "@/lib/toss-gateway";
-import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import { deleteRetiredBillingKey } from "@/lib/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payment-events";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import { recordCancels } from "@/lib/payment-ledger";
@@ -37,7 +33,6 @@ import { lockPaidTime, recomputePaidTime } from "@/lib/paid-time";
 // which stays open for 30 minutes, and an authenticated payment then has 10
 // more to be confirmed: an order counted from its prepare must outlast both.
 export const UNCONFIRMED_EXPIRY_MS = 45 * 60 * 1000;
-
 
 export type ReconciliationResult =
   | { state: "done" }
@@ -92,8 +87,7 @@ async function reconcilePaymentCore(
   const refreshable =
     payment.status === "pending" ||
     payment.status === "done" ||
-    (payment.status === "canceled" &&
-      payment.refunded_amount < payment.amount);
+    (payment.status === "canceled" && payment.refunded_amount < payment.amount);
   if (!refreshable) {
     return { state: "failed", status: payment.status };
   }

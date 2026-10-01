@@ -1,12 +1,10 @@
 import { withAccountLock } from "@/lib/account-lock";
 import {
   deleteRetiredBillingKey,
-  retireBillingKey,
   retireUserBillingKeys,
 } from "@/lib/billing-keys";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
-import { recordPaymentEvent } from "@/lib/payment-events";
 import { endPlan, plansOf } from "@/lib/subscriptions";
 import {
   reconcilePayment,
