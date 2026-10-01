@@ -385,6 +385,7 @@ integration("site database integration", () => {
       call("PATCH", ["revoked"], { read: "invalid", write: "world" }, true),
     ).rejects.toMatchObject({ status: 400 });
   });
+  // Seeds ~10 MB of documents; I/O-bound like the document quota test below.
   test("concurrent writes cannot exceed byte quota, replacement frees space", async () => {
     await sql`delete from site_data_collections`.execute(db);
     await call("POST", [], { name: "bytes", write: "world" }, true);
@@ -405,7 +406,7 @@ integration("site database integration", () => {
     await expect(
       call("PUT", ["bytes", "c"], { data: "x".repeat(4000) }),
     ).resolves.toBeDefined();
-  });
+  }, 30_000);
   test("create-only allows server IDs but denies replacement, custom IDs and deletion", async () => {
     await call(
       "POST",
@@ -517,6 +518,8 @@ integration("site database integration", () => {
       await sql`delete from site_data_rate_limits`.execute(db);
     }
   });
+  // Seeding a full quota and cascading its deletion is I/O-bound: ~100 ms
+  // locally, but 1-3 s on a CI runner, which has crossed Jest's 5 s default.
   test("concurrent writes cannot exceed document quota", async () => {
     await sql`delete from site_data_collections`.execute(db);
     await call("POST", [], { name: "quota", write: "world" }, true);
@@ -538,7 +541,7 @@ integration("site database integration", () => {
     expect(
       await db.selectFrom("site_data_documents").selectAll().execute(),
     ).toEqual([]);
-  });
+  }, 30_000);
 });
 
 describe("request validation", () => {
