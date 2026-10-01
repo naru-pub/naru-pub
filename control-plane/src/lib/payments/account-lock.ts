@@ -107,10 +107,10 @@ export async function withAccountLock<T>(
     return await held.run(accounts, fn);
   } finally {
     try {
-      await client.query(
-        "select pg_advisory_unlock($1, hashtext($2::text))",
-        [PAYMENTS_LOCK_SPACE, userId],
-      );
+      await client.query("select pg_advisory_unlock($1, hashtext($2::text))", [
+        PAYMENTS_LOCK_SPACE,
+        userId,
+      ]);
     } catch {
       // A connection that cannot say it unlocked must not go back to the pool
       // still holding the lock; destroying it drops the lock with it.

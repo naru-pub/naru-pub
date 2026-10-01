@@ -1,4 +1,4 @@
-import { syncPaymentRefunds } from "@/lib/refund-sync";
+import { syncPaymentRefunds } from "@/lib/payments/refund-sync";
 
 // Stops a little before the cron's own timeout kills it, so a long run ends
 // cleanly and the next one starts with what this one did not reach.

@@ -3,10 +3,7 @@ const nextJest = require("next/jest");
 module.exports = async () => {
   const config = await nextJest({ dir: "./" })({
     testEnvironment: "node",
-    testMatch: [
-      "<rootDir>/src/lib/__tests__/*payment*.test.ts",
-      "<rootDir>/src/lib/__tests__/toss.test.ts",
-    ],
+    testMatch: ["<rootDir>/src/lib/payments/__tests__/*.test.ts"],
     moduleNameMapper: { "^@/(.*)$": "<rootDir>/src/$1" },
   })();
   config.transformIgnorePatterns = [

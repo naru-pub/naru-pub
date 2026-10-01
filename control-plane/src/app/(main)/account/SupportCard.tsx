@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { renewalChargeAt } from "@/lib/renewal-time";
+import { renewalChargeAt } from "@/lib/payments/renewal-time";
 
 // 카드사 심사는 서비스 제공기간이 1년을 넘는 상품을 허용하지 않으므로, 일회성
 // 일회성 결제는 1년치 한 건만 판매한다. 서버(MAX_PURCHASABLE_ONE_TIME_YEARS)가 같은
@@ -131,7 +131,7 @@ export default function SupportCard({
     subscription?.nextBillingAt != null &&
     renewalChargeAt(subscription.nextBillingAt).getTime() <= Date.now();
   const showRecurringOptions = !isActive && !isScheduled;
-  // Not beside a plan that charges or may (lib/support-purchases): the
+  // Not beside a plan that charges or may (lib/payments/support-purchases): the
   // supporter cancels it first.
   const showOneTimeOptions =
     !planCanCharge &&

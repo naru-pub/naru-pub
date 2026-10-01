@@ -3,8 +3,8 @@ import { validateRequest } from "@/lib/auth";
 import {
   RecoveryError,
   recoverOrphanedCharge,
-} from "@/lib/payment-reconciliation";
-import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
+} from "@/lib/payments/payment-reconciliation";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
 import { assertJsonContentType } from "@/lib/utils";
 import { parseUuid } from "@/lib/uuid";
 

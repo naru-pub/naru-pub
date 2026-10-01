@@ -1,6 +1,6 @@
-import { renewalChargeAt } from "@/lib/renewal-time";
+import { renewalChargeAt } from "@/lib/payments/renewal-time";
 // Keeps each renewal notice in payment_mails.
-import "@/lib/payment-mails";
+import "@/lib/payments/payment-mails";
 import { db } from "@/lib/database";
 import { sendSubscriptionRenewalNoticeEmail } from "@/lib/email";
 

@@ -1,8 +1,8 @@
-import "@/lib/toss-calls";
-import { checkTossTransactions } from "@/lib/toss-transaction-check";
+import "@/lib/payments/toss-calls";
+import { checkTossTransactions } from "@/lib/payments/toss-transaction-check";
 
 // Daily from cron.ts: yesterday's (KST) transactions at Toss against the
-// ledger (lib/toss-transaction-check).
+// ledger (lib/payments/toss-transaction-check).
 checkTossTransactions()
   .then(({ day, transactions, problems }) => {
     console.log(

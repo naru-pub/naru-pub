@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { labAccounts, LAB_TEST_CODES } from "@/lib/billing-lab";
-import { isTossTestMode } from "@/lib/toss";
+import { labAccounts, LAB_TEST_CODES } from "@/lib/payments/billing-lab";
+import { isTossTestMode } from "@/lib/payments/toss";
 import { BillingLab } from "../_components/BillingLab";
 import { requireOperator } from "../_components/requireOperator";
 

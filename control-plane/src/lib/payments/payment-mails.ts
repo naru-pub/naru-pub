@@ -5,7 +5,7 @@ import { setPaymentMailRecorder, type PaymentMailRecord } from "@/lib/email";
 // what was sent to whom about which payment or plan, and the provider's
 // message id or why it failed. Best effort: a mail whose record cannot be
 // written was still sent. Imported for its effect by the code that sends
-// payment mail (lib/payment-jobs.ts, the renewal notice and digest crons).
+// payment mail (lib/payments/payment-jobs.ts, the renewal notice and digest crons).
 async function keepPaymentMail(record: PaymentMailRecord): Promise<void> {
   try {
     await db

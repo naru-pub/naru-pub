@@ -4,11 +4,11 @@ import { join, relative } from "path";
 
 // Billing keys stay chargeable as long as their card, so a key that leaves
 // its plan (subscriptions.billing_key_id) must be retired for deletion at
-// Toss (lib/billing-keys.ts, retireBillingKey), and the billing_keys rows are
+// Toss (lib/payments/billing-keys.ts, retireBillingKey), and the billing_keys rows are
 // written only there. Deleting a user goes through lib/account-deletion.ts,
 // which retires the account's keys first. Nothing in the database enforces
 // these; the checks keep a new code path from quietly dropping a key.
-const SRC = join(__dirname, "..", "..");
+const SRC = join(__dirname, "..", "..", "..");
 const STORES_KEY = /billing_key_id\s*:\s*(?!null\b|string\b)[A-Za-z_$]/;
 
 function sourceFiles(dir: string): string[] {
@@ -34,7 +34,7 @@ describe("billing keys are only dropped through retireBillingKey", () => {
   test("nothing else clears billing_key_id", () => {
     expect(
       offenders(/billing_key_id\s*(:\s*null|=\s*null)/i, [
-        "lib/billing-keys.ts",
+        "lib/payments/billing-keys.ts",
       ]),
     ).toEqual([]);
   });
@@ -43,7 +43,7 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     expect(
       offenders(
         /(insertInto|updateTable|deleteFrom)\(\s*["']billing_keys["']\s*\)/,
-        ["lib/billing-keys.ts"],
+        ["lib/payments/billing-keys.ts"],
       ),
     ).toEqual([]);
   });
@@ -54,37 +54,37 @@ describe("billing keys are only dropped through retireBillingKey", () => {
   test("only confirm stores a new key", () => {
     expect(
       offenders(STORES_KEY, [
-        "lib/billing-keys.ts",
-        "lib/subscription-signup.ts",
+        "lib/payments/billing-keys.ts",
+        "lib/payments/subscription-signup.ts",
       ]),
     ).toEqual([]);
   });
 
-  // Paid time has one owner (lib/paid-time.ts), and the money ledger one
-  // writer (lib/payment-ledger.ts).
-  test("only lib/paid-time.ts writes supporter_until", () => {
+  // Paid time has one owner (lib/payments/paid-time.ts), and the money ledger one
+  // writer (lib/payments/payment-ledger.ts).
+  test("only lib/payments/paid-time.ts writes supporter_until", () => {
     expect(
       offenders(/supporter_until\s*:(?!\s*(Date|string)\b)/, [
-        "lib/paid-time.ts",
+        "lib/payments/paid-time.ts",
       ]),
     ).toEqual([]);
   });
 
-  test("only lib/payment-ledger.ts writes payment_transactions", () => {
+  test("only lib/payments/payment-ledger.ts writes payment_transactions", () => {
     expect(
       offenders(/insertInto\(\s*["']payment_transactions["']\s*\)/, [
-        "lib/payment-ledger.ts",
+        "lib/payments/payment-ledger.ts",
       ]),
     ).toEqual([]);
   });
 
   // Ending a plan has one way (endPlan): its key, event and mail go with it.
   test("only endPlan ends a plan", () => {
-    expect(offenders(/status:\s*"canceled"/, ["lib/subscriptions.ts"])).toEqual(
-      [],
-    );
+    expect(
+      offenders(/status:\s*"canceled"/, ["lib/payments/subscriptions.ts"]),
+    ).toEqual([]);
     expect(offenders(/status:\s*"canceled"/, [])).toEqual([
-      "lib/subscriptions.ts",
+      "lib/payments/subscriptions.ts",
     ]);
   });
 
@@ -102,12 +102,14 @@ describe("billing keys are only dropped through retireBillingKey", () => {
       0,
     );
     expect(offenders(/insertInto\(\s*["']billing_keys["']\s*\)/, [])).toEqual([
-      "lib/billing-keys.ts",
+      "lib/payments/billing-keys.ts",
     ]);
-    expect(offenders(STORES_KEY, [])).toEqual(["lib/subscription-signup.ts"]);
+    expect(offenders(STORES_KEY, [])).toEqual([
+      "lib/payments/subscription-signup.ts",
+    ]);
     expect(
       offenders(/supporter_until\s*:(?!\s*(Date|string)\b)/, []).sort(),
-    ).toEqual(["lib/paid-time.ts"]);
+    ).toEqual(["lib/payments/paid-time.ts"]);
     expect(offenders(/deleteFrom\(\s*["']users["']\s*\)/, [])).toEqual([
       "lib/account-deletion.ts",
     ]);

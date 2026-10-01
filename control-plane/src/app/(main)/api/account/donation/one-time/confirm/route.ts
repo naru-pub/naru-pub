@@ -10,12 +10,12 @@ import {
   oneTimeYearsForAmount,
   paymentProviderMetadata,
   TossApiError,
-} from "@/lib/toss";
-import { confirmOrder } from "@/lib/toss-gateway";
-import { applyOneTimePayment } from "@/lib/subscriptions";
-import { notePaymentEvent, won } from "@/lib/payment-events";
-import { oneTimeOrderSuperseded } from "@/lib/payment-reconciliation";
-import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
+} from "@/lib/payments/toss";
+import { confirmOrder } from "@/lib/payments/toss-gateway";
+import { applyOneTimePayment } from "@/lib/payments/subscriptions";
+import { notePaymentEvent, won } from "@/lib/payments/payment-events";
+import { oneTimeOrderSuperseded } from "@/lib/payments/payment-reconciliation";
+import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 
 // One-time donation step 2: confirms the payment with Toss and grants the
 // purchased years of supporter access. Entitlement is derived from the
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Under the account lock (lib/account-lock): no renewal is charging the
+    // Under the account lock (lib/payments/account-lock): no renewal is charging the
     // plan this approval may switch off, and no second confirm of this
     // account runs meanwhile. The callback retries a 503 within the 10
     // minutes Toss allows; so does the reconciler.
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
         // The amount is the one recorded at prepare, never the callback's.
         // A failed confirm is not a failed payment until the order says so,
         // and one still authenticated after an ambiguous failure is confirmed
-        // once more under a fresh key (lib/toss-gateway).
+        // once more under a fresh key (lib/payments/toss-gateway).
         const outcome = await confirmOrder({
           paymentKey,
           orderId,
@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
           paymentId: pendingPayment.id,
         });
 
-        // The grant owes the thank-you (lib/payment-jobs); a doubled callback,
+        // The grant owes the thank-you (lib/payments/payment-jobs); a doubled callback,
         // or the reconciler settling this order first, finds it already owed.
 
         return NextResponse.json({

@@ -1,9 +1,9 @@
 import { db } from "@/lib/database";
-import { setTossCallRecorder, type TossCallRecord } from "@/lib/toss";
+import { setTossCallRecorder, type TossCallRecord } from "@/lib/payments/toss";
 
 // Keeps every Toss call in toss_calls (see the migration that adds it). Best
 // effort: a call whose record cannot be written still returns its answer.
-// Imported for its effect by lib/toss-gateway.ts, through which the payment
+// Imported for its effect by lib/payments/toss-gateway.ts, through which the payment
 // code reaches Toss.
 async function keepTossCall(
   record: TossCallRecord,

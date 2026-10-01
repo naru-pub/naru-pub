@@ -4,7 +4,7 @@ import {
   sendOperatorAlert,
 } from "@/lib/operator-alerts";
 import type { Executor } from "@/lib/entitlements";
-import { isTossLiveMode, maskBody } from "@/lib/toss";
+import { isTossLiveMode, maskBody } from "@/lib/payments/toss";
 
 // Payment and billing events, recorded where they happen and posted to the
 // operators' Discord channel (lib/operator-alerts). Recording is unconditional

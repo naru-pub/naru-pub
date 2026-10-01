@@ -1,5 +1,5 @@
 import { validateRequest, type User } from "@/lib/auth";
-import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
 import { BoardError } from "./errors";
 
 // The board is moderated by the same operators who run /admin. Nobody else

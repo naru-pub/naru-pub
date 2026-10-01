@@ -1,6 +1,6 @@
 import { db } from "@/lib/database";
 import { deleteCloudflareCustomHostnameIfExists } from "@/lib/customDomains";
-import { addPaymentGrace } from "@/lib/subscriptions";
+import { addPaymentGrace } from "@/lib/payments/subscriptions";
 
 const ABANDONED_PENDING_DOMAIN_DAYS = 14;
 

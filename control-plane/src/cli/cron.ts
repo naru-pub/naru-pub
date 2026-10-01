@@ -6,7 +6,7 @@ import {
   operatorAlertsConfigured,
   sendOperatorAlert,
 } from "@/lib/operator-alerts";
-import { recordPaymentCronRun } from "@/lib/payment-events";
+import { recordPaymentCronRun } from "@/lib/payments/payment-events";
 
 const SCREENSHOT_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const SCREENSHOT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
@@ -436,7 +436,7 @@ async function main() {
 
   // Renewals bill at 09:00 KST. The job runs every hour, but each run only
   // charges what was due by the last 09:00 and was not tried in the last day
-  // (lib/subscription-renewals), so the hours after 09:00 only make up a run
+  // (lib/payments/subscription-renewals), so the hours after 09:00 only make up a run
   // missed for a deploy or a database blip.
   console.log(
     "[cron] Scheduling subscription charger hourly (renewals due by 09:00 KST)",

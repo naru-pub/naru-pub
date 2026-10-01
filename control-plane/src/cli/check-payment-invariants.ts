@@ -1,7 +1,7 @@
-import { reportPaymentInvariants } from "@/lib/payment-invariants";
+import { reportPaymentInvariants } from "@/lib/payments/payment-invariants";
 
 // Daily from cron.ts: the rules the payment data must satisfy, reported as one
-// operator event when any is broken (lib/payment-invariants).
+// operator event when any is broken (lib/payments/payment-invariants).
 reportPaymentInvariants()
   .then((found) => {
     const rules = Object.keys(found);

@@ -1,5 +1,5 @@
 import { sql, type RawBuilder } from "kysely";
-import { PAYMENT_GRACE_DAYS } from "@/lib/subscriptions";
+import { PAYMENT_GRACE_DAYS } from "@/lib/payments/subscriptions";
 
 // What each /admin overview card counts, defined once. The card counts with
 // the condition and its detail page lists with the same condition, so the

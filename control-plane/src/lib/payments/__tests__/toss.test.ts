@@ -24,8 +24,8 @@ import {
   oneTimeYearsForAmount,
   TossApiError,
   withNewOrderId,
-} from "@/lib/toss";
-import { settleOrder } from "@/lib/toss-gateway";
+} from "@/lib/payments/toss";
+import { settleOrder } from "@/lib/payments/toss-gateway";
 
 describe("Toss payment requests", () => {
   const originalBillingSecret = process.env.TOSS_BILLING_SECRET_KEY;

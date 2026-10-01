@@ -1,15 +1,15 @@
-import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
+import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 import { db } from "@/lib/database";
-import { deleteRetiredBillingKey } from "@/lib/billing-keys";
+import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
 import {
   reconcilePayment,
   type ReconciliationResult,
-} from "@/lib/payment-reconciliation";
-import { runJobs } from "@/lib/payment-jobs";
-import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payment-states";
-import { endPlan, plansOf } from "@/lib/subscriptions";
-import { paymentFlowForRecord } from "@/lib/toss";
-import { cancelOrder } from "@/lib/toss-gateway";
+} from "@/lib/payments/payment-reconciliation";
+import { runJobs } from "@/lib/payments/payment-jobs";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payments/payment-states";
+import { endPlan, plansOf } from "@/lib/payments/subscriptions";
+import { paymentFlowForRecord } from "@/lib/payments/toss";
+import { cancelOrder } from "@/lib/payments/toss-gateway";
 
 // 판매 정책의 환불 조건: 결제일로부터 7일 안에는 이유를 묻지 않고 전액 환불.
 // 이 상수와 아래 판정 함수가 그 문장의 구현이므로, components/SupportPolicy의
@@ -142,7 +142,7 @@ type RefundRequest = {
   reason: string;
 };
 
-// Runs under the account lock (lib/account-lock): a second click, the
+// Runs under the account lock (lib/payments/account-lock): a second click, the
 // webhook of this very cancel, or a renewal waits for it to finish.
 export async function refundPayment(
   opts: RefundRequest,

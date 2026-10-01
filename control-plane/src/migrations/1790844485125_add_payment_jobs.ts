@@ -5,7 +5,7 @@ import { sql, type Kysely } from "kysely";
 // as the change it follows, so it exists exactly when the change does; the
 // request runs it right after committing, and the run-payment-jobs cron
 // retries what failed, with backoff, until it succeeds or gives up
-// (lib/payment-jobs.ts).
+// (lib/payments/payment-jobs.ts).
 //
 // dedupe_key keeps one job per thing owed — one receipt per payment, one
 // cancel mail per cancel — however often the code that owes it runs.

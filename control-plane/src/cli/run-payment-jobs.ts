@@ -1,6 +1,6 @@
-import { runDueJobs } from "@/lib/payment-jobs";
+import { runDueJobs } from "@/lib/payments/payment-jobs";
 
-// Every minute from cron.ts: the payment jobs (lib/payment-jobs) that are due —
+// Every minute from cron.ts: the payment jobs (lib/payments/payment-jobs) that are due —
 // a mail whose first send failed, a webhook's reconciliation the account was
 // too busy for.
 runDueJobs()

@@ -1,10 +1,10 @@
 import { sql, type Kysely } from "kysely";
 
 // The payment data's rules, kept by the database instead of only checked
-// overnight (lib/payment-invariants.ts), so a write that breaks one fails:
+// overnight (lib/payments/payment-invariants.ts), so a write that breaks one fails:
 //
 // - statuses are one of a known set, and change only along the transitions
-//   in lib/payment-states.ts (a trigger; a test compares the two);
+//   in lib/payments/payment-states.ts (a trigger; a test compares the two);
 // - an ended plan holds no billing key and no next charge, a running one
 //   (active, scheduled) holds both — checked when the transaction commits,
 //   since a cancel ends the plan and retires its key in two statements;

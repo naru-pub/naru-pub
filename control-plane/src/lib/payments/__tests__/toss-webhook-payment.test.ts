@@ -11,7 +11,7 @@ import {
   signatureHeaderNames,
   storedWebhookHeaders,
   webhookLedgerAction,
-} from "@/lib/toss-webhooks";
+} from "@/lib/payments/toss-webhooks";
 
 describe("Toss webhook parsing", () => {
   test("accepts payment status events", () => {

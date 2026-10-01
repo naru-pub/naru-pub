@@ -1,10 +1,10 @@
 import { sql } from "kysely";
-import { AccountBusyError } from "@/lib/account-lock";
+import { AccountBusyError } from "@/lib/payments/account-lock";
 import {
   sendPaymentCanceledNotice,
   sendSubscriptionCanceledNotice,
-} from "@/lib/cancellation-notices";
-import { sendChargeReceipt } from "@/lib/charge-receipts";
+} from "@/lib/payments/cancellation-notices";
+import { sendChargeReceipt } from "@/lib/payments/charge-receipts";
 import { db } from "@/lib/database";
 import {
   sendSubscriptionPastDueEmail,
@@ -14,9 +14,9 @@ import {
   type SubscriptionPastDueReason,
 } from "@/lib/email";
 import type { Executor } from "@/lib/entitlements";
-import { notePaymentEvent } from "@/lib/payment-events";
+import { notePaymentEvent } from "@/lib/payments/payment-events";
 // Keeps each mail sent from here in payment_mails.
-import "@/lib/payment-mails";
+import "@/lib/payments/payment-mails";
 
 // Work the payment code owes after a change, kept in payment_jobs (see the
 // migration that adds it): the mail a supporter is owed, a webhook's
@@ -54,7 +54,7 @@ export type PaymentJob =
     }
   // A webhook's reconciliation, retried until Toss can be asked.
   | { kind: "reconcile_payment"; paymentId: string }
-  // A plan's renewal for the day (lib/subscription-renewals).
+  // A plan's renewal for the day (lib/payments/subscription-renewals).
   | { kind: "renew_subscription"; subscriptionId: string };
 
 export const MAX_ATTEMPTS = 8;
@@ -223,12 +223,14 @@ async function handle(job: PaymentJob): Promise<void> {
       return sendPastDueNotice(job);
     case "renew_subscription": {
       // Imported here: renewals enqueue jobs themselves.
-      const { renewSubscription } = await import("@/lib/subscription-renewals");
+      const { renewSubscription } =
+        await import("@/lib/payments/subscription-renewals");
       return renewSubscription(job.subscriptionId);
     }
     case "reconcile_payment": {
       // Imported here: reconciliation enqueues jobs itself.
-      const { reconcilePayment } = await import("@/lib/payment-reconciliation");
+      const { reconcilePayment } =
+        await import("@/lib/payments/payment-reconciliation");
       // A little wait for the account, as a webhook used to: the operation
       // holding it is usually one that just finished.
       await reconcilePayment(job.paymentId, {
@@ -270,7 +272,7 @@ async function sendThankYou(paymentId: string): Promise<void> {
 // Grace periods follow supporter_until (lib/entitlements); the notice says
 // when this one ends, and is sent once per lapse.
 async function sendGraceNotice(subscriptionId: string): Promise<void> {
-  const { addPaymentGrace } = await import("@/lib/subscriptions");
+  const { addPaymentGrace } = await import("@/lib/payments/subscriptions");
   const row = await db
     .selectFrom("subscriptions")
     .innerJoin("users", "users.id", "subscriptions.user_id")

@@ -6,7 +6,7 @@ import DeleteAccountButton from "./DeleteAccountButton";
 import DownloadDirectoryButton from "./DownloadDirectoryButton";
 import ChangePasswordForm from "./ChangePasswordForm";
 import EmailManagement from "./EmailManagement";
-import { hasVerifiedEmail } from "@/lib/support";
+import { hasVerifiedEmail } from "@/lib/payments/support";
 import { Settings, User } from "lucide-react";
 
 export default async function AccountPage() {

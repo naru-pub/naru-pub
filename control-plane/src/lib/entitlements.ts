@@ -1,7 +1,7 @@
 import type { Kysely } from "kysely";
 import { db } from "@/lib/database";
 import type { DB } from "@/lib/db";
-import { addPaymentGrace, isCurrentPlan } from "@/lib/subscriptions";
+import { addPaymentGrace, isCurrentPlan } from "@/lib/payments/subscriptions";
 
 /**
  * Callers already inside a transaction must pass their own `tx`. Reaching for

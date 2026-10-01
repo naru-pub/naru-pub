@@ -9,7 +9,7 @@ import { getHomepageUrl } from "@/lib/site-urls";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
 import { LoadingBar } from "@/components/LoadingBar";
-import { hasSupportRelationship, PAYMENT_OPERATOR_USERS } from "@/lib/support";
+import { hasSupportRelationship, PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
 import { getUserFeatures, type Feature } from "@/lib/entitlements";
 import { AccountMenu, DocsMenu, ExtensionsMenu } from "@/components/NavMenus";
 

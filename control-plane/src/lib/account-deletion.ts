@@ -1,21 +1,21 @@
-import { withAccountLock } from "@/lib/account-lock";
+import { withAccountLock } from "@/lib/payments/account-lock";
 import {
   deleteRetiredBillingKey,
   retireUserBillingKeys,
-} from "@/lib/billing-keys";
+} from "@/lib/payments/billing-keys";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
-import { endPlan, plansOf } from "@/lib/subscriptions";
+import { endPlan, plansOf } from "@/lib/payments/subscriptions";
 import {
   reconcilePayment,
   settleOneTimeOrders,
-} from "@/lib/payment-reconciliation";
+} from "@/lib/payments/payment-reconciliation";
 
 export const CHARGE_IN_FLIGHT_MESSAGE =
   "결제 결과를 확인하고 있어 지금은 계정을 삭제할 수 없습니다. 잠시 후 다시 시도해 주세요.";
 
 // How long a deletion waits for another payment operation on the account
-// (lib/account-lock) before telling the supporter to try again.
+// (lib/payments/account-lock) before telling the supporter to try again.
 export const DELETION_LOCK_WAIT_MS = 10_000;
 
 // Run before anything of the account is deleted, under the account lock, so a

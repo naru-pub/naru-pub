@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import {
   LIVE_SUBSCRIPTION_STATUSES,
   type SubscriptionStatus,
-} from "@/lib/payment-states";
+} from "@/lib/payments/payment-states";
 import type { Updateable } from "kysely";
 import { db } from "@/lib/database";
 import type { DB } from "@/lib/db";
@@ -14,30 +14,30 @@ import {
   retireBillingKey,
   storeIssuedKey,
   type StoredKey,
-} from "@/lib/billing-keys";
+} from "@/lib/payments/billing-keys";
 import {
   reconcilePayment,
   settleOneTimeOrders,
-} from "@/lib/payment-reconciliation";
-import { chargeDueSubscriptions } from "@/lib/subscription-renewals";
+} from "@/lib/payments/payment-reconciliation";
+import { chargeDueSubscriptions } from "@/lib/payments/subscription-renewals";
 import {
   kstDate,
   notePaymentEvent,
   recordPaymentEvent,
   won,
-} from "@/lib/payment-events";
+} from "@/lib/payments/payment-events";
 import {
   canStartRecurringPurchase,
   scheduledRecurringStart,
-} from "@/lib/support-purchases";
+} from "@/lib/payments/support-purchases";
 import {
   applySuccessfulCharge,
   endPlan,
   plansOf,
   retireUnusedSignupKey,
   scheduleSubscriptionStart,
-} from "@/lib/subscriptions";
-import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
+} from "@/lib/payments/subscriptions";
+import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 import {
   BillingInterval,
   describeTossError,
@@ -46,8 +46,12 @@ import {
   PLAN_AMOUNTS,
   PLAN_ORDER_NAMES,
   TossApiError,
-} from "@/lib/toss";
-import { chargeOrder, issueKey, type IssueOutcome } from "@/lib/toss-gateway";
+} from "@/lib/payments/toss";
+import {
+  chargeOrder,
+  issueKey,
+  type IssueOutcome,
+} from "@/lib/payments/toss-gateway";
 
 type IssuedKey = Extract<IssueOutcome, { kind: "issued" }>;
 
@@ -63,7 +67,7 @@ type IssuedKey = Extract<IssueOutcome, { kind: "issued" }>;
 // Prepare changes nothing a supporter can see: a canceled or past_due plan
 // stays as it is until the new card is actually registered, so closing the
 // card window leaves the account where it was. Each step runs under the
-// account lock (lib/account-lock), so no renewal, refund or second callback
+// account lock (lib/payments/account-lock), so no renewal, refund or second callback
 // runs on the account meanwhile.
 //
 // The callback carries its registration's id in its path, and confirm acts
@@ -718,7 +722,7 @@ async function confirmAdoptedSignup(opts: {
   }
   const payment = outcome.payment;
 
-  // The thank-you goes with the grant (lib/payment-jobs); a doubled callback,
+  // The thank-you goes with the grant (lib/payments/payment-jobs); a doubled callback,
   // or the reconciler settling this order first, finds it already owed.
   await applySuccessfulCharge({
     subscriptionId: sub.id,

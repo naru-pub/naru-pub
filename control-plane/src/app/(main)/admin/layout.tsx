@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { validateRequest } from "@/lib/auth";
-import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
-import { isTossTestMode } from "@/lib/toss";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
+import { isTossTestMode } from "@/lib/payments/toss";
 import { AdminNav } from "./_components/AdminNav";
 
 export const metadata: Metadata = { title: "운영 · 나루" };

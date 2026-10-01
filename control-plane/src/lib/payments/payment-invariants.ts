@@ -1,10 +1,10 @@
 import { sql } from "kysely";
-import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
-import { deleteRetiredBillingKey } from "@/lib/billing-keys";
+import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
+import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
 import { db } from "@/lib/database";
-import { notePaymentEvent } from "@/lib/payment-events";
-import { supporterUntilFromLedger } from "@/lib/paid-time";
-import { retireUnusedSignupKey } from "@/lib/subscriptions";
+import { notePaymentEvent } from "@/lib/payments/payment-events";
+import { supporterUntilFromLedger } from "@/lib/payments/paid-time";
+import { retireUnusedSignupKey } from "@/lib/payments/subscriptions";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

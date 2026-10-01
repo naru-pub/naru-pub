@@ -5,10 +5,10 @@ import { db } from "@/lib/database";
 import {
   PAYMENT_EVENT_LABELS,
   type PaymentEventKind,
-} from "@/lib/payment-events";
-import { isTossLiveMode, isTossTestMode } from "@/lib/toss";
+} from "@/lib/payments/payment-events";
+import { isTossLiveMode, isTossTestMode } from "@/lib/payments/toss";
 import { Badge } from "@/components/ui/badge";
-import { STUCK_AFTER_ATTEMPTS } from "@/lib/billing-keys";
+import { STUCK_AFTER_ATTEMPTS } from "@/lib/payments/billing-keys";
 import { formatDate, formatKrw } from "./_components/format";
 import {
   PAYMENT_FILTERS,

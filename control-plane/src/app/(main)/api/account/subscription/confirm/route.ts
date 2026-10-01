@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
 import { assertJsonContentType } from "@/lib/utils";
-import { confirmSubscription } from "@/lib/subscription-signup";
+import { confirmSubscription } from "@/lib/payments/subscription-signup";
 import { parseUuid } from "@/lib/uuid";
 
 // Step 2 of the subscribe flow: exchanges the authKey for a billing key. When

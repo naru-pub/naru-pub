@@ -1,15 +1,15 @@
-import { PAYMENT_GRACE_DAYS } from "@/lib/subscriptions";
+import { PAYMENT_GRACE_DAYS } from "@/lib/payments/subscriptions";
 import Link from "next/link";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollText } from "lucide-react";
 
-import { REFUND_WINDOW_DAYS } from "@/lib/refunds";
+import { REFUND_WINDOW_DAYS } from "@/lib/payments/refunds";
 import {
   MAX_PURCHASABLE_ONE_TIME_YEARS,
   ONE_TIME_YEAR_AMOUNT,
   PLAN_AMOUNTS,
-} from "@/lib/toss";
+} from "@/lib/payments/toss";
 
 const krw = (amount: number) => `${amount.toLocaleString("ko-KR")}원`;
 

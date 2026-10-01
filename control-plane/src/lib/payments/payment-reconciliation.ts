@@ -4,7 +4,7 @@ import {
   LIVE_SUBSCRIPTION_STATUSES,
   ONE_TIME_BLOCKING_STATUSES,
   type PaymentStatus,
-} from "@/lib/payment-states";
+} from "@/lib/payments/payment-states";
 import { db } from "@/lib/database";
 import {
   BillingInterval,
@@ -13,20 +13,20 @@ import {
   paymentFlowForRecord,
   paymentProviderMetadata,
   TossPaymentResult,
-} from "@/lib/toss";
+} from "@/lib/payments/toss";
 import {
   applyOneTimePayment,
   applySuccessfulCharge,
   endPlan,
   retireUnusedSignupKey,
-} from "@/lib/subscriptions";
-import { withAccountLock } from "@/lib/account-lock";
-import { confirmOrder, lookupOrder } from "@/lib/toss-gateway";
-import { deleteRetiredBillingKey } from "@/lib/billing-keys";
-import { recordPaymentEvent, won } from "@/lib/payment-events";
-import { enqueueJob, runJobs } from "@/lib/payment-jobs";
-import { recordCancels } from "@/lib/payment-ledger";
-import { lockPaidTime, recomputePaidTime } from "@/lib/paid-time";
+} from "@/lib/payments/subscriptions";
+import { withAccountLock } from "@/lib/payments/account-lock";
+import { confirmOrder, lookupOrder } from "@/lib/payments/toss-gateway";
+import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
+import { recordPaymentEvent, won } from "@/lib/payments/payment-events";
+import { enqueueJob, runJobs } from "@/lib/payments/payment-jobs";
+import { recordCancels } from "@/lib/payments/payment-ledger";
+import { lockPaidTime, recomputePaidTime } from "@/lib/payments/paid-time";
 
 // An order Toss has never heard of is given up after this long. A one-time
 // order exists at Toss only once the buyer has opened the payment window,
@@ -63,7 +63,7 @@ export function lastAttemptAt(payment: {
 }
 
 export type ReconcileOptions = {
-  // How long to wait for the account lock (lib/account-lock): 0 for the
+  // How long to wait for the account lock (lib/payments/account-lock): 0 for the
   // background jobs, which skip a busy account until their next run.
   waitMs?: number;
   // Leave a key this retires queued for the delete-retired-billing-keys cron
@@ -532,7 +532,7 @@ async function confirmAuthenticatedPayment(
 
 // Asks Toss what became of a payment and brings the ledger, the account's
 // paid time and its plan in line. Runs under the account's lock
-// (lib/account-lock), waiting opts.waitMs (default 5 s) for it; throws
+// (lib/payments/account-lock), waiting opts.waitMs (default 5 s) for it; throws
 // AccountBusyError when another payment operation holds it.
 export async function reconcilePayment(
   paymentId: string,

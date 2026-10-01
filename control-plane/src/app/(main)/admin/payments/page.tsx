@@ -21,7 +21,7 @@ import {
 } from "../_components/metrics";
 import { ReconcilePaymentButton } from "../_components/ReconcilePaymentButton";
 import { RecoverChargeButton } from "../_components/RecoverChargeButton";
-import { RECOVERABLE_STATUSES } from "@/lib/payment-reconciliation";
+import { RECOVERABLE_STATUSES } from "@/lib/payments/payment-reconciliation";
 import { requireOperator } from "../_components/requireOperator";
 
 export const metadata: Metadata = { title: "결제 · 운영 · 나루" };

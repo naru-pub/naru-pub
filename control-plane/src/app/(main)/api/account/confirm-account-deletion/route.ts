@@ -24,8 +24,8 @@ import {
   deleteUserRow,
   settleChargesBeforeDeletion,
 } from "@/lib/account-deletion";
-import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
-import { deleteRetiredBillingKey } from "@/lib/billing-keys";
+import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
+import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
 
 export async function POST(request: NextRequest) {
   try {

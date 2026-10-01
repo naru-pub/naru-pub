@@ -1,5 +1,5 @@
 import { db } from "@/lib/database";
-import { addPaymentGrace } from "@/lib/subscriptions";
+import { addPaymentGrace } from "@/lib/payments/subscriptions";
 import {
   sendPaymentCanceledEmail,
   sendSubscriptionCanceledEmail,
@@ -8,7 +8,7 @@ import {
 
 // Mail for the two ways a billing relationship winds down: a payment canceled
 // (refunded), and recurring billing stopped. Run as payment jobs
-// (lib/payment-jobs): a failed send throws and is tried again; it never undoes
+// (lib/payments/payment-jobs): a failed send throws and is tried again; it never undoes
 // the change it reports.
 
 // When paid features actually end after the change, or null when they

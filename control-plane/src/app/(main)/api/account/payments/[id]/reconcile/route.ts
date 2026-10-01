@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
+import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
 import { assertJsonContentType } from "@/lib/utils";
 import { parseUuid } from "@/lib/uuid";
-import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
 
 export async function POST(
   request: NextRequest,

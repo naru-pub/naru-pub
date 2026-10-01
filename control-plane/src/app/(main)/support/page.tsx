@@ -7,10 +7,10 @@ import { SupportPerks } from "@/components/SupportPerks";
 import { SupportPolicy } from "@/components/SupportPolicy";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { plansOf } from "@/lib/subscriptions";
+import { plansOf } from "@/lib/payments/subscriptions";
 import { getUserEntitlement } from "@/lib/entitlements";
-import { hasVerifiedEmail } from "@/lib/support";
-import { ONE_TIME_YEAR_AMOUNT, PLAN_AMOUNTS } from "@/lib/toss";
+import { hasVerifiedEmail } from "@/lib/payments/support";
+import { ONE_TIME_YEAR_AMOUNT, PLAN_AMOUNTS } from "@/lib/payments/toss";
 import SupportCard from "../account/SupportCard";
 
 const krw = (amount: number) => `${amount.toLocaleString("ko-KR")}원`;

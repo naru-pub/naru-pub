@@ -1,4 +1,4 @@
-import "@/lib/toss-calls";
+import "@/lib/payments/toss-calls";
 import { randomUUID } from "crypto";
 import {
   cancelPayment,
@@ -11,7 +11,7 @@ import {
   TossApiError,
   type TossPaymentFlow,
   type TossPaymentResult,
-} from "@/lib/toss";
+} from "@/lib/payments/toss";
 
 // The payment code's one way to Toss for anything that moves money. Each
 // operation answers with what became of it — approved, declined, or not
@@ -20,8 +20,8 @@ import {
 // so, a 4xx is not always a verdict on the card, and a lookup that finds
 // nothing means nothing was charged only when Toss refused on the merits.
 //
-// It reaches Toss through lib/toss's exports, the seam the payment tests mock,
-// and every call is kept in toss_calls (lib/toss-calls).
+// It reaches Toss through lib/payments/toss's exports, the seam the payment tests mock,
+// and every call is kept in toss_calls (lib/payments/toss-calls).
 
 export type OrderOutcome =
   | { kind: "approved"; payment: TossPaymentResult }

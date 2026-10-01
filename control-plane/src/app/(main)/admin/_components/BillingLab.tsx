@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-// Mirrors lib/billing-lab.ts, which pulls in server code and so is not
+// Mirrors lib/payments/billing-lab.ts, which pulls in server code and so is not
 // imported here.
 type Row = Record<string, string | number | boolean | null>;
 type Snapshot = {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertJsonContentType } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
-import { prepareCardChange } from "@/lib/subscription-signup";
+import { prepareCardChange } from "@/lib/payments/subscription-signup";
 
 // Starts registering a new card for an active or scheduled subscription. The
 // callback and confirm are the subscribe flow's; the registration id tells

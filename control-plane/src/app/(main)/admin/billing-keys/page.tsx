@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import { maskSecret } from "@/lib/toss";
+import { maskSecret } from "@/lib/payments/toss";
 import { db } from "@/lib/database";
-import { STUCK_AFTER_ATTEMPTS } from "@/lib/billing-keys";
+import { STUCK_AFTER_ATTEMPTS } from "@/lib/payments/billing-keys";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,

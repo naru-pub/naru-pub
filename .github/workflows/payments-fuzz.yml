@@ -34,7 +34,7 @@ jobs:
       - run: npm install --global pnpm@11.5.2
       - run: pnpm install --frozen-lockfile
       - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-16
-      - run: pnpm test:payments:db src/lib/__tests__/billing-db-chaos
+      - run: pnpm test:payments:db src/lib/payments/__tests__/billing-db-chaos
         env:
           NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
           FUZZ_RUNS: ${{ inputs.runs || '500' }}

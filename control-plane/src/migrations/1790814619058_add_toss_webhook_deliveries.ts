@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 // One row per webhook delivery from Toss: what arrived, what 나루 did with
 // it, and how it answered. /admin lists the recent ones, so a delivery that
 // changed nothing is as visible as one that failed. Rows older than 90 days
-// are pruned (lib/payment-events.ts).
+// are pruned (lib/payments/payment-events.ts).
 // `any` is required here since migrations should be frozen in time.
 export async function up(db: Kysely<any>): Promise<void> {
   await db.schema

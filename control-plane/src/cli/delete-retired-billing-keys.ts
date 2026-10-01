@@ -1,5 +1,5 @@
-import { deleteRetiredBillingKeys } from "@/lib/billing-keys";
-import { retireAbandonedSignupKeys } from "@/lib/payment-invariants";
+import { deleteRetiredBillingKeys } from "@/lib/payments/billing-keys";
+import { retireAbandonedSignupKeys } from "@/lib/payments/payment-invariants";
 
 async function main() {
   // Abandoned signups' keys join the queue first, so this run deletes them.

@@ -1,8 +1,8 @@
 import { sql } from "kysely";
 import { db } from "@/lib/database";
-import { AccountBusyError } from "@/lib/account-lock";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
-import { REFUND_WINDOW_DAYS } from "@/lib/refunds";
+import { AccountBusyError } from "@/lib/payments/account-lock";
+import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
+import { REFUND_WINDOW_DAYS } from "@/lib/payments/refunds";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

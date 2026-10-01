@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { assertJsonContentType } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { deleteRetiredBillingKey } from "@/lib/billing-keys";
-import { runJobs } from "@/lib/payment-jobs";
-import { endPlan, plansOf } from "@/lib/subscriptions";
-import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
+import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
+import { runJobs } from "@/lib/payments/payment-jobs";
+import { endPlan, plansOf } from "@/lib/payments/subscriptions";
+import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 
 // Cancels auto-renewal. Access (supporter_until) is left intact so the user
 // keeps the feature through the already-paid period; the renewal cron skips
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Under the account lock (lib/account-lock), so no renewal is charging
+    // Under the account lock (lib/payments/account-lock), so no renewal is charging
     // the plan meanwhile, and the plan is looked up only once it is held: a
     // signup confirming meanwhile may be starting the very plan this click
     // means to cancel, and a scheduled plan that was just charged is active

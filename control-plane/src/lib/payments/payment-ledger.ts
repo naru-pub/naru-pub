@@ -1,6 +1,6 @@
 import { sql } from "kysely";
 import type { Executor } from "@/lib/entitlements";
-import type { TossPaymentResult } from "@/lib/toss";
+import type { TossPaymentResult } from "@/lib/payments/toss";
 
 // The append-only record of money that moved (payment_transactions, see the
 // migration that adds it): the approval of each payment and every cancel Toss

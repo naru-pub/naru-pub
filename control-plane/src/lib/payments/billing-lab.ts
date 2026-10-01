@@ -1,15 +1,18 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/database";
-import { movePaidTimeForLab } from "@/lib/paid-time";
-import { chargeableKey, deleteRetiredBillingKeys } from "@/lib/billing-keys";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
-import { refundPayment } from "@/lib/refunds";
-import { chargeDueSubscriptions } from "@/lib/subscription-renewals";
+import { movePaidTimeForLab } from "@/lib/payments/paid-time";
+import {
+  chargeableKey,
+  deleteRetiredBillingKeys,
+} from "@/lib/payments/billing-keys";
+import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
+import { refundPayment } from "@/lib/payments/refunds";
+import { chargeDueSubscriptions } from "@/lib/payments/subscription-renewals";
 import {
   isCurrentPlan,
   PAYMENT_GRACE_DAYS,
   plansOf,
-} from "@/lib/subscriptions";
+} from "@/lib/payments/subscriptions";
 import {
   deleteBillingKey,
   isTossTestMode,
@@ -17,7 +20,7 @@ import {
   TossApiError,
   TossCallRecord,
   withTossLab,
-} from "@/lib/toss";
+} from "@/lib/payments/toss";
 import { POST as tossWebhook } from "@/app/(main)/api/webhooks/toss/route";
 
 // The billing lab runs the real billing code on demand against Toss's test
@@ -329,7 +332,7 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
         // As when the card is removed outside 나루: the key is deleted at
         // Toss first, then Toss sends BILLING_DELETED. Deleting it a second
         // time shows how Toss answers for a key it no longer has, which its
-        // docs leave open (alreadyGone in lib/billing-keys.ts relies on it).
+        // docs leave open (alreadyGone in lib/payments/billing-keys.ts relies on it).
         await deleteBillingKey(billingKey);
         let secondDelete = "두 번째 삭제: 성공";
         try {

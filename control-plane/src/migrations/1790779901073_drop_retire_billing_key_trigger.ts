@@ -1,7 +1,7 @@
 import { sql, type Kysely } from "kysely";
 
 // Retiring a billing key is done in application code now (retireBillingKey in
-// lib/billing-keys.ts, deleteUserRow in lib/account-deletion.ts), guarded by
+// lib/payments/billing-keys.ts, deleteUserRow in lib/account-deletion.ts), guarded by
 // billing-key-writes-payment.test.ts. The trigger that did the same in the
 // database is dropped; retired_billing_keys stays as the queue both use.
 //

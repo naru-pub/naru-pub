@@ -1,9 +1,9 @@
-import { runJobs } from "@/lib/payment-jobs";
-import { enqueueDueRenewals } from "@/lib/subscription-renewals";
+import { runJobs } from "@/lib/payments/payment-jobs";
+import { enqueueDueRenewals } from "@/lib/payments/subscription-renewals";
 
 // Hourly from cron.ts: queues a renewal job for each plan due by the last
 // 09:00 KST and not tried in the last day, and runs them
-// (lib/subscription-renewals). What it cannot finish, the job queue retries.
+// (lib/payments/subscription-renewals). What it cannot finish, the job queue retries.
 enqueueDueRenewals()
   .then(async ({ due, jobs }) => {
     await runJobs(jobs);

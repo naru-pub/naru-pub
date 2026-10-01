@@ -1,7 +1,7 @@
 import { sql } from "kysely";
 import { db } from "@/lib/database";
-import { AccountBusyError } from "@/lib/account-lock";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
+import { AccountBusyError } from "@/lib/payments/account-lock";
+import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
 
 const STALE_AFTER_MS = 2 * 60 * 1000;
 const BATCH_SIZE = 100;

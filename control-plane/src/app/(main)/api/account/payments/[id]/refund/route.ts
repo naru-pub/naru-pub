@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { refundPayment, RefundError } from "@/lib/refunds";
-import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
-import { TossApiError } from "@/lib/toss";
+import { refundPayment, RefundError } from "@/lib/payments/refunds";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
+import { TossApiError } from "@/lib/payments/toss";
 import { assertJsonContentType } from "@/lib/utils";
 import { parseUuid } from "@/lib/uuid";
 

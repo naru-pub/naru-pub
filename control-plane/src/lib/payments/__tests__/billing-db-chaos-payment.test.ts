@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import { afterAll, describe, expect, jest, test } from "@jest/globals";
 import { AsyncLocalStorage } from "async_hooks";
-import type { TossPaymentResult } from "@/lib/toss";
+import type { TossPaymentResult } from "@/lib/payments/toss";
 
 // Random payment operations, several at once, on a handful of accounts,
 // against a fake Toss that approves, declines, loses answers and fails at
@@ -54,8 +54,10 @@ function asPayment(order: FakeOrder): TossPaymentResult {
   };
 }
 
-jest.mock("@/lib/toss", () => {
-  const actual = jest.requireActual<typeof import("@/lib/toss")>("@/lib/toss");
+jest.mock("@/lib/payments/toss", () => {
+  const actual = jest.requireActual<typeof import("@/lib/payments/toss")>(
+    "@/lib/payments/toss",
+  );
   const { TossApiError } = actual;
   const roll = () => fake.random();
   const pause = () =>
@@ -208,23 +210,24 @@ const { sql } = require("kysely") as typeof import("kysely");
 const { db } = require("@/lib/database") as typeof import("@/lib/database");
 const auth = require("@/lib/auth") as jest.Mocked<typeof import("@/lib/auth")>;
 const { NextRequest } = require("next/server") as typeof import("next/server");
-const { TossApiError } = require("@/lib/toss") as typeof import("@/lib/toss");
+const { TossApiError } =
+  require("@/lib/payments/toss") as typeof import("@/lib/payments/toss");
 const { AccountBusyError, closeAccountLockPool } =
-  require("@/lib/account-lock") as typeof import("@/lib/account-lock");
+  require("@/lib/payments/account-lock") as typeof import("@/lib/payments/account-lock");
 const signup =
-  require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
+  require("@/lib/payments/subscription-signup") as typeof import("@/lib/payments/subscription-signup");
 const { enqueueDueRenewals } =
-  require("@/lib/subscription-renewals") as typeof import("@/lib/subscription-renewals");
+  require("@/lib/payments/subscription-renewals") as typeof import("@/lib/payments/subscription-renewals");
 const { reconcilePayment } =
-  require("@/lib/payment-reconciliation") as typeof import("@/lib/payment-reconciliation");
+  require("@/lib/payments/payment-reconciliation") as typeof import("@/lib/payments/payment-reconciliation");
 const { refundPayment, RefundError } =
-  require("@/lib/refunds") as typeof import("@/lib/refunds");
+  require("@/lib/payments/refunds") as typeof import("@/lib/payments/refunds");
 const { deleteRetiredBillingKeys } =
-  require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
+  require("@/lib/payments/billing-keys") as typeof import("@/lib/payments/billing-keys");
 const { runDueJobs, runJobs } =
-  require("@/lib/payment-jobs") as typeof import("@/lib/payment-jobs");
+  require("@/lib/payments/payment-jobs") as typeof import("@/lib/payments/payment-jobs");
 const { checkPaymentInvariants } =
-  require("@/lib/payment-invariants") as typeof import("@/lib/payment-invariants");
+  require("@/lib/payments/payment-invariants") as typeof import("@/lib/payments/payment-invariants");
 const { POST: cancelRoute } =
   require("@/app/(main)/api/account/subscription/cancel/route") as typeof import("@/app/(main)/api/account/subscription/cancel/route");
 const { POST: oneTimePrepareRoute } =

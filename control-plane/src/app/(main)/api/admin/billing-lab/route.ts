@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
-import { LabAction, LabError, runLabAction } from "@/lib/billing-lab";
-import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
-import { isTossTestMode } from "@/lib/toss";
+import { LabAction, LabError, runLabAction } from "@/lib/payments/billing-lab";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
+import { isTossTestMode } from "@/lib/payments/toss";
 import { assertJsonContentType } from "@/lib/utils";
 import { parseUuid } from "@/lib/uuid";
 
@@ -50,7 +50,7 @@ function parseAction(body: Record<string, unknown>): LabAction | null {
   }
 }
 
-// The billing lab (lib/billing-lab.ts). Payment operators only, and only where
+// The billing lab (lib/payments/billing-lab.ts). Payment operators only, and only where
 // every Toss key is a test key: these actions charge and refund for real.
 export async function POST(request: NextRequest) {
   try {

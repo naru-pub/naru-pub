@@ -3,10 +3,10 @@ import { validateRequest } from "@/lib/auth";
 import {
   EMAIL_VERIFICATION_REQUIRED_MESSAGE,
   hasVerifiedEmail,
-} from "@/lib/support";
+} from "@/lib/payments/support";
 import { assertJsonContentType } from "@/lib/utils";
-import { isBillingInterval } from "@/lib/toss";
-import { prepareSubscription } from "@/lib/subscription-signup";
+import { isBillingInterval } from "@/lib/payments/toss";
+import { prepareSubscription } from "@/lib/payments/subscription-signup";
 
 // Step 1 of the subscribe flow: records the chosen plan as an incomplete
 // subscription and returns the stable Toss customerKey for requestBillingAuth,

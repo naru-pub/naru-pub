@@ -1,12 +1,12 @@
 import { db } from "@/lib/database";
-import { AccountBusyError } from "@/lib/account-lock";
-import { notePaymentEvent, won } from "@/lib/payment-events";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
+import { AccountBusyError } from "@/lib/payments/account-lock";
+import { notePaymentEvent, won } from "@/lib/payments/payment-events";
+import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
 import {
   listTransactions,
   tossSecretKeys,
   type TossTransaction,
-} from "@/lib/toss";
+} from "@/lib/payments/toss";
 
 // Once a day, the books against the money: every transaction Toss recorded
 // for a day (GET /v1/transactions, both MIDs) against payment_transactions.

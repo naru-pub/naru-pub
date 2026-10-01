@@ -2,20 +2,20 @@ import { sql } from "kysely";
 import {
   ENDED_SUBSCRIPTION_STATUSES,
   type SubscriptionStatus,
-} from "@/lib/payment-states";
+} from "@/lib/payments/payment-states";
 import type { SubscriptionCancelReason } from "@/lib/email";
-import { extendPaidTime, lockPaidTime } from "@/lib/paid-time";
-import { recordApproval } from "@/lib/payment-ledger";
-import { enqueueJob, runJobs } from "@/lib/payment-jobs";
+import { extendPaidTime, lockPaidTime } from "@/lib/payments/paid-time";
+import { recordApproval } from "@/lib/payments/payment-ledger";
+import { enqueueJob, runJobs } from "@/lib/payments/payment-jobs";
 import { db } from "@/lib/database";
-import { retireBillingKey } from "@/lib/billing-keys";
+import { retireBillingKey } from "@/lib/payments/billing-keys";
 import type { Executor } from "@/lib/entitlements";
 import {
   kstDate,
   notePaymentEvent,
   recordPaymentEvent,
   won,
-} from "@/lib/payment-events";
+} from "@/lib/payments/payment-events";
 import {
   addInterval,
   addMonths,
@@ -23,7 +23,7 @@ import {
   isOneTimeYears,
   paymentProviderMetadata,
   TossPaymentResult,
-} from "@/lib/toss";
+} from "@/lib/payments/toss";
 
 // A renewal is tried at most once a day. This value is the payment grace window
 // before a subscription becomes past_due and related paid-only resources are
@@ -304,7 +304,7 @@ export async function applyOneTimePayment(opts: {
         subscriptionId: deferred?.id,
         summary: `한 번만 결제 ${won(opts.amount)} (${opts.years}년) · ${kstDate(periodEnd)}까지${deferred ? " · 진행 중인 정기 결제의 다음 결제를 그 뒤로 미룸" : ""}`,
       });
-      // The thank-you owed for it, in this transaction (lib/payment-jobs):
+      // The thank-you owed for it, in this transaction (lib/payments/payment-jobs):
       // sent once, and only if the grant commits.
       const notice = opts.paymentId
         ? await enqueueJob(

@@ -5,7 +5,7 @@ import { sql, type Kysely } from "kysely";
 // full, partial, from 나루 or from the Toss dashboard — keyed by Toss's
 // transactionKey, so seeing the same cancel twice records it once.
 // payments.refunded_amount is the sum of a payment's cancels here
-// (lib/payment-ledger.ts); the invariant check compares them.
+// (lib/payments/payment-ledger.ts); the invariant check compares them.
 //
 // Rows are only inserted: a trigger refuses UPDATE. DELETE stays possible
 // for the cascade from a deleted account, whose payments go with it.
@@ -58,7 +58,7 @@ export async function up(db: Kysely<any>): Promise<void> {
   `.execute(db);
 
   // What the payments say so far: their approvals, the cancels in the last
-  // answer Toss gave for each (payments.raw), keyed as lib/payment-ledger.ts
+  // answer Toss gave for each (payments.raw), keyed as lib/payments/payment-ledger.ts
   // keys them, and — where that answer has none — what was refunded as one
   // cancel.
   await sql`

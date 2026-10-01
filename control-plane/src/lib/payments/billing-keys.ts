@@ -1,9 +1,9 @@
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
-import { notePaymentEvent } from "@/lib/payment-events";
-import { maskSecret } from "@/lib/toss";
-import { deleteKey } from "@/lib/toss-gateway";
+import { notePaymentEvent } from "@/lib/payments/payment-events";
+import { maskSecret } from "@/lib/payments/toss";
+import { deleteKey } from "@/lib/payments/toss-gateway";
 
 // Every billing key Toss issues is a billing_keys row (see the migration that
 // adds it) and goes one way: active while a plan may charge it, retired once

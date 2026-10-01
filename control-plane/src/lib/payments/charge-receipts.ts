@@ -5,7 +5,7 @@ import { sendRecurringChargeReceiptEmail } from "@/lib/email";
 // renewal, a scheduled first charge, or either one settled late by the
 // reconciler. The signup's own first charge is answered by its thank-you mail
 // instead. Call it only when applySuccessfulCharge reports `granted`, so one
-// payment gets one receipt. Run as a payment job (lib/payment-jobs): a failed
+// payment gets one receipt. Run as a payment job (lib/payments/payment-jobs): a failed
 // send throws, and the job is tried again; it never undoes the charge.
 export async function sendChargeReceipt(paymentId: string): Promise<void> {
   {

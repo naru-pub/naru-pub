@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { validateRequest } from "@/lib/auth";
-import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
 
 // Layouts are not re-run on client navigation, so each page checks too.
 export async function requireOperator() {

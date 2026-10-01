@@ -6,13 +6,13 @@ import {
   paymentProviderMetadata,
   TossApiError,
   tossSecretKeys,
-} from "@/lib/toss";
-import { markDeletedAtToss } from "@/lib/billing-keys";
-import { endPlan } from "@/lib/subscriptions";
-import { withAccountLock } from "@/lib/account-lock";
-import { lookupOrder } from "@/lib/toss-gateway";
-import { enqueueJob, runJobs } from "@/lib/payment-jobs";
-import { recordWebhookDelivery } from "@/lib/payment-events";
+} from "@/lib/payments/toss";
+import { markDeletedAtToss } from "@/lib/payments/billing-keys";
+import { endPlan } from "@/lib/payments/subscriptions";
+import { withAccountLock } from "@/lib/payments/account-lock";
+import { lookupOrder } from "@/lib/payments/toss-gateway";
+import { enqueueJob, runJobs } from "@/lib/payments/payment-jobs";
+import { recordWebhookDelivery } from "@/lib/payments/payment-events";
 import {
   formatWebhookLog,
   isTrustedWebhookSource,
@@ -22,7 +22,7 @@ import {
   storedWebhookHeaders,
   webhookLedgerAction,
   WebhookLogEntry,
-} from "@/lib/toss-webhooks";
+} from "@/lib/payments/toss-webhooks";
 
 type Delivery = Omit<WebhookLogEntry, "httpStatus" | "durationMs">;
 
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
       if (!isTrustedWebhookSource(sourceIp)) {
         return respond(200, `ignored: untrusted address ${sourceIp}`);
       }
-      // Under the owner's account lock (lib/account-lock): no charge or card
+      // Under the owner's account lock (lib/payments/account-lock): no charge or card
       // change on that plan runs while it is canceled.
       const key = await db
         .selectFrom("billing_keys")

@@ -7,7 +7,7 @@ import { sql, type Kysely } from "kysely";
 //
 // A trigger queues every key that leaves subscriptions.toss_billing_key, so no
 // code path that clears or replaces a key (or deletes the row) can forget to.
-// lib/billing-keys.ts deletes queued keys at Toss and drops the row once Toss
+// lib/payments/billing-keys.ts deletes queued keys at Toss and drops the row once Toss
 // confirms, so the plain-text copy does not outlive the key itself.
 export async function up(db: Kysely<any>): Promise<void> {
   await db.schema

@@ -282,7 +282,7 @@ async function tossRequest<T>(
   }
 }
 
-// Where calls are kept (toss_calls), set by lib/toss-calls.ts so this module
+// Where calls are kept (toss_calls), set by lib/payments/toss-calls.ts so this module
 // stays free of the database; unset (unit tests, scripts) nothing is kept.
 type TossCallRecorder = (
   record: TossCallRecord,

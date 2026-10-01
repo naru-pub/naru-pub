@@ -21,7 +21,7 @@ export type PaymentMailRecord = {
   error: string | null;
 };
 
-// Set by lib/payment-mails.ts, which keeps each payment mail in the
+// Set by lib/payments/payment-mails.ts, which keeps each payment mail in the
 // database; email.ts itself stays free of it.
 let paymentMailRecorder: ((record: PaymentMailRecord) => Promise<void>) | null =
   null;
@@ -648,7 +648,7 @@ export type SubscriptionCancelReason =
 // Sent when recurring billing stops, so the supporter has it in writing that
 // the card will not be charged again. A refund that stops it says so in its
 // own cancel mail instead; this covers the refunds whose stop that mail
-// cannot report (see stopRecurringBilling in lib/refunds.ts).
+// cannot report (see stopRecurringBilling in lib/payments/refunds.ts).
 export async function sendSubscriptionCanceledEmail(opts: {
   // What the mail is about, for the payment_mails record.
   ref?: PaymentMailRef;

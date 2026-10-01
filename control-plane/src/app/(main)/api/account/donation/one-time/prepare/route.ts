@@ -5,26 +5,26 @@ import { validateRequest } from "@/lib/auth";
 import {
   EMAIL_VERIFICATION_REQUIRED_MESSAGE,
   hasVerifiedEmail,
-} from "@/lib/support";
+} from "@/lib/payments/support";
 import { db } from "@/lib/database";
-import { plansOf } from "@/lib/subscriptions";
+import { plansOf } from "@/lib/payments/subscriptions";
 import {
   isPurchasableOneTimeYears,
   withNewOrderId,
   oneTimeAmount,
   oneTimeOrderName,
-} from "@/lib/toss";
-import { canStartOneTimePurchase } from "@/lib/support-purchases";
-import { ONE_TIME_BLOCKING_STATUSES } from "@/lib/payment-states";
+} from "@/lib/payments/toss";
+import { canStartOneTimePurchase } from "@/lib/payments/support-purchases";
+import { ONE_TIME_BLOCKING_STATUSES } from "@/lib/payments/payment-states";
 import {
   settleOneTimeOrders,
   UNCONFIRMED_EXPIRY_MS,
-} from "@/lib/payment-reconciliation";
-import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
+} from "@/lib/payments/payment-reconciliation";
+import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 
 // Unconfirmed one-time orders an account may have open at once.
 const MAX_PENDING_ONE_TIME_ORDERS = 10;
-import { settlePendingCharges } from "@/lib/subscription-signup";
+import { settlePendingCharges } from "@/lib/payments/subscription-signup";
 
 // One-time donation step 1: returns a server-generated orderId + the
 // authoritative amount for requestPayment.
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // The rest runs under the account lock (lib/account-lock): no renewal,
+    // The rest runs under the account lock (lib/payments/account-lock): no renewal,
     // signup or other purchase on the account runs meanwhile.
     try {
       return await withAccountLock(user.id, { waitMs: 5000 }, async () => {

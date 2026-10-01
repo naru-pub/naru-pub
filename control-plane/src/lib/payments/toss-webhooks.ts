@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import type { TossPaymentFlow } from "@/lib/toss";
+import type { TossPaymentFlow } from "@/lib/payments/toss";
 
 export type TossWebhookEvent =
   | { type: "payment-status-changed"; orderId: string }

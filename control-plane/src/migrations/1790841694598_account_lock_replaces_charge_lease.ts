@@ -1,7 +1,7 @@
 import type { Kysely } from "kysely";
 
 // Payment operations on one account are now serialized by a PostgreSQL
-// advisory lock (lib/account-lock.ts, docs/design/payment-account-lock.md), so
+// advisory lock (lib/payments/account-lock.ts, docs/design/payment-account-lock.md), so
 // the charge lease on subscriptions goes.
 //
 // charge_attempted_at is when a charge or confirm for the order was last sent

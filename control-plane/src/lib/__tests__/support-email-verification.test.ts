@@ -1,5 +1,5 @@
 import { describe, expect, test } from "@jest/globals";
-import { hasVerifiedEmail } from "@/lib/support";
+import { hasVerifiedEmail } from "@/lib/payments/support";
 
 describe("support email verification requirement", () => {
   test("allows a user with a verified email address", () => {

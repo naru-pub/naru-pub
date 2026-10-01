@@ -5,7 +5,7 @@ import { ArrowLeft, ReceiptText } from "lucide-react";
 
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { refundEligibility, REFUND_WINDOW_DAYS } from "@/lib/refunds";
+import { refundEligibility, REFUND_WINDOW_DAYS } from "@/lib/payments/refunds";
 import { RefundPaymentButton } from "@/components/RefundPaymentButton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

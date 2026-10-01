@@ -3,7 +3,7 @@ import {
   canStartOneTimePurchase,
   canStartRecurringPurchase,
   scheduledRecurringStart,
-} from "@/lib/support-purchases";
+} from "@/lib/payments/support-purchases";
 
 const now = new Date("2026-09-01T00:00:00Z");
 

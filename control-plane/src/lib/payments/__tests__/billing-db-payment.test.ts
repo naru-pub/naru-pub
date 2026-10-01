@@ -9,11 +9,16 @@ import {
   test,
 } from "@jest/globals";
 import { createHmac, randomUUID } from "crypto";
-import type { TossPaymentResult } from "@/lib/toss";
-import type { PaymentStatus, SubscriptionStatus } from "@/lib/payment-states";
+import type { TossPaymentResult } from "@/lib/payments/toss";
+import type {
+  PaymentStatus,
+  SubscriptionStatus,
+} from "@/lib/payments/payment-states";
 
-jest.mock("@/lib/toss", () => {
-  const actual = jest.requireActual<typeof import("@/lib/toss")>("@/lib/toss");
+jest.mock("@/lib/payments/toss", () => {
+  const actual = jest.requireActual<typeof import("@/lib/payments/toss")>(
+    "@/lib/payments/toss",
+  );
   return {
     ...actual,
     cancelPayment: jest.fn(),
@@ -45,7 +50,9 @@ jest.mock("@/lib/operator-alerts", () => ({
 // imports.
 const { sql } = require("kysely") as typeof import("kysely");
 const { db } = require("@/lib/database") as typeof import("@/lib/database");
-const toss = require("@/lib/toss") as jest.Mocked<typeof import("@/lib/toss")>;
+const toss = require("@/lib/payments/toss") as jest.Mocked<
+  typeof import("@/lib/payments/toss")
+>;
 const email = require("@/lib/email") as jest.Mocked<
   typeof import("@/lib/email")
 >;
@@ -55,33 +62,35 @@ const {
   applySuccessfulCharge,
   MAX_PAYMENT_RETRY_ATTEMPTS,
   scheduleSubscriptionStart,
-} = require("@/lib/subscriptions") as typeof import("@/lib/subscriptions");
+} =
+  require("@/lib/payments/subscriptions") as typeof import("@/lib/payments/subscriptions");
 const { chargeDueSubscriptions, enqueueDueRenewals } =
-  require("@/lib/subscription-renewals") as typeof import("@/lib/subscription-renewals");
+  require("@/lib/payments/subscription-renewals") as typeof import("@/lib/payments/subscription-renewals");
 const {
   AccountBusyError,
   closeAccountLockPool,
   PAYMENTS_LOCK_SPACE,
   runOutsideAccountLocks,
   withAccountLock,
-} = require("@/lib/account-lock") as typeof import("@/lib/account-lock");
+} =
+  require("@/lib/payments/account-lock") as typeof import("@/lib/payments/account-lock");
 const { Client: PgClient } = require("pg") as typeof import("pg");
 const { reconcilePayment, recoverOrphanedCharge } =
-  require("@/lib/payment-reconciliation") as typeof import("@/lib/payment-reconciliation");
+  require("@/lib/payments/payment-reconciliation") as typeof import("@/lib/payments/payment-reconciliation");
 const { refundPayment } =
-  require("@/lib/refunds") as typeof import("@/lib/refunds");
+  require("@/lib/payments/refunds") as typeof import("@/lib/payments/refunds");
 const { syncPaymentRefunds } =
-  require("@/lib/refund-sync") as typeof import("@/lib/refund-sync");
+  require("@/lib/payments/refund-sync") as typeof import("@/lib/payments/refund-sync");
 const { runLabAction } =
-  require("@/lib/billing-lab") as typeof import("@/lib/billing-lab");
+  require("@/lib/payments/billing-lab") as typeof import("@/lib/payments/billing-lab");
 const { sendPaymentEventDigest } =
-  require("@/lib/payment-events") as typeof import("@/lib/payment-events");
+  require("@/lib/payments/payment-events") as typeof import("@/lib/payments/payment-events");
 const { PAYMENT_FILTERS, supporterCondition } =
   require("@/app/(main)/admin/_components/metrics") as typeof import("@/app/(main)/admin/_components/metrics");
 const { getUserEntitlement } =
   require("@/lib/entitlements") as typeof import("@/lib/entitlements");
 const { deleteRetiredBillingKey, deleteRetiredBillingKeys, retireBillingKey } =
-  require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
+  require("@/lib/payments/billing-keys") as typeof import("@/lib/payments/billing-keys");
 const { deleteUserRow, settleChargesBeforeDeletion } =
   require("@/lib/account-deletion") as typeof import("@/lib/account-deletion");
 const { POST: oneTimePrepareRoute } =
@@ -89,17 +98,18 @@ const { POST: oneTimePrepareRoute } =
 const { POST: oneTimeConfirmRoute } =
   require("@/app/(main)/api/account/donation/one-time/confirm/route") as typeof import("@/app/(main)/api/account/donation/one-time/confirm/route");
 const { confirmSubscription, prepareCardChange, prepareSubscription } =
-  require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
+  require("@/lib/payments/subscription-signup") as typeof import("@/lib/payments/subscription-signup");
 const { enqueueJob, runDueJobs, runJobs, MAX_ATTEMPTS } =
-  require("@/lib/payment-jobs") as typeof import("@/lib/payment-jobs");
+  require("@/lib/payments/payment-jobs") as typeof import("@/lib/payments/payment-jobs");
 const {
   canMovePayment,
   canMoveSubscription,
   PAYMENT_STATUSES,
   SUBSCRIPTION_STATUSES,
-} = require("@/lib/payment-states") as typeof import("@/lib/payment-states");
+} =
+  require("@/lib/payments/payment-states") as typeof import("@/lib/payments/payment-states");
 const { checkPaymentInvariants } =
-  require("@/lib/payment-invariants") as typeof import("@/lib/payment-invariants");
+  require("@/lib/payments/payment-invariants") as typeof import("@/lib/payments/payment-invariants");
 const { NextRequest } = require("next/server") as typeof import("next/server");
 const alerts = require("@/lib/operator-alerts") as jest.Mocked<
   typeof import("@/lib/operator-alerts")
@@ -107,12 +117,12 @@ const alerts = require("@/lib/operator-alerts") as jest.Mocked<
 const { POST: paymentWindowRoute } =
   require("@/app/(main)/api/account/payment-window/route") as typeof import("@/app/(main)/api/account/payment-window/route");
 const { checkTossTransactions, previousKstDay } =
-  require("@/lib/toss-transaction-check") as typeof import("@/lib/toss-transaction-check");
+  require("@/lib/payments/toss-transaction-check") as typeof import("@/lib/payments/toss-transaction-check");
 const { recordPaymentCronRun } =
-  require("@/lib/payment-events") as typeof import("@/lib/payment-events");
-// lib/payment-mails registered its recorder with the (mocked) mail module
+  require("@/lib/payments/payment-events") as typeof import("@/lib/payments/payment-events");
+// lib/payments/payment-mails registered its recorder with the (mocked) mail module
 // when it was imported; kept before any test clears the mock.
-require("@/lib/payment-mails");
+require("@/lib/payments/payment-mails");
 const keepPaymentMail = email.setPaymentMailRecorder.mock.calls[0]?.[0] as
   | ((record: import("@/lib/email").PaymentMailRecord) => Promise<void>)
   | undefined;
@@ -1054,7 +1064,7 @@ integration("payments against the database", () => {
       return true;
     }
 
-    test("the database allows exactly the plan transitions in lib/payment-states", async () => {
+    test("the database allows exactly the plan transitions in lib/payments/payment-states", async () => {
       const userId = await makeUser();
       for (const from of SUBSCRIPTION_STATUSES) {
         const live = ["incomplete", "past_due"].includes(from);
@@ -1078,7 +1088,7 @@ integration("payments against the database", () => {
       }
     });
 
-    test("the database allows exactly the payment transitions in lib/payment-states", async () => {
+    test("the database allows exactly the payment transitions in lib/payments/payment-states", async () => {
       const userId = await makeUser();
       for (const from of PAYMENT_STATUSES) {
         const id = await makePendingPayment({

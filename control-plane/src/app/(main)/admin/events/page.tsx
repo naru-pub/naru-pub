@@ -5,8 +5,8 @@ import { db } from "@/lib/database";
 import {
   PAYMENT_EVENT_LABELS,
   type PaymentEventKind,
-} from "@/lib/payment-events";
-import { isTossLiveMode } from "@/lib/toss";
+} from "@/lib/payments/payment-events";
+import { isTossLiveMode } from "@/lib/payments/toss";
 import { operatorAlertsConfigured } from "@/lib/operator-alerts";
 import { Badge } from "@/components/ui/badge";
 import {

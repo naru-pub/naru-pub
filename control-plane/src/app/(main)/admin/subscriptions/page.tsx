@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { maskSecret } from "@/lib/toss";
-import type { SubscriptionStatus } from "@/lib/payment-states";
+import { maskSecret } from "@/lib/payments/toss";
+import type { SubscriptionStatus } from "@/lib/payments/payment-states";
 import Link from "next/link";
 import { sql } from "kysely";
 import { db } from "@/lib/database";

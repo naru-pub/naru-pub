@@ -1,4 +1,4 @@
-import { prunePaymentLogs, sendPaymentEventDigest } from "@/lib/payment-events";
+import { prunePaymentLogs, sendPaymentEventDigest } from "@/lib/payments/payment-events";
 
 // Mails pending payment events to the operators (production only) and keeps
 // the event and webhook-delivery logs bounded.

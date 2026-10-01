@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/lib/database";
-import { addPaymentGrace, isCurrentPlan } from "@/lib/subscriptions";
+import { addPaymentGrace, isCurrentPlan } from "@/lib/payments/subscriptions";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,

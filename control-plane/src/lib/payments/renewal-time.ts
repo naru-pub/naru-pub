@@ -1,5 +1,5 @@
 // When renewals are charged: once a day, at 09:00 KST
-// (lib/subscription-renewals). Kept free of server-only imports, so the
+// (lib/payments/subscription-renewals). Kept free of server-only imports, so the
 // support page and the mails can show the date a renewal will actually be
 // charged, not the time of day its period happens to end.
 

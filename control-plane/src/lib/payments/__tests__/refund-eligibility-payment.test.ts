@@ -3,7 +3,7 @@ import {
   refundEligibility,
   refundDeadline,
   REFUND_WINDOW_DAYS,
-} from "@/lib/refunds";
+} from "@/lib/payments/refunds";
 
 const PAID_AT = new Date("2026-09-01T00:00:00Z");
 const day = (n: number) =>

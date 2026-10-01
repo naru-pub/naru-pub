@@ -1,7 +1,10 @@
 import { db } from "@/lib/database";
-import type { PaymentStatus, SubscriptionStatus } from "@/lib/payment-states";
+import type {
+  PaymentStatus,
+  SubscriptionStatus,
+} from "@/lib/payments/payment-states";
 import type { Executor } from "@/lib/entitlements";
-import { enqueueJob, runJobs } from "@/lib/payment-jobs";
+import { enqueueJob, runJobs } from "@/lib/payments/payment-jobs";
 import { sql } from "kysely";
 import {
   BillingInterval,
@@ -12,21 +15,21 @@ import {
   PLAN_ORDER_NAMES,
   TossApiError,
   TossPaymentResult,
-} from "@/lib/toss";
-import { chargeOrder } from "@/lib/toss-gateway";
+} from "@/lib/payments/toss";
+import { chargeOrder } from "@/lib/payments/toss-gateway";
 import {
   notePaymentEvent,
   recordPaymentEvent,
   won,
-} from "@/lib/payment-events";
+} from "@/lib/payments/payment-events";
 import {
   addPaymentGrace,
   applySuccessfulCharge,
   MAX_PAYMENT_RETRY_ATTEMPTS,
-} from "@/lib/subscriptions";
-import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
-import { renewalCutoff } from "@/lib/renewal-time";
-export { RENEWAL_HOUR_KST, renewalCutoff } from "@/lib/renewal-time";
+} from "@/lib/payments/subscriptions";
+import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
+import { renewalCutoff } from "@/lib/payments/renewal-time";
+export { RENEWAL_HOUR_KST, renewalCutoff } from "@/lib/payments/renewal-time";
 
 // Renewals are charged at 09:00 KST: the run then charges every subscription
 // due by that time. The job also runs every hour after it, so a run missed for
@@ -268,7 +271,7 @@ async function markAttemptFailed(opts: {
 }
 
 // Sent after a decline while the grace period lasts, once per lapse: the
-// dedupe key is the period that lapsed, and the job (lib/payment-jobs) sets
+// dedupe key is the period that lapsed, and the job (lib/payments/payment-jobs) sets
 // payment_grace_notice_sent_at once it went out.
 async function enqueueGraceNotice(
   trx: Executor,
@@ -348,7 +351,7 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
 // charges everything due by `dueBy` (renewalCutoff: the last 09:00 KST).
 // `newCard` is set by a card change charging right after the swap.
 //
-// Each subscription is charged inside its account's lock (lib/account-lock),
+// Each subscription is charged inside its account's lock (lib/payments/account-lock),
 // taken without waiting: an account busy with another payment operation —
 // its supporter changing the card, a refund — is left for the next run.
 export async function chargeDueSubscriptions(
@@ -393,7 +396,7 @@ export async function chargeDueSubscriptions(
 }
 
 // The hourly renewal run: one renew_subscription payment job per plan due by
-// the last 09:00 KST (lib/payment-jobs), run right away. The dedupe key is the
+// the last 09:00 KST (lib/payments/payment-jobs), run right away. The dedupe key is the
 // plan and that day's cutoff, so a plan gets one try a day however often the
 // run comes. A job whose account is busy, or that fails with an error, is
 // tried again by the job queue within minutes instead of at the next run.
@@ -459,7 +462,7 @@ function declinedOrder(attempt: PaymentAttempt) {
   );
 }
 
-// Charges one attempt and says what became of it (lib/toss-gateway): a
+// Charges one attempt and says what became of it (lib/payments/toss-gateway): a
 // failed call is not a failed payment until the order agrees, and a failure
 // counts against the card and may end in past_due.
 async function chargeAttempt(
