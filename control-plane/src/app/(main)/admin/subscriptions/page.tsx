@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { SubscriptionStatus } from "@/lib/payment-states";
 import Link from "next/link";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
@@ -26,7 +27,7 @@ export default async function SubscriptionsPage({
   const { status: statusParam } = await searchParams;
   const status =
     statusParam && statusParam in SUBSCRIPTION_STATUS_LABELS
-      ? statusParam
+      ? (statusParam as SubscriptionStatus)
       : null;
 
   const counts = await db
@@ -81,7 +82,7 @@ export default async function SubscriptionsPage({
             href={`/admin/subscriptions?status=${key}`}
             className={`border-2 px-3 py-1 ${status === key ? "border-primary font-bold" : "border-border text-muted-foreground"}`}
           >
-            {label} {countOf.get(key) ?? 0}
+            {label} {countOf.get(key as SubscriptionStatus) ?? 0}
           </Link>
         ))}
       </div>

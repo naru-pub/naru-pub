@@ -312,7 +312,7 @@ export interface Payments {
   refund_keeps_plan: Generated<boolean>;
   refunded_amount: Generated<number>;
   refunded_at: Timestamp | null;
-  status: string;
+  status: import("./payment-states").PaymentStatus;
   subscription_id: string | null;
   toss_api_version: string | null;
   toss_approved_at: Timestamp | null;
@@ -434,7 +434,7 @@ export interface Subscriptions {
   payment_grace_notice_sent_at: Timestamp | null;
   plan: Generated<string>;
   renewal_notice_sent_at: Timestamp | null;
-  status: string;
+  status: import("./payment-states").SubscriptionStatus;
   updated_at: Generated<Timestamp>;
   user_id: string;
 }

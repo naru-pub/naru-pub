@@ -10,6 +10,7 @@ import {
 } from "@jest/globals";
 import { createHmac, randomUUID } from "crypto";
 import type { TossPaymentResult } from "@/lib/toss";
+import type { PaymentStatus, SubscriptionStatus } from "@/lib/payment-states";
 
 jest.mock("@/lib/toss", () => {
   const actual = jest.requireActual<typeof import("@/lib/toss")>("@/lib/toss");
@@ -89,6 +90,12 @@ const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
 const { enqueueJob, runDueJobs, MAX_ATTEMPTS } =
   require("@/lib/payment-jobs") as typeof import("@/lib/payment-jobs");
+const {
+  canMovePayment,
+  canMoveSubscription,
+  PAYMENT_STATUSES,
+  SUBSCRIPTION_STATUSES,
+} = require("@/lib/payment-states") as typeof import("@/lib/payment-states");
 const { checkPaymentInvariants } =
   require("@/lib/payment-invariants") as typeof import("@/lib/payment-invariants");
 const crypto =
@@ -146,7 +153,7 @@ async function makeUser(supporterUntil: Date | null = null) {
 async function makeSubscription(
   userId: string,
   values: {
-    status: string;
+    status: SubscriptionStatus;
     billingKey?: string | null;
     currentPeriodEnd?: Date | null;
     nextBillingAt?: Date | null;
@@ -156,6 +163,8 @@ async function makeSubscription(
     planStartedAt?: Date;
   },
 ) {
+  const ended = ["canceled", "switched_to_one_time"].includes(values.status);
+  const running = ["active", "scheduled"].includes(values.status);
   const row = await db
     .insertInto("subscriptions")
     .values({
@@ -164,14 +173,24 @@ async function makeSubscription(
       billing_interval: "month",
       amount: 1000,
       status: values.status,
+      // What the database requires of the status unless the test says
+      // otherwise: an ended plan holds no key or next charge, a running one
+      // both.
       billing_key_id: await storeKey(
         userId,
-        values.billingKey === undefined
-          ? `billing-${userId}`
-          : values.billingKey,
+        values.billingKey !== undefined
+          ? values.billingKey
+          : ended
+            ? null
+            : `billing-${userId}`,
       ),
       current_period_end: values.currentPeriodEnd ?? null,
-      next_billing_at: values.nextBillingAt ?? null,
+      next_billing_at:
+        values.nextBillingAt !== undefined
+          ? values.nextBillingAt
+          : running
+            ? (values.currentPeriodEnd ?? new Date(Date.now() + 30 * DAY))
+            : null,
       failed_charge_count: values.failedChargeCount ?? 0,
       renewal_notice_sent_at: values.renewalNoticeSentAt ?? null,
       payment_grace_notice_sent_at: values.graceNoticeSentAt ?? null,
@@ -785,22 +804,46 @@ integration("payments against the database", () => {
       return (await retiredKeys()).map((row) => row.billing_key);
     }
 
-    // Nothing in the database retires keys; only retireBillingKey does, and
-    // billing-key-writes-payment.test.ts keeps every path on it.
-    test("the database does not retire keys on its own", async () => {
+    // Only retireBillingKey retires keys, and billing-key-writes-payment
+    // .test.ts keeps every path on it; the database refuses what would leave
+    // a plan and its key out of step.
+    test("the database refuses a running plan without its key", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, {
         status: "active",
         billingKey: "key-raw",
       });
 
-      await db
-        .updateTable("subscriptions")
-        .set({ billing_key_id: null })
-        .where("id", "=", subId)
-        .execute();
+      await expect(
+        db
+          .updateTable("subscriptions")
+          .set({ billing_key_id: null })
+          .where("id", "=", subId)
+          .execute(),
+      ).rejects.toThrow("has no key");
+      await expect(
+        db
+          .updateTable("subscriptions")
+          .set({ status: "canceled", next_billing_at: null })
+          .where("id", "=", subId)
+          .execute(),
+      ).rejects.toThrow("still holds a key");
+      await expect(
+        db.updateTable("billing_keys").set({ status: "retired" }).execute(),
+      ).rejects.toThrow("a subscription holds it");
+      expect((await subscription(subId)).billing_key).toBe("key-raw");
+    });
 
-      expect(await queued()).toEqual([]);
+    test("the database refuses a status change outside the table", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, { status: "canceled" });
+      await expect(
+        db
+          .updateTable("subscriptions")
+          .set({ status: "past_due" })
+          .where("id", "=", subId)
+          .execute(),
+      ).rejects.toThrow("may not go from canceled to past_due");
     });
 
     test("a key is stored encrypted", async () => {
@@ -818,7 +861,7 @@ integration("payments against the database", () => {
     test("retiring a key queues it and clears it in one transaction", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, {
-        status: "active",
+        status: "past_due",
         billingKey: "key-a",
       });
 
@@ -879,7 +922,7 @@ integration("payments against the database", () => {
     test("a key Toss already deleted is cleared without being queued", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, {
-        status: "active",
+        status: "past_due",
         billingKey: "key-gone",
       });
       const retired = await db
@@ -1011,6 +1054,86 @@ integration("payments against the database", () => {
       await deleteRetiredBillingKeys(new Date(now.getTime() + 61 * 60 * 1000));
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("refused");
       expect(await queued()).toEqual([]);
+    });
+  });
+
+  describe("the status tables", () => {
+    // Tries a status change and undoes it: whether the trigger allowed it.
+    async function allowed(
+      table: "subscriptions" | "payments",
+      id: string,
+      to: string,
+    ): Promise<boolean> {
+      const undo = new Error("undo");
+      try {
+        await db.transaction().execute(async (trx) => {
+          await sql`update ${sql.table(table)} set status = ${to} where id = ${id}`.execute(
+            trx,
+          );
+          throw undo;
+        });
+      } catch (error) {
+        if (error === undo) return true;
+        if (error instanceof Error && /may not go from/.test(error.message)) {
+          return false;
+        }
+        throw error;
+      }
+      return true;
+    }
+
+    test("the database allows exactly the plan transitions in lib/payment-states", async () => {
+      const userId = await makeUser();
+      for (const from of SUBSCRIPTION_STATUSES) {
+        const live = ["incomplete", "past_due"].includes(from);
+        const id = await makeSubscription(userId, {
+          status: from,
+          // Running plans need a key, ended ones none; these may have either.
+          ...(live ? { billingKey: null } : {}),
+          ...(["active", "scheduled"].includes(from)
+            ? { billingKey: `transition-${from}` }
+            : {}),
+        });
+        for (const to of SUBSCRIPTION_STATUSES) {
+          expect([from, to, await allowed("subscriptions", id, to)]).toEqual([
+            from,
+            to,
+            canMoveSubscription(from, to),
+          ]);
+        }
+        // One live plan per account: end this one before the next.
+        await db.deleteFrom("subscriptions").where("id", "=", id).execute();
+      }
+    });
+
+    test("the database allows exactly the payment transitions in lib/payment-states", async () => {
+      const userId = await makeUser();
+      for (const from of PAYMENT_STATUSES) {
+        const id = await makePendingPayment({
+          userId,
+          subscriptionId: null,
+          attemptKey: `one_time:1:transition-${from}`,
+          orderId: `transition-${from}`,
+          amount: 1000,
+        });
+        await sql`
+          update payments set paid_at = now(), period_start = now(),
+            period_end = now() + interval '1 year' where id = ${id}
+        `.execute(db);
+        await db.transaction().execute(async (trx) => {
+          await sql`set local session_replication_role = replica`.execute(trx);
+          await sql`update payments set status = ${from} where id = ${id}`.execute(
+            trx,
+          );
+        });
+        for (const to of PAYMENT_STATUSES) {
+          expect([from, to, await allowed("payments", id, to)]).toEqual([
+            from,
+            to,
+            canMovePayment(from, to),
+          ]);
+        }
+      }
     });
   });
 
@@ -1317,18 +1440,17 @@ integration("payments against the database", () => {
       expect((await subscription(subId)).status).toBe("canceled");
 
       // The supporter subscribes again; the old refund is checked again.
-      await db
-        .updateTable("subscriptions")
-        .set({ status: "active" })
-        .where("id", "=", subId)
-        .execute();
-      await setPlanKey(subId, "new-key");
+      const newId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "new-key",
+        planStartedAt: new Date(),
+      });
       expect(await reconcilePayment(paymentId)).toMatchObject({
         state: "refunded",
         subscriptionCanceled: false,
       });
 
-      const sub = await subscription(subId);
+      const sub = await subscription(newId);
       expect(sub.status).toBe("active");
       expect(sub.billing_key).toBe("new-key");
     });
@@ -1549,15 +1671,25 @@ integration("payments against the database", () => {
         expect.objectContaining({ reason: "billing_key_deleted" }),
       );
 
-      const otherId = await makeSubscription(await makeUser(), {
-        status: "canceled",
-        billingKey: "deleted-canceled",
-      });
-      await runLabAction({
-        action: "billing-deleted",
-        subscriptionId: otherId,
-      });
+      // A key whose plan already ended was retired then; its deletion
+      // stops nothing and mails no one.
+      const otherUser = await makeUser();
+      await makeSubscription(otherUser, { status: "canceled" });
+      await storeKey(otherUser, "deleted-canceled", "retired");
+      const response = await tossWebhook(
+        new NextRequest("http://localhost/api/webhooks/toss", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            eventType: "BILLING_DELETED",
+            createdAt: new Date().toISOString(),
+            data: { billingKey: "deleted-canceled" },
+          }),
+        }),
+      );
+      expect(response.status).toBe(200);
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      expect(await retiredKeys()).toEqual([]);
     });
   });
 
@@ -2583,16 +2715,20 @@ integration("payments against the database", () => {
         nextBillingAt: new Date(Date.now() + 10 * DAY),
       });
       toss.issueBillingKey.mockImplementation(async () => {
-        await db
-          .updateTable("subscriptions")
-          .set({ status: "canceled" })
-          .where("id", "=", subId)
-          .execute();
+        // The plan is canceled meanwhile, its key retired with it.
+        await db.transaction().execute(async (trx) => {
+          await trx
+            .updateTable("subscriptions")
+            .set({ status: "canceled", next_billing_at: null })
+            .where("id", "=", subId)
+            .execute();
+          await retireBillingKey(trx, { subscriptionId: subId });
+        });
         return { billingKey: "new-key", customerKey: "unused" };
       });
 
       expect(await confirm()).toMatchObject({ ok: false, status: 409 });
-      expect((await subscription(subId)).billing_key).toBe("old-key");
+      expect((await subscription(subId)).billing_key).toBeNull();
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("new-key");
     });
 
@@ -3048,6 +3184,8 @@ integration("payments against the database", () => {
         .set({
           status: "done",
           paid_at: paidAt,
+          period_start: paidAt,
+          period_end: new Date(paidAt.getTime() + 365 * DAY),
           created_at: paidAt,
           toss_payment_key: `pk-${orderId}`,
           last_reconciled_at:
@@ -3505,8 +3643,17 @@ integration("payments against the database", () => {
       await db
         .updateTable("payments")
         .set({
-          status: values.status,
+          status: values.status as PaymentStatus,
           paid_at: ago(values.paidDaysAgo),
+          // A paid payment bought a year.
+          ...(values.paidDaysAgo === undefined
+            ? {}
+            : {
+                period_start: ago(values.paidDaysAgo),
+                period_end: new Date(
+                  ago(values.paidDaysAgo)!.getTime() + 365 * DAY,
+                ),
+              }),
           created_at: ago(values.createdDaysAgo ?? 0)!,
           refunded_amount: values.refundedDaysAgo === undefined ? 0 : 12000,
           refunded_at: ago(values.refundedDaysAgo),
@@ -3664,7 +3811,7 @@ integration("payments against the database", () => {
           attempt_key: `one_time:1:${opts.orderId}`,
           order_id: opts.orderId,
           amount: 12000,
-          status: opts.status ?? "pending",
+          status: (opts.status ?? "pending") as PaymentStatus,
           created_at: new Date(
             Date.now() - (opts.createdMinutesAgo ?? 5) * 60_000,
           ),
@@ -3672,6 +3819,17 @@ integration("payments against the database", () => {
             opts.paidMinutesAgo == null
               ? null
               : new Date(Date.now() - opts.paidMinutesAgo * 60_000),
+          // A paid order bought a year.
+          ...(opts.paidMinutesAgo == null
+            ? {}
+            : {
+                period_start: new Date(
+                  Date.now() - opts.paidMinutesAgo * 60_000,
+                ),
+                period_end: new Date(
+                  Date.now() - opts.paidMinutesAgo * 60_000 + 365 * DAY,
+                ),
+              }),
         })
         .returning("id")
         .executeTakeFirstOrThrow();
@@ -4234,11 +4392,15 @@ integration("payments against the database", () => {
         status: "active",
         billingKey: "live-key",
       });
-      // A bug retires the key its plan still charges.
-      await db
-        .updateTable("billing_keys")
-        .set({ status: "retired", retired_at: new Date() })
-        .execute();
+      // A bug retires the key its plan still charges, somehow past the
+      // database's own check (here, with its triggers switched off).
+      await db.transaction().execute(async (trx) => {
+        await sql`set local session_replication_role = replica`.execute(trx);
+        await trx
+          .updateTable("billing_keys")
+          .set({ status: "retired", retired_at: new Date() })
+          .execute();
+      });
 
       await deleteRetiredBillingKeys();
 
@@ -4354,6 +4516,8 @@ integration("payments against the database", () => {
           amount: 12000,
           status: "done",
           paid_at: new Date(Date.now() + 1000),
+          period_start: new Date(),
+          period_end: new Date(Date.now() + 365 * DAY),
         })
         .execute();
       signedIn(userId);

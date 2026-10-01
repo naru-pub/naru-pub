@@ -1,4 +1,8 @@
 import { sql } from "kysely";
+import {
+  ENDED_SUBSCRIPTION_STATUSES,
+  type SubscriptionStatus,
+} from "@/lib/payment-states";
 import { extendPaidTime, lockPaidTime } from "@/lib/paid-time";
 import { recordApproval } from "@/lib/payment-ledger";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
@@ -28,13 +32,13 @@ export const MAX_PAYMENT_RETRY_ATTEMPTS = 4;
 
 // Subscriptions that must not be revived by a charge that was already in flight
 // when the user (or a refund, or a one-time purchase) stopped them.
-const STOPPED_SUBSCRIPTION_STATUSES = ["canceled", "switched_to_one_time"];
+const STOPPED_SUBSCRIPTION_STATUSES = ENDED_SUBSCRIPTION_STATUSES;
 
 // Recurring billing that a one-time purchase replaces. Anything that still
 // holds a billing key and could charge again belongs here — a signup still
 // waiting on its first charge (incomplete) too, or a late success there would
 // start auto-renewal after the supporter chose to pay once.
-const SWITCHABLE_SUBSCRIPTION_STATUSES = [
+const SWITCHABLE_SUBSCRIPTION_STATUSES: SubscriptionStatus[] = [
   "incomplete",
   "active",
   "canceled",

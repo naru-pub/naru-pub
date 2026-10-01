@@ -1,4 +1,5 @@
 import { db } from "@/lib/database";
+import type { PaymentStatus, SubscriptionStatus } from "@/lib/payment-states";
 import type { Executor } from "@/lib/entitlements";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import { sql } from "kysely";
@@ -40,7 +41,7 @@ const MIN_HOURS_BETWEEN_TRIES = 20;
 type DueSubscription = {
   id: string;
   user_id: string;
-  status: string;
+  status: SubscriptionStatus;
   billing_interval: string;
   amount: number;
   // The plan's key, encrypted (lib/billing-key-crypto), and its customerKey.
@@ -54,7 +55,7 @@ type DueSubscription = {
 type PaymentAttempt = {
   id: string;
   order_id: string;
-  status: string;
+  status: PaymentStatus;
   charge_attempted_at: Date | string | null;
 };
 
@@ -192,7 +193,7 @@ async function markAttemptFailed(opts: {
   attempt: PaymentAttempt;
   sub: DueSubscription;
   failures: number;
-  nextStatus: string;
+  nextStatus: SubscriptionStatus;
   error: unknown;
   keepAttemptStatus?: boolean;
 }): Promise<{ jobs: Array<string | null> }> {

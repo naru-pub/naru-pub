@@ -1,4 +1,8 @@
 import { randomUUID } from "crypto";
+import {
+  LIVE_SUBSCRIPTION_STATUSES,
+  type SubscriptionStatus,
+} from "@/lib/payment-states";
 import type { Updateable } from "kysely";
 import { db } from "@/lib/database";
 import type { DB } from "@/lib/db";
@@ -83,7 +87,7 @@ function fail(status: number, message: string) {
 // A signup confirm may start from these: a first signup or one interrupted
 // (incomplete), or a plan that ended (canceled, past_due,
 // switched_to_one_time) being started again.
-const SIGNUP_FROM_STATUSES = [
+const SIGNUP_FROM_STATUSES: SubscriptionStatus[] = [
   "incomplete",
   "canceled",
   "past_due",
@@ -92,7 +96,7 @@ const SIGNUP_FROM_STATUSES = [
 // The plans still live — at most one per account. A new signup ends one of
 // these first (an incomplete or past due one; an active or scheduled one
 // cannot be signed up over).
-const LIVE_STATUSES = ["incomplete", "active", "scheduled", "past_due"];
+const LIVE_STATUSES = LIVE_SUBSCRIPTION_STATUSES;
 
 const PREVIOUS_CHARGE_PENDING_MESSAGE =
   "이전 결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.";
@@ -100,7 +104,7 @@ const CHARGE_IN_PROGRESS_MESSAGE =
   "결제를 처리하고 있습니다. 잠시 후 다시 확인해 주세요.";
 // The subscriptions whose card can be changed in place. A past_due one
 // registers its new card through prepareSubscription, which charges it.
-const CARD_CHANGE_STATUSES = ["active", "scheduled"];
+const CARD_CHANGE_STATUSES: SubscriptionStatus[] = ["active", "scheduled"];
 const NOT_CHANGEABLE_MESSAGE = "카드를 변경할 정기 결제가 없습니다.";
 
 const SIGNUP_CHANGED_MESSAGE =

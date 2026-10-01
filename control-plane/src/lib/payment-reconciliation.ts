@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { isOneOf, type PaymentStatus } from "@/lib/payment-states";
 import { db } from "@/lib/database";
 import {
   BillingInterval,
@@ -185,14 +186,14 @@ async function reconcilePaymentCore(
     .execute();
 
   if (status !== "done") {
-    const finalStatuses = new Set([
+    const finalStatuses: PaymentStatus[] = [
       "canceled",
       "partial_canceled",
       "aborted",
       "expired",
       "failed",
-    ]);
-    if (finalStatuses.has(status)) {
+    ];
+    if (isOneOf(finalStatuses, status)) {
       // What Toss reports; the ledger, which keeps each cancel once, is
       // what is written.
       const reported = refundDetails(tossPayment, payment.amount);
@@ -594,7 +595,11 @@ async function reconcileLocked(
 // The ledger states a charge can be orphaned under: an order settled as
 // expired, failed or declined that Toss nonetheless approved (charge_orphaned).
 // Nothing looks at these rows again on its own.
-export const RECOVERABLE_STATUSES = ["expired", "failed", "aborted"];
+export const RECOVERABLE_STATUSES: PaymentStatus[] = [
+  "expired",
+  "failed",
+  "aborted",
+];
 
 export type RecoveryResult =
   | { state: "recovered"; result: ReconciliationResult }

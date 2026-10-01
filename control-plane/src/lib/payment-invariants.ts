@@ -74,52 +74,9 @@ export async function checkPaymentInvariants(
     if (ids.length > 0) found[rule] = ids;
   };
 
-  note(
-    "끝난 정기 결제가 빌링키를 가지고 있음",
-    await ids(
-      db
-        .selectFrom("subscriptions")
-        .select("id")
-        .where("status", "in", ["canceled", "switched_to_one_time"])
-        .where("billing_key_id", "is not", null),
-    ),
-  );
-  note(
-    "진행 중인 정기 결제에 빌링키가 없음",
-    await ids(
-      db
-        .selectFrom("subscriptions")
-        .select("id")
-        .where("status", "in", ["active", "scheduled"])
-        .where("billing_key_id", "is", null),
-    ),
-  );
-  note(
-    "완료된 결제에 결제 시각이나 이용 기간이 없음",
-    await ids(
-      db
-        .selectFrom("payments")
-        .select("id")
-        .where("status", "=", "done")
-        .where((eb) =>
-          eb.or([
-            eb("paid_at", "is", null),
-            eb("period_start", "is", null),
-            eb("period_end", "is", null),
-          ]),
-        ),
-    ),
-  );
-  note(
-    "환불 금액이 있는데 취소 상태가 아님",
-    await ids(
-      db
-        .selectFrom("payments")
-        .select("id")
-        .where("refunded_amount", ">", 0)
-        .where("status", "not in", ["canceled", "partial_canceled"]),
-    ),
-  );
+  // A plan's key against its status, a done payment's period and the refund
+  // rules are kept by the database itself (the migration that adds
+  // payment_status_transitions); what is left here spans tables or time.
   note(
     "하루 넘게 결과를 모르는 주문",
     await ids(
@@ -132,16 +89,6 @@ export async function checkPaymentInvariants(
           "<",
           new Date(now.getTime() - DAY_MS),
         ),
-    ),
-  );
-  note(
-    "폐기되거나 삭제된 빌링키를 정기 결제가 쓰고 있음",
-    await ids(
-      db
-        .selectFrom("billing_keys as k")
-        .innerJoin("subscriptions as s", "s.billing_key_id", "k.id")
-        .where("k.status", "!=", "active")
-        .select("s.id"),
     ),
   );
   note(
