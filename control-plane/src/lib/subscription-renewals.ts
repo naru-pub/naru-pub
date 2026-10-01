@@ -31,9 +31,11 @@ import {
 } from "@/lib/subscriptions";
 
 // A claimed subscription holds its lease while the rest of its batch is
-// charged, and a charge may take up to 90 seconds (the request timeout). Ten
-// of them finish well inside CHARGE_LEASE_MINUTES, so no lease goes stale —
-// and open to the subscribe flow — while its charge is still to come.
+// charged. Each is renewed just before its own charge (renewLease), since a
+// subscription can make three Toss calls of up to 90 seconds each while Toss
+// is struggling — the lookup, the charge, the lookup after a failed charge —
+// and ten of those outlast CHARGE_LEASE_MINUTES. The batch size only bounds
+// how long a claimed subscription waits for its turn.
 const BATCH_SIZE = 10;
 
 type DueSubscription = {
@@ -207,6 +209,23 @@ async function stillChargeable(sub: DueSubscription): Promise<boolean> {
     new Date(current.charging_started_at).getTime() ===
       new Date(sub.charging_started_at).getTime()
   );
+}
+
+// Takes a fresh lease for the subscription about to be charged, if the
+// batch's lease is still ours. A charge then runs on a lease no older than
+// itself, so neither the subscribe flow nor the reconciler's expiry takes it
+// for dead midway. False when the lease is gone (taken over as stale).
+async function renewLease(sub: DueSubscription): Promise<boolean> {
+  const renewedAt = new Date();
+  const renewed = await db
+    .updateTable("subscriptions")
+    .set({ charging_started_at: renewedAt, updated_at: renewedAt })
+    .where("id", "=", sub.id)
+    .where("charging_started_at", "=", new Date(sub.charging_started_at))
+    .executeTakeFirst();
+  if (Number(renewed.numUpdatedRows ?? 0) === 0) return false;
+  sub.charging_started_at = renewedAt;
+  return true;
 }
 
 async function releaseLease(sub: DueSubscription) {
@@ -528,81 +547,102 @@ async function leaveUnresolved(
   );
 }
 
+// One subscription's failure — a database error, a bug — is logged and its
+// lease released, and the rest of the run goes on: due renewals behind it
+// must not wait for the next day's run.
 async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
   for (const sub of due) {
-    const interval = sub.billing_interval as BillingInterval;
-    const { attempt, declined } = await getOrCreatePaymentAttempt(sub);
-
-    if (attempt.status === "done") {
-      await releaseLease(sub);
-      console.log(
-        `[charge-subscriptions] user ${sub.user_id}: attempt already done (${attempt.order_id})`,
+    try {
+      await chargeClaimedSubscription(sub, now);
+    } catch (error) {
+      console.error(
+        `[charge-subscriptions] user ${sub.user_id}: renewal failed with an error; lease released`,
+        error,
       );
-      continue;
+      await releaseLease(sub).catch(() => {});
     }
-
-    if (!(await stillChargeable(sub))) {
-      await releaseLease(sub);
-      console.log(
-        `[charge-subscriptions] user ${sub.user_id}: stopped before charging; skipped`,
-      );
-      continue;
-    }
-
-    const outcome = await chargeAttempt(sub, attempt, declined);
-
-    if (outcome.state === "paid") {
-      // Keep periods contiguous, but never grant a period that's already in the past.
-      const periodEnd = sub.current_period_end
-        ? new Date(sub.current_period_end)
-        : now;
-      const base = periodEnd > now ? periodEnd : now;
-      try {
-        const { granted } = await applySuccessfulCharge({
-          subscriptionId: sub.id,
-          userId: sub.user_id,
-          interval,
-          amount: sub.amount,
-          from: base,
-          payment: outcome.payment,
-          paymentId: attempt.id,
-        });
-        if (granted) await sendChargeReceipt(attempt.id);
-      } catch (error) {
-        await leaveUnresolved(sub, attempt, error, now);
-        continue;
-      }
-      console.log(`[charge-subscriptions] user ${sub.user_id}: renewed`);
-      continue;
-    }
-
-    if (outcome.state === "unknown") {
-      await leaveUnresolved(sub, attempt, outcome.error, now);
-      continue;
-    }
-
-    const failures = sub.failed_charge_count + 1;
-    const graceEndsAt = sub.current_period_end
-      ? addPaymentGrace(new Date(sub.current_period_end))
-      : now;
-    // A scheduled first charge that fails has still never been paid, so it
-    // stays scheduled while it retries rather than claiming to be active.
-    const nextStatus =
-      failures >= MAX_PAYMENT_RETRY_ATTEMPTS || graceEndsAt <= now
-        ? "past_due"
-        : sub.status;
-    const { wentPastDue } = await markAttemptFailed({
-      attempt,
-      sub,
-      failures,
-      nextStatus,
-      error: outcome.error,
-      keepAttemptStatus: outcome.keepAttemptStatus,
-    });
-    await sendGraceNoticeIfNeeded(sub, now);
-    if (wentPastDue) await sendPastDueNotice(sub, "declined");
-    console.error(
-      `[charge-subscriptions] user ${sub.user_id}: charge failed (${failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}) -> ${nextStatus}: ${describeTossError(outcome.error)}`,
-    );
   }
+}
+
+async function chargeClaimedSubscription(sub: DueSubscription, now: Date) {
+  if (!(await renewLease(sub))) {
+    console.log(
+      `[charge-subscriptions] user ${sub.user_id}: lease lost before charging; skipped`,
+    );
+    return;
+  }
+  const interval = sub.billing_interval as BillingInterval;
+  const { attempt, declined } = await getOrCreatePaymentAttempt(sub);
+
+  if (attempt.status === "done") {
+    await releaseLease(sub);
+    console.log(
+      `[charge-subscriptions] user ${sub.user_id}: attempt already done (${attempt.order_id})`,
+    );
+    return;
+  }
+
+  if (!(await stillChargeable(sub))) {
+    await releaseLease(sub);
+    console.log(
+      `[charge-subscriptions] user ${sub.user_id}: stopped before charging; skipped`,
+    );
+    return;
+  }
+
+  const outcome = await chargeAttempt(sub, attempt, declined);
+
+  if (outcome.state === "paid") {
+    // Keep periods contiguous, but never grant a period that's already in the past.
+    const periodEnd = sub.current_period_end
+      ? new Date(sub.current_period_end)
+      : now;
+    const base = periodEnd > now ? periodEnd : now;
+    try {
+      const { granted } = await applySuccessfulCharge({
+        subscriptionId: sub.id,
+        userId: sub.user_id,
+        interval,
+        amount: sub.amount,
+        from: base,
+        payment: outcome.payment,
+        paymentId: attempt.id,
+      });
+      if (granted) await sendChargeReceipt(attempt.id);
+    } catch (error) {
+      await leaveUnresolved(sub, attempt, error, now);
+      return;
+    }
+    console.log(`[charge-subscriptions] user ${sub.user_id}: renewed`);
+    return;
+  }
+
+  if (outcome.state === "unknown") {
+    await leaveUnresolved(sub, attempt, outcome.error, now);
+    return;
+  }
+
+  const failures = sub.failed_charge_count + 1;
+  const graceEndsAt = sub.current_period_end
+    ? addPaymentGrace(new Date(sub.current_period_end))
+    : now;
+  // A scheduled first charge that fails has still never been paid, so it
+  // stays scheduled while it retries rather than claiming to be active.
+  const nextStatus =
+    failures >= MAX_PAYMENT_RETRY_ATTEMPTS || graceEndsAt <= now
+      ? "past_due"
+      : sub.status;
+  const { wentPastDue } = await markAttemptFailed({
+    attempt,
+    sub,
+    failures,
+    nextStatus,
+    error: outcome.error,
+    keepAttemptStatus: outcome.keepAttemptStatus,
+  });
+  await sendGraceNoticeIfNeeded(sub, now);
+  if (wentPastDue) await sendPastDueNotice(sub, "declined");
+  console.error(
+    `[charge-subscriptions] user ${sub.user_id}: charge failed (${failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}) -> ${nextStatus}: ${describeTossError(outcome.error)}`,
+  );
 }

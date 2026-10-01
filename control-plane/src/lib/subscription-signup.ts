@@ -87,7 +87,7 @@ const STALE_REGISTRATION_MESSAGE =
 // success has to land on the subscription first. A caller holding the
 // subscription's charge lease passes it, so its own lease does not keep an
 // order Toss never saw from expiring.
-async function settlePendingCharges(
+export async function settlePendingCharges(
   subscriptionId: string,
   leaseHeldAt: Date | null = null,
 ): Promise<boolean> {
@@ -195,6 +195,7 @@ export async function prepareSubscription(opts: {
         toss_customer_key: customerKey,
         card_registration_id: registrationId,
         card_registration_kind: "signup",
+        plan_started_at: now,
       })
       .execute();
     return { ok: true, customerKey, registrationId };
@@ -217,6 +218,7 @@ export async function prepareSubscription(opts: {
         toss_customer_key: customerKey,
         card_registration_id: registrationId,
         card_registration_kind: "signup",
+        plan_started_at: now,
         charging_started_at: null,
         updated_at: now,
       })

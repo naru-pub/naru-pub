@@ -69,8 +69,10 @@ const { getUserEntitlement } =
   require("@/lib/entitlements") as typeof import("@/lib/entitlements");
 const { deleteRetiredBillingKeys, retireBillingKey } =
   require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
-const { deleteUserRow } =
+const { deleteUserRow, settleChargesBeforeDeletion } =
   require("@/lib/account-deletion") as typeof import("@/lib/account-deletion");
+const { POST: oneTimePrepareRoute } =
+  require("@/app/(main)/api/account/donation/one-time/prepare/route") as typeof import("@/app/(main)/api/account/donation/one-time/prepare/route");
 const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
 const { NextRequest } = require("next/server") as typeof import("next/server");
@@ -129,6 +131,7 @@ async function makeSubscription(
     failedChargeCount?: number;
     renewalNoticeSentAt?: Date | null;
     graceNoticeSentAt?: Date | null;
+    planStartedAt?: Date;
   },
 ) {
   const row = await db
@@ -149,6 +152,10 @@ async function makeSubscription(
       failed_charge_count: values.failedChargeCount ?? 0,
       renewal_notice_sent_at: values.renewalNoticeSentAt ?? null,
       payment_grace_notice_sent_at: values.graceNoticeSentAt ?? null,
+      // A plan running long before anything a test does to it, unless the
+      // test says when it began (a refund ends only a plan older than it).
+      plan_started_at:
+        values.planStartedAt ?? new Date(Date.now() - 365 * DAY),
     })
     .returning("id")
     .executeTakeFirstOrThrow();
@@ -1828,15 +1835,15 @@ integration("payments against the database", () => {
         .execute();
       expect(attempt.status).toBe("failed");
 
-      // Reloading the callback cannot charge the card again: the key is gone
-      // and the authKey was already spent.
-      toss.issueBillingKey.mockRejectedValue(
-        new toss.TossApiError("used", 400, "INVALID_AUTH_KEY"),
-      );
+      // Reloading the callback cannot charge the card again: the signup's
+      // registration is spent with its key, so Toss is not even asked — its
+      // replay would hand back the key just retired.
+      toss.issueBillingKey.mockClear();
       expect(await confirm(userId, customerKey)).toMatchObject({
         ok: false,
-        status: 402,
+        status: 409,
       });
+      expect(toss.issueBillingKey).not.toHaveBeenCalled();
       expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
     });
 
@@ -3112,6 +3119,536 @@ integration("payments against the database", () => {
       expect(rows.map((row) => row.summary)).toEqual(
         Array.from({ length: 10 }, (_, i) => `event-${i}`),
       );
+    });
+  });
+
+  describe("second review", () => {
+    async function oneTimeOrder(
+      userId: string,
+      opts: {
+        orderId: string;
+        status?: string;
+        createdMinutesAgo?: number;
+        paidMinutesAgo?: number;
+      },
+    ) {
+      const row = await db
+        .insertInto("payments")
+        .values({
+          user_id: userId,
+          subscription_id: null,
+          attempt_key: `one_time:1:${opts.orderId}`,
+          order_id: opts.orderId,
+          amount: 12000,
+          status: opts.status ?? "pending",
+          created_at: new Date(
+            Date.now() - (opts.createdMinutesAgo ?? 5) * 60_000,
+          ),
+          paid_at:
+            opts.paidMinutesAgo == null
+              ? null
+              : new Date(Date.now() - opts.paidMinutesAgo * 60_000),
+        })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+      return row.id;
+    }
+
+    async function setPlanStartedAt(subId: string, at: Date) {
+      await db
+        .updateTable("subscriptions")
+        .set({ plan_started_at: at })
+        .where("id", "=", subId)
+        .execute();
+    }
+
+    function canceledAt(orderId: string, amount: number, at: Date) {
+      return tossPayment(orderId, amount, {
+        status: "CANCELED",
+        cancels: [{ cancelAmount: amount, canceledAt: at.toISOString() }],
+      });
+    }
+
+    describe("which plan a refund ends", () => {
+      test("a refund seen late leaves a plan started after it", async () => {
+        const userId = await makeUser();
+        const paymentId = await oneTimeOrder(userId, {
+          orderId: "late-refund",
+          status: "done",
+          paidMinutesAgo: 3 * 24 * 60,
+        });
+        const subId = await makeSubscription(userId, { status: "active" });
+        await setPlanStartedAt(subId, new Date(Date.now() - DAY));
+        toss.getPaymentByOrderId.mockResolvedValue(
+          canceledAt("late-refund", 12000, new Date(Date.now() - 2 * DAY)),
+        );
+
+        expect(await reconcilePayment(paymentId)).toMatchObject({
+          state: "refunded",
+          subscriptionCanceled: false,
+        });
+        const sub = await subscription(subId);
+        expect(sub.status).toBe("active");
+        expect(sub.toss_billing_key).not.toBeNull();
+      });
+
+      test("a refund ends a plan that was running when it happened", async () => {
+        const userId = await makeUser();
+        const paymentId = await oneTimeOrder(userId, {
+          orderId: "plan-older",
+          status: "done",
+          paidMinutesAgo: 60,
+        });
+        const subId = await makeSubscription(userId, { status: "active" });
+        await setPlanStartedAt(subId, new Date(Date.now() - 2 * DAY));
+        toss.getPaymentByOrderId.mockResolvedValue(
+          canceledAt("plan-older", 12000, new Date()),
+        );
+
+        expect(await reconcilePayment(paymentId)).toMatchObject({
+          subscriptionCanceled: true,
+        });
+        expect((await subscription(subId)).status).toBe("canceled");
+      });
+
+      test("an operator refund can keep the plan, even when the webhook gets there first", async () => {
+        const userId = await makeUser();
+        const paymentId = await oneTimeOrder(userId, {
+          orderId: "keep-plan",
+          status: "done",
+          paidMinutesAgo: 60,
+        });
+        await db
+          .updateTable("payments")
+          .set({ toss_payment_key: "pk-keep-plan" })
+          .where("id", "=", paymentId)
+          .execute();
+        const subId = await makeSubscription(userId, { status: "active" });
+        toss.getPaymentByOrderId.mockResolvedValue(
+          canceledAt("keep-plan", 12000, new Date()),
+        );
+        // Toss's webhook reconciles the cancel before the refund's own call
+        // returns.
+        toss.cancelPayment.mockImplementation(async () => {
+          await reconcilePayment(paymentId);
+          return canceledAt("keep-plan", 12000, new Date());
+        });
+
+        await expect(
+          refundPayment({
+            paymentId,
+            overridePolicy: true,
+            reason: "duplicate",
+            keepPlan: true,
+          }),
+        ).resolves.toMatchObject({ subscriptionCanceled: false });
+        const sub = await subscription(subId);
+        expect(sub.status).toBe("active");
+        expect(sub.toss_billing_key).not.toBeNull();
+      });
+
+      test("the plan's end is reported however the refund was first seen", async () => {
+        const userId = await makeUser();
+        const paymentId = await oneTimeOrder(userId, {
+          orderId: "webhook-first",
+          status: "done",
+          paidMinutesAgo: 60,
+        });
+        await db
+          .updateTable("payments")
+          .set({ toss_payment_key: "pk-webhook-first" })
+          .where("id", "=", paymentId)
+          .execute();
+        const subId = await makeSubscription(userId, { status: "active" });
+        toss.getPaymentByOrderId.mockResolvedValue(
+          canceledAt("webhook-first", 12000, new Date()),
+        );
+        toss.cancelPayment.mockImplementation(async () => {
+          await reconcilePayment(paymentId);
+          return canceledAt("webhook-first", 12000, new Date());
+        });
+
+        await expect(
+          refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
+        ).resolves.toMatchObject({ subscriptionCanceled: true });
+        expect((await subscription(subId)).status).toBe("canceled");
+      });
+
+      test("a cancel Toss accepted is a refund even when the lookup after it fails", async () => {
+        const userId = await makeUser();
+        const paymentId = await oneTimeOrder(userId, {
+          orderId: "lookup-fails",
+          status: "done",
+          paidMinutesAgo: 60,
+        });
+        await db
+          .updateTable("payments")
+          .set({ toss_payment_key: "pk-lookup-fails" })
+          .where("id", "=", paymentId)
+          .execute();
+        const subId = await makeSubscription(userId, { status: "active" });
+        toss.cancelPayment.mockResolvedValue(
+          canceledAt("lookup-fails", 12000, new Date()),
+        );
+        toss.getPaymentByOrderId.mockRejectedValue(
+          new toss.TossApiError("bad gateway", 502),
+        );
+
+        await expect(
+          refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
+        ).resolves.toMatchObject({ subscriptionCanceled: true });
+        expect((await subscription(subId)).status).toBe("canceled");
+      });
+
+      test("a one-time order granted late leaves a plan started since", async () => {
+        const userId = await makeUser();
+        const paymentId = await oneTimeOrder(userId, {
+          orderId: "old-one-time",
+          createdMinutesAgo: 30 * 24 * 60,
+        });
+        const subId = await makeSubscription(userId, { status: "active" });
+        await setPlanStartedAt(subId, new Date(Date.now() - 10 * DAY));
+        const approvedAt = new Date(Date.now() - 30 * DAY);
+
+        await applyOneTimePayment({
+          userId,
+          amount: 12000,
+          years: 1,
+          payment: tossPayment("old-one-time", 12000, {
+            approvedAt: approvedAt.toISOString(),
+          }),
+          paymentId,
+        });
+
+        expect((await subscription(subId)).status).toBe("active");
+        const row = await db
+          .selectFrom("payments")
+          .select("paid_at")
+          .where("id", "=", paymentId)
+          .executeTakeFirstOrThrow();
+        expect(new Date(row.paid_at!)).toEqual(approvedAt);
+      });
+    });
+
+    test("a refund recomputes supporter_until with a period granted meanwhile", async () => {
+      const userId = await makeUser();
+      const refundedId = await oneTimeOrder(userId, {
+        orderId: "refunded-a",
+        status: "done",
+        paidMinutesAgo: 60,
+      });
+      const aEnd = new Date(Date.now() + 300 * DAY);
+      await db
+        .updateTable("payments")
+        .set({ period_start: new Date(Date.now() - 60_000), period_end: aEnd })
+        .where("id", "=", refundedId)
+        .execute();
+      await db
+        .updateTable("users")
+        .set({ supporter_until: aEnd })
+        .where("id", "=", userId)
+        .execute();
+      toss.getPaymentByOrderId.mockResolvedValue(
+        canceledAt("refunded-a", 12000, new Date()),
+      );
+
+      // A grant holding the user's lock while the refund runs.
+      const bEnd = new Date(Date.now() + 30 * DAY);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let locked = false;
+      const grant = db.transaction().execute(async (trx) => {
+        await trx
+          .selectFrom("users")
+          .select("id")
+          .where("id", "=", userId)
+          .forUpdate()
+          .execute();
+        locked = true;
+        await trx
+          .insertInto("payments")
+          .values({
+            user_id: userId,
+            subscription_id: null,
+            attempt_key: "one_time:1:granted-b",
+            order_id: "granted-b",
+            amount: 12000,
+            status: "done",
+            paid_at: new Date(),
+            period_start: new Date(),
+            period_end: bEnd,
+          })
+          .execute();
+        await trx
+          .updateTable("users")
+          .set({ supporter_until: bEnd })
+          .where("id", "=", userId)
+          .execute();
+        await gate;
+      });
+      while (!locked) await new Promise((r) => setTimeout(r, 5));
+
+      const refund = reconcilePayment(refundedId);
+      await new Promise((r) => setTimeout(r, 100));
+      release();
+      await grant;
+      await refund;
+
+      expect(await supporterUntil(userId)).toEqual(bEnd);
+    });
+
+    describe("the charge lease", () => {
+      test("ending a plan leaves the lease of a charge in flight", async () => {
+        const userId = await makeUser();
+        const paymentId = await oneTimeOrder(userId, {
+          orderId: "lease-refund",
+          status: "done",
+          paidMinutesAgo: 60,
+        });
+        const subId = await makeSubscription(userId, { status: "active" });
+        const lease = new Date();
+        await db
+          .updateTable("subscriptions")
+          .set({ charging_started_at: lease })
+          .where("id", "=", subId)
+          .execute();
+        toss.getPaymentByOrderId.mockResolvedValue(
+          canceledAt("lease-refund", 12000, new Date()),
+        );
+
+        await reconcilePayment(paymentId);
+
+        const sub = await subscription(subId);
+        expect(sub.status).toBe("canceled");
+        expect(new Date(sub.charging_started_at!)).toEqual(lease);
+      });
+
+      test("each subscription is charged on a lease taken just before", async () => {
+        const periodEnd = new Date(Date.now() - 60_000);
+        for (let i = 0; i < 2; i++) {
+          const userId = await makeUser(periodEnd);
+          await makeSubscription(userId, {
+            status: "active",
+            currentPeriodEnd: periodEnd,
+            nextBillingAt: periodEnd,
+          });
+        }
+        const leasesAtCharge: number[] = [];
+        toss.chargeBillingKey.mockImplementation(async (params) => {
+          const row = await db
+            .selectFrom("subscriptions")
+            .select("charging_started_at")
+            .where("toss_billing_key", "=", params.billingKey)
+            .executeTakeFirstOrThrow();
+          leasesAtCharge.push(new Date(row.charging_started_at!).getTime());
+          // The first charge is slow.
+          await new Promise((r) => setTimeout(r, 50));
+          return tossPayment(params.orderId, params.amount);
+        });
+
+        await chargeDueSubscriptions();
+
+        expect(leasesAtCharge).toHaveLength(2);
+        expect(leasesAtCharge[1] - leasesAtCharge[0]).toBeGreaterThanOrEqual(
+          40,
+        );
+      });
+    });
+
+    test("one subscription's error does not stop the renewal run", async () => {
+      const periodEnd = new Date(Date.now() - 60_000);
+      const brokenUser = await makeUser(periodEnd);
+      const broken = await makeSubscription(brokenUser, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: new Date(periodEnd.getTime() - 1000),
+      });
+      // A row already holding the key this try would retry under makes the
+      // attempt insert fail.
+      const baseKey = `subscription:${broken}:${periodEnd.toISOString()}:1`;
+      await db
+        .insertInto("payments")
+        .values({
+          user_id: brokenUser,
+          subscription_id: broken,
+          attempt_key: `${baseKey}:r1`,
+          order_id: "blocking-row",
+          amount: 1000,
+          status: "failed",
+        })
+        .execute();
+      const fineUser = await makeUser(periodEnd);
+      const fine = await makeSubscription(fineUser, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+
+      await chargeDueSubscriptions();
+
+      expect((await subscription(broken)).charging_started_at).toBeNull();
+      expect((await supporterUntil(fineUser))! > periodEnd).toBe(true);
+      expect((await subscription(fine)).status).toBe("active");
+    });
+
+    describe("one-time purchases", () => {
+      function prepare(userId: string) {
+        auth.validateRequest.mockResolvedValue({
+          user: {
+            id: userId,
+            email: "payer@example.com",
+            emailVerifiedAt: new Date(),
+          },
+          session: {},
+        } as Awaited<ReturnType<typeof auth.validateRequest>>);
+        return oneTimePrepareRoute(
+          new NextRequest(
+            "http://localhost/api/account/donation/one-time/prepare",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ years: 1 }),
+            },
+          ),
+        );
+      }
+
+      test("an order another one-time payment already covered is not approved", async () => {
+        const userId = await makeUser();
+        const staleId = await oneTimeOrder(userId, {
+          orderId: "second-tab",
+          createdMinutesAgo: 10,
+        });
+        await oneTimeOrder(userId, {
+          orderId: "first-tab",
+          status: "done",
+          createdMinutesAgo: 9,
+          paidMinutesAgo: 5,
+        });
+        toss.getPaymentByOrderId.mockResolvedValue(
+          tossPayment("second-tab", 12000, { status: "IN_PROGRESS" }),
+        );
+
+        expect(await reconcilePayment(staleId)).toEqual({ state: "pending" });
+        expect(toss.confirmPayment).not.toHaveBeenCalled();
+      });
+
+      test("prepare confirms an earlier authenticated order, then refuses a second year", async () => {
+        const userId = await makeUser();
+        await oneTimeOrder(userId, { orderId: "authenticated" });
+        toss.getPaymentByOrderId.mockResolvedValue(
+          tossPayment("authenticated", 12000, { status: "IN_PROGRESS" }),
+        );
+        toss.confirmPayment.mockResolvedValue(
+          tossPayment("authenticated", 12000),
+        );
+
+        const response = await prepare(userId);
+
+        expect(response.status).toBe(409);
+        expect((await supporterUntil(userId))! > new Date()).toBe(true);
+      });
+
+      test("a closed payment window does not block another try", async () => {
+        const userId = await makeUser();
+        await oneTimeOrder(userId, { orderId: "window-closed" });
+
+        const response = await prepare(userId);
+
+        expect(response.status).toBe(200);
+      });
+
+      test("prepare waits for a signup charge that may yet succeed", async () => {
+        const userId = await makeUser();
+        const subId = await makeSubscription(userId, { status: "incomplete" });
+        await makePendingPayment({
+          userId,
+          subscriptionId: subId,
+          attemptKey: `subscription_initial:${subId}:1`,
+          orderId: "signup-unknown",
+          amount: 1000,
+        });
+        toss.getPaymentByOrderId.mockRejectedValue(
+          new toss.TossApiError("bad gateway", 502),
+        );
+
+        const response = await prepare(userId);
+
+        expect(response.status).toBe(409);
+      });
+
+      test("a one-time purchase ends a signup still waiting on its card", async () => {
+        const userId = await makeUser();
+        const subId = await makeSubscription(userId, {
+          status: "incomplete",
+          billingKey: "signup-key",
+        });
+        const paymentId = await oneTimeOrder(userId, { orderId: "switch" });
+
+        await applyOneTimePayment({
+          userId,
+          amount: 12000,
+          years: 1,
+          payment: tossPayment("switch", 12000),
+          paymentId,
+        });
+
+        const sub = await subscription(subId);
+        expect(sub.status).toBe("switched_to_one_time");
+        expect(sub.toss_billing_key).toBeNull();
+        expect(toss.deleteBillingKey).toHaveBeenCalledWith("signup-key");
+      });
+    });
+
+    describe("account deletion", () => {
+      test("waits for a charge in flight", async () => {
+        const userId = await makeUser();
+        const subId = await makeSubscription(userId, { status: "active" });
+        await db
+          .updateTable("subscriptions")
+          .set({ charging_started_at: new Date() })
+          .where("id", "=", subId)
+          .execute();
+
+        expect(await settleChargesBeforeDeletion(userId)).toBe(false);
+        await expect(
+          db.transaction().execute((trx) => deleteUserRow(trx, userId)),
+        ).rejects.toMatchObject({ name: "ChargeInFlightError" });
+        expect(await supporterUntil(userId)).toBeNull();
+        const still = await db
+          .selectFrom("users")
+          .select("id")
+          .where("id", "=", userId)
+          .executeTakeFirst();
+        expect(still).toBeDefined();
+      });
+
+      test("waits for a renewal whose outcome is unknown", async () => {
+        const userId = await makeUser();
+        const subId = await makeSubscription(userId, { status: "active" });
+        await makePendingPayment({
+          userId,
+          subscriptionId: subId,
+          attemptKey: `subscription:${subId}:x:1`,
+          orderId: "renewal-unknown",
+          amount: 1000,
+        });
+        toss.getPaymentByOrderId.mockRejectedValue(
+          new toss.TossApiError("bad gateway", 502),
+        );
+
+        expect(await settleChargesBeforeDeletion(userId)).toBe(false);
+      });
+
+      test("goes ahead when nothing is charging", async () => {
+        const userId = await makeUser();
+        await makeSubscription(userId, { status: "active" });
+
+        expect(await settleChargesBeforeDeletion(userId)).toBe(true);
+      });
     });
   });
 });

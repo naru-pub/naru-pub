@@ -247,7 +247,8 @@ async function reconcilePaymentCore(
   if (
     tossPayment.status === "IN_PROGRESS" &&
     payment.status === "pending" &&
-    payment.attempt_key?.startsWith("one_time:")
+    payment.attempt_key?.startsWith("one_time:") &&
+    !(await oneTimeOrderSuperseded(payment))
   ) {
     tossPayment = await confirmAuthenticatedPayment(payment, tossPayment);
   }
@@ -291,10 +292,20 @@ async function reconcilePaymentCore(
           // one finds it new.
           const before = await trx
             .selectFrom("payments")
-            .select("refunded_amount")
+            .select(["refunded_amount", "refund_keeps_plan"])
             .where("id", "=", payment.id)
             .forUpdate()
             .executeTakeFirstOrThrow();
+          // The user next, before the ledger is read: a charge granted while
+          // this runs holds this lock (payments, users, subscriptions), so its
+          // period is in the ledger read below rather than overwritten by a
+          // supporter_until recomputed without it.
+          const currentUser = await trx
+            .selectFrom("users")
+            .select("supporter_until")
+            .where("id", "=", payment.user_id)
+            .forUpdate()
+            .executeTakeFirst();
           await trx
             .updateTable("payments")
             .set({
@@ -337,11 +348,6 @@ async function reconcilePaymentCore(
               refundedAmount: row.refunded_amount,
             })),
           );
-          const currentUser = await trx
-            .selectFrom("users")
-            .select("supporter_until")
-            .where("id", "=", payment.user_id)
-            .executeTakeFirst();
           const currentUntil = currentUser?.supporter_until
             ? new Date(currentUser.supporter_until)
             : null;
@@ -359,29 +365,40 @@ async function reconcilePaymentCore(
           }
 
           // A refund ends the billing relationship, not just this one charge:
-          // whatever recurring plan the account has must not charge the card
-          // again — the refunded renewal's own subscription, or, for a refunded
-          // one-time payment, a plan started since. Done here, the first time
-          // the refund is seen, so a refund made in the Toss dashboard or one
-          // whose cancel call got no answer stops it as well as one made
-          // through refundPayment. Only then: a payment reconciled again later
-          // must not cancel a plan the supporter started after the refund.
+          // the recurring plan the account had when the money went back must
+          // not charge the card again — the refunded renewal's own plan, or
+          // one running beside a refunded one-time payment. Done here, the
+          // first time the refund is seen, so a refund made in the Toss
+          // dashboard or one whose cancel call got no answer stops it as well
+          // as one made through refundPayment.
+          //
+          // Only a plan that already existed when the refund happened: one the
+          // supporter started since — before a late webhook or the refund sweep
+          // brought the refund in — is theirs to keep. And not when an operator
+          // gave the money back on purpose without ending the plan
+          // (refund_keeps_plan), a duplicate charge say.
           const newlyRefunded = refundedAmount > before.refunded_amount;
           let stopped: { id: string } | undefined;
-          if (newlyRefunded) {
+          if (newlyRefunded && !before.refund_keeps_plan) {
+            const refundedBy = refundedAt ?? new Date();
+            // The charge lease is left alone: a renewal charging now holds
+            // it, and expiry reads it to tell a charge in flight from an
+            // order Toss never saw.
             stopped = await trx
               .updateTable("subscriptions")
               .set({
                 status: "canceled",
                 next_billing_at: null,
-                charging_started_at: null,
-                canceled_at: refundedAt ?? new Date(),
+                canceled_at: refundedBy,
                 updated_at: new Date(),
               })
               .where("user_id", "=", payment.user_id)
               .where("status", "not in", ["canceled", "switched_to_one_time"])
+              .where("plan_started_at", "<=", refundedBy)
               .returning("id")
               .executeTakeFirst();
+          }
+          if (newlyRefunded) {
             await recordPaymentEvent(trx, {
               kind: "refunded",
               userId: payment.user_id,
@@ -510,6 +527,29 @@ async function reconcilePaymentCore(
 // (ALREADY_PROCESSED_PAYMENT), and one still running (ALREADY_PROCESSING_
 // REQUEST). Anything but an approval leaves the payment as Toss reported it,
 // to be settled when Toss moves it on.
+// True when another one-time payment of the same account was paid after this
+// order was prepared: the period this order would buy is already bought, by a
+// second tab or by a retry after a confirm that looked stuck. Such an order is
+// not approved — Toss lets the authentication lapse, so the card is not
+// charged — rather than stacking a second year (and a 서비스 제공기간 past
+// the one year card-company review allows).
+export async function oneTimeOrderSuperseded(payment: {
+  id: string;
+  user_id: string;
+  created_at: Date | string;
+}): Promise<boolean> {
+  const other = await db
+    .selectFrom("payments")
+    .select("id")
+    .where("user_id", "=", payment.user_id)
+    .where("id", "!=", payment.id)
+    .where("attempt_key", "like", "one_time:%")
+    .where("status", "=", "done")
+    .where("paid_at", ">=", new Date(payment.created_at))
+    .executeTakeFirst();
+  return other != null;
+}
+
 async function confirmAuthenticatedPayment(
   payment: { id: string; order_id: string; amount: number },
   inProgress: TossPaymentResult,

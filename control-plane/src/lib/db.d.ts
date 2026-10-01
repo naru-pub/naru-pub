@@ -271,6 +271,7 @@ export interface Payments {
   period_start: Timestamp | null;
   raw: unknown | null;
   reconciliation_error: string | null;
+  refund_keeps_plan: Generated<boolean>;
   refunded_amount: Generated<number>;
   refunded_at: Timestamp | null;
   status: string;
@@ -395,6 +396,7 @@ export interface Subscriptions {
   next_billing_at: Timestamp | null;
   payment_grace_notice_sent_at: Timestamp | null;
   plan: Generated<string>;
+  plan_started_at: Generated<Timestamp>;
   renewal_notice_sent_at: Timestamp | null;
   status: string;
   toss_billing_key: string | null;

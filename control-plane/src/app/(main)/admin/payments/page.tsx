@@ -233,6 +233,19 @@ export default async function PaymentOperatorPage({
                         confirmMessage={`${payment.login_name}님의 ${formatKrw(payment.amount)} 결제를 전액 환불할까요? 유료 기능이 즉시 종료되고, 정기 결제 중이라면 자동 결제도 함께 취소됩니다.`}
                       />
                     ) : null}
+                    {payment.status === "done" &&
+                    !payment.refunded_amount &&
+                    payment.subscription_status &&
+                    !["canceled", "switched_to_one_time"].includes(
+                      payment.subscription_status,
+                    ) ? (
+                      <RefundPaymentButton
+                        paymentId={payment.id}
+                        keepPlan
+                        label="환불 (정기 결제 유지)"
+                        confirmMessage={`${payment.login_name}님의 ${formatKrw(payment.amount)} 결제만 환불하고 정기 결제는 그대로 둘까요? 이중 청구처럼 이 결제만 돌려줄 때 씁니다. 이 결제가 부여한 기간은 사라집니다.`}
+                      />
+                    ) : null}
                   </div>
                 </TableCell>
               </TableRow>

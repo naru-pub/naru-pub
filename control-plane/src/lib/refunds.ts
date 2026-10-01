@@ -98,10 +98,13 @@ async function stopRecurringBilling(userId: string): Promise<boolean> {
     .execute(async (trx) => {
       const stopped = await trx
         .updateTable("subscriptions")
+        // The charge lease is left alone: a renewal still charging holds it,
+        // and the reconciler reads it to tell a charge in flight from an order
+        // Toss never saw. The renewal releases it, and does not revive a
+        // canceled plan.
         .set({
           status: "canceled",
           next_billing_at: null,
-          charging_started_at: null,
           canceled_at: new Date(),
           updated_at: new Date(),
         })
@@ -131,6 +134,17 @@ async function stopRecurringBilling(userId: string): Promise<boolean> {
   return stoppedId != null;
 }
 
+// The account's subscription while it can still charge, or null.
+async function runningPlanId(userId: string): Promise<string | null> {
+  const row = await db
+    .selectFrom("subscriptions")
+    .select("id")
+    .where("user_id", "=", userId)
+    .where("status", "not in", ["canceled", "switched_to_one_time"])
+    .executeTakeFirst();
+  return row?.id ?? null;
+}
+
 export type RefundOutcome = {
   paymentId: string;
   amount: number;
@@ -146,6 +160,12 @@ export async function refundPayment(opts: {
   /** Operators may refund outside the policy window; owners may not. */
   overridePolicy: boolean;
   reason: string;
+  /**
+   * Operators only: give the money back without ending the recurring plan —
+   * a duplicate charge, say. Recorded on the payment before Toss is asked, so
+   * the webhook reconciling the same cancel honours it too.
+   */
+  keepPlan?: boolean;
 }): Promise<RefundOutcome> {
   const payment = await db
     .selectFrom("payments")
@@ -187,6 +207,14 @@ export async function refundPayment(opts: {
     }
   }
 
+  const keepPlan = opts.keepPlan === true;
+  await db
+    .updateTable("payments")
+    .set({ refund_keeps_plan: keepPlan })
+    .where("id", "=", payment.id)
+    .execute();
+  const planRunningBefore = await runningPlanId(payment.user_id);
+
   let refunded: ReconciliationResult | null = null;
   try {
     await cancelPayment({
@@ -204,7 +232,10 @@ export async function refundPayment(opts: {
     // recurring billing like any other.
     const result = await reconcilePayment(payment.id).catch(() => null);
     if (result?.state !== "refunded") {
-      if (error instanceof TossApiError) throw error;
+      // Toss answered and did not cancel (a 4xx — NOT_CANCELABLE_PAYMENT, a
+      // temporary PROVIDER_ERROR): the supporter can try again. A 5xx or a
+      // dropped call may have canceled all the same.
+      if (error instanceof TossApiError && error.status < 500) throw error;
       // No answer either way. The webhook and the refund sweep will see the
       // cancel if it happened; until then the supporter is told so rather
       // than that it failed, which would invite a second request.
@@ -216,10 +247,25 @@ export async function refundPayment(opts: {
     refunded = result;
   }
 
-  refunded ??= await reconcilePayment(payment.id);
+  // Toss accepted the cancel, so the refund has happened whatever the
+  // lookup that follows says: a failed lookup is caught up by the webhook and
+  // the refund sweep, and must not tell the supporter the refund failed.
+  if (!refunded) {
+    refunded = await reconcilePayment(payment.id).catch((error) => {
+      console.error(
+        `Refund of payment ${payment.id}: Toss canceled it, but reconciling failed`,
+        error,
+      );
+      return null;
+    });
+  }
+  if (!keepPlan) await stopRecurringBilling(payment.user_id);
+  // Whichever of this refund, its own reconciliation or the webhook it set
+  // off got there first, the plan that was running is what the supporter
+  // asked about.
   const subscriptionCanceled =
-    (refunded.state === "refunded" && refunded.subscriptionCanceled) ||
-    (await stopRecurringBilling(payment.user_id));
+    planRunningBefore != null &&
+    (await runningPlanId(payment.user_id)) !== planRunningBefore;
 
   return {
     paymentId: payment.id,

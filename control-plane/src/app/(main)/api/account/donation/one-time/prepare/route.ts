@@ -14,6 +14,8 @@ import {
   oneTimeOrderName,
 } from "@/lib/toss";
 import { canStartOneTimePurchase } from "@/lib/support-purchases";
+import { reconcilePayment } from "@/lib/payment-reconciliation";
+import { settlePendingCharges } from "@/lib/subscription-signup";
 
 // One-time donation step 1: returns a server-generated orderId + the
 // authoritative amount for requestPayment.
@@ -54,6 +56,47 @@ export async function POST(request: NextRequest) {
       );
     }
     const amount = oneTimeAmount(years);
+
+    // Settle what may still turn into paid time before deciding whether a
+    // one-time purchase is allowed: an earlier one-time order the buyer
+    // authenticated (the reconciler confirms it) or that Toss already
+    // approved, and a subscription's unresolved charges. An order Toss never
+    // saw — a closed payment window — stays pending and does not block.
+    const pendingOneTime = await db
+      .selectFrom("payments")
+      .select("id")
+      .where("user_id", "=", user.id)
+      .where("attempt_key", "like", "one_time:%")
+      .where("status", "=", "pending")
+      .execute();
+    for (const payment of pendingOneTime) {
+      await reconcilePayment(payment.id).catch((error) =>
+        console.error(
+          `One-time prepare: reconciling payment ${payment.id} failed`,
+          error,
+        ),
+      );
+    }
+    const existingSubscription = await db
+      .selectFrom("subscriptions")
+      .select("id")
+      .where("user_id", "=", user.id)
+      .executeTakeFirst();
+    // A subscription charge that may yet succeed would land beside this
+    // purchase — the same check a new signup makes.
+    if (
+      existingSubscription &&
+      !(await settlePendingCharges(existingSubscription.id))
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "이전 결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
+        },
+        { status: 409 },
+      );
+    }
 
     // Ensure a stable customerKey for dashboard linkage (optional for one-time).
     const userRow = await db

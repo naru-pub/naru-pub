@@ -15,6 +15,7 @@ import {
 import { settleFailedOrder } from "@/lib/toss-orders";
 import { applyOneTimePayment } from "@/lib/subscriptions";
 import { notePaymentEvent, won } from "@/lib/payment-events";
+import { oneTimeOrderSuperseded } from "@/lib/payment-reconciliation";
 
 // One-time donation step 2: confirms the payment with Toss and grants the
 // purchased years of supporter access. Entitlement is derived from the
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     const pendingPayment = await db
       .selectFrom("payments")
-      .select(["id", "amount", "status"])
+      .select(["id", "user_id", "amount", "status", "created_at"])
       .where("order_id", "=", orderId)
       .where("user_id", "=", user.id)
       .where("subscription_id", "is", null)
@@ -81,6 +82,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, message: "결제 주문 정보가 올바르지 않습니다." },
         { status: 400 },
+      );
+    }
+
+    // Another one-time payment already bought this period — a second tab, or
+    // a retry after this one's confirm looked stuck. Not approving it lets
+    // Toss expire the authentication without charging the card.
+    if (await oneTimeOrderSuperseded(pendingPayment)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "다른 결제로 이미 이용 기간이 늘어나 이 결제는 승인하지 않았습니다. 카드에는 청구되지 않습니다.",
+        },
+        { status: 409 },
       );
     }
 

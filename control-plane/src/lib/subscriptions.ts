@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import type { Executor } from "@/lib/entitlements";
@@ -31,8 +32,11 @@ export const CHARGE_LEASE_MINUTES = 30;
 const STOPPED_SUBSCRIPTION_STATUSES = ["canceled", "switched_to_one_time"];
 
 // Recurring billing that a one-time purchase replaces. Anything that still
-// holds a billing key and could charge again belongs here.
+// holds a billing key and could charge again belongs here — a signup still
+// waiting on its first charge (incomplete) too, or a late success there would
+// start auto-renewal after the supporter chose to pay once.
 const SWITCHABLE_SUBSCRIPTION_STATUSES = [
+  "incomplete",
   "active",
   "canceled",
   "scheduled",
@@ -89,6 +93,14 @@ async function noteOrphanedCharge(
   });
 }
 
+// When the money moved: Toss's approval time. Usually a moment ago, but an
+// orphaned charge recovered weeks later must not get a fresh refund window or
+// count as paid after plans it predates.
+function approvedAt(payment: TossPaymentResult, fallback: Date): Date {
+  const at = payment.approvedAt ? new Date(payment.approvedAt) : null;
+  return at && !Number.isNaN(at.getTime()) && at <= fallback ? at : fallback;
+}
+
 async function grantOrNote<T>(
   opts: { userId: string; subscriptionId?: string; payment: TossPaymentResult },
   grant: () => Promise<T>,
@@ -117,6 +129,7 @@ export async function applyOneTimePayment(opts: {
     throw new Error("Invalid one-time support years");
   }
   const now = new Date();
+  const paidAt = approvedAt(opts.payment, now);
   const { retiredKey, ...period } = await grantOrNote(opts, () =>
     db.transaction().execute(async (trx) => {
       if (opts.paymentId) {
@@ -164,7 +177,7 @@ export async function applyOneTimePayment(opts: {
             order_id: opts.payment.orderId,
             amount: opts.amount,
             status: "done",
-            paid_at: now,
+            paid_at: paidAt,
             period_start: periodStart,
             period_end: periodEnd,
             raw: JSON.stringify(opts.payment),
@@ -182,7 +195,7 @@ export async function applyOneTimePayment(opts: {
             order_id: opts.payment.orderId,
             amount: opts.amount,
             status: "done",
-            paid_at: now,
+            paid_at: paidAt,
             period_start: periodStart,
             period_end: periodEnd,
             raw: JSON.stringify(opts.payment),
@@ -198,18 +211,21 @@ export async function applyOneTimePayment(opts: {
 
       // A confirmed one-time purchase switches an active recurring supporter to
       // prepaid access atomically, so the old billing key can never renew at the
-      // boundary that now belongs to the prepaid period.
+      // boundary that now belongs to the prepaid period. Only a plan that
+      // existed when the payment was approved: an old one-time order granted
+      // late (recoverOrphanedCharge) must not end a plan started since. The
+      // charge lease is left for whoever holds it.
       const switched = await trx
         .updateTable("subscriptions")
         .set({
           status: "switched_to_one_time",
           next_billing_at: null,
           canceled_at: now,
-          charging_started_at: null,
           updated_at: now,
         })
         .where("user_id", "=", opts.userId)
         .where("status", "in", SWITCHABLE_SUBSCRIPTION_STATUSES)
+        .where("plan_started_at", "<=", paidAt)
         .returning("id")
         .executeTakeFirst();
       const retiredKey = switched
@@ -251,6 +267,7 @@ export async function applySuccessfulCharge(opts: {
   paymentId?: string;
 }): Promise<{ periodStart: Date; periodEnd: Date; granted: boolean }> {
   const now = new Date();
+  const paidAt = approvedAt(opts.payment, now);
 
   return grantOrNote(opts, () =>
     db.transaction().execute(async (trx) => {
@@ -307,7 +324,7 @@ export async function applySuccessfulCharge(opts: {
             order_id: opts.payment.orderId,
             amount: opts.amount,
             status: "done",
-            paid_at: now,
+            paid_at: paidAt,
             period_start: periodStart,
             period_end: periodEnd,
             raw: JSON.stringify(opts.payment),
@@ -325,7 +342,7 @@ export async function applySuccessfulCharge(opts: {
             order_id: opts.payment.orderId,
             amount: opts.amount,
             status: "done",
-            paid_at: now,
+            paid_at: paidAt,
             period_start: periodStart,
             period_end: periodEnd,
             raw: JSON.stringify(opts.payment),
@@ -478,5 +495,18 @@ export async function retireUnusedSignupKey(
     new Date(row.charging_started_at).getTime() >
       now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000;
   if (leaseLive && !opts.ownsLease) return null;
-  return retireBillingKey(trx, { subscriptionId });
+  const retired = await retireBillingKey(trx, { subscriptionId });
+  // The signup is over: its callback, reopened, would get the same key back
+  // from Toss — the issue call's idempotency key comes from the authKey and
+  // replays for 15 days — and store and charge a card just retired. A new
+  // registration id makes that callback stale; the supporter starts over with
+  // a fresh prepare, as a failed first charge already asks them to.
+  if (retired) {
+    await trx
+      .updateTable("subscriptions")
+      .set({ card_registration_id: randomUUID() })
+      .where("id", "=", subscriptionId)
+      .execute();
+  }
+  return retired;
 }

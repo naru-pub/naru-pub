@@ -18,7 +18,12 @@ import { deleteCustomDomainsForUser } from "@/lib/customDomains";
 import { verify } from "@node-rs/argon2";
 import { deleteUserMedia } from "@/lib/site-data/media";
 import { deleteUserTemplateObjects } from "@/lib/board/templates";
-import { deleteUserRow } from "@/lib/account-deletion";
+import {
+  CHARGE_IN_FLIGHT_MESSAGE,
+  ChargeInFlightError,
+  deleteUserRow,
+  settleChargesBeforeDeletion,
+} from "@/lib/account-deletion";
 import { deleteRetiredBillingKey } from "@/lib/billing-keys";
 
 export async function POST(request: NextRequest) {
@@ -91,6 +96,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, message: "비밀번호가 일치하지 않습니다." },
         { status: 400 },
+      );
+    }
+
+    // Before anything is deleted: a refusal must leave the account whole.
+    if (!(await settleChargesBeforeDeletion(user.id))) {
+      return NextResponse.json(
+        { success: false, message: CHARGE_IN_FLIGHT_MESSAGE },
+        { status: 409 },
       );
     }
 
@@ -175,6 +188,13 @@ export async function POST(request: NextRequest) {
       message: "계정이 성공적으로 삭제되었습니다.",
     });
   } catch (error) {
+    // A charge started between the check above and the delete.
+    if (error instanceof ChargeInFlightError) {
+      return NextResponse.json(
+        { success: false, message: CHARGE_IN_FLIGHT_MESSAGE },
+        { status: 409 },
+      );
+    }
     console.error("Account deletion error:", error);
     return NextResponse.json(
       { success: false, message: "계정 삭제 중 오류가 발생했습니다." },
