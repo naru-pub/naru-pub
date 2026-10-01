@@ -24,14 +24,15 @@ import { POST as tossWebhook } from "@/app/(main)/api/webhooks/toss/route";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Errors Toss documents for the billing charge API, to force with
-// TossPayments-Test-Code. The status decides how 나루 treats the outcome: a
-// 4xx is a definitive failure (counted), a 5xx is ambiguous (kept pending).
+// TossPayments-Test-Code. A decline on the merits is a failure (counted); a 5xx
+// or a temporary 4xx such as PROVIDER_ERROR is ambiguous (kept pending), as is
+// any error for an order the lookup that follows finds approved.
 export const LAB_TEST_CODES = [
   { code: "", label: "정상 응답" },
   { code: "REJECT_CARD_PAYMENT", label: "403 한도초과·잔액부족" },
   { code: "REJECT_CARD_COMPANY", label: "403 카드사 승인 거절" },
   { code: "INVALID_STOPPED_CARD", label: "400 정지된 카드" },
-  { code: "PROVIDER_ERROR", label: "400 일시적인 오류" },
+  { code: "PROVIDER_ERROR", label: "400 일시적인 오류 (불분명)" },
   { code: "FAILED_CARD_COMPANY", label: "500 카드사 점검 (불분명)" },
 ] as const;
 

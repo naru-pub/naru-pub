@@ -24,6 +24,7 @@ jest.mock("@/lib/toss", () => {
 jest.mock("@/lib/email", () => ({
   sendSubscriptionPaymentGraceEmail: jest.fn(async () => {}),
   sendSupportThankYouEmail: jest.fn(async () => {}),
+  sendRecurringChargeReceiptEmail: jest.fn(async () => {}),
   sendPaymentEventDigestEmail: jest.fn(async () => {}),
 }));
 
@@ -347,6 +348,15 @@ integration("payments against the database", () => {
       expect(new Date(sub.next_billing_at!) > new Date()).toBe(true);
       expect(await supporterUntil(userId)).toEqual(
         new Date(sub.current_period_end!),
+      );
+      expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: expect.stringMatching(/@example\.com$/),
+          amount: 1000,
+          periodEnd: new Date(sub.current_period_end!),
+          nextBillingAt: new Date(sub.next_billing_at!),
+        }),
       );
     });
 
@@ -950,6 +960,68 @@ integration("payments against the database", () => {
       expect(email.sendSubscriptionPaymentGraceEmail).toHaveBeenCalledTimes(1);
     });
 
+    test("an order Toss approved despite an error is granted, not failed", async () => {
+      const { subId } = await dueSubscription();
+      toss.chargeBillingKey.mockImplementation(async (params) => {
+        toss.getPaymentByOrderId.mockResolvedValue(
+          tossPayment(params.orderId, params.amount),
+        );
+        throw new toss.TossApiError("일시적인 오류", 400, "PROVIDER_ERROR");
+      });
+
+      await chargeDueSubscriptions();
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("active");
+      expect(sub.failed_charge_count).toBe(0);
+      expect((await attempts(subId))[0].status).toBe("done");
+      expect(email.sendSubscriptionPaymentGraceEmail).not.toHaveBeenCalled();
+      expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([
+      ["a temporary fault", 400, "PROVIDER_ERROR"],
+      ["a key Toss does not accept", 401, "UNAUTHORIZED_KEY"],
+    ])("%s is not held against the card", async (_label, status, code) => {
+      const { subId } = await dueSubscription();
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("refused", status, code),
+      );
+
+      await chargeDueSubscriptions();
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("active");
+      expect(sub.failed_charge_count).toBe(0);
+      expect(sub.charging_started_at).toBeNull();
+      expect((await attempts(subId))[0].status).toBe("pending");
+      expect(email.sendSubscriptionPaymentGraceEmail).not.toHaveBeenCalled();
+    });
+
+    test("a renewal settled late by the reconciler sends one receipt", async () => {
+      const { subId } = await dueSubscription();
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("server error", 500),
+      );
+      await chargeDueSubscriptions();
+      expect(email.sendRecurringChargeReceiptEmail).not.toHaveBeenCalled();
+
+      const [first] = await attempts(subId);
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(first.order_id, 1000),
+      );
+      const { id } = await db
+        .selectFrom("payments")
+        .select("id")
+        .where("order_id", "=", first.order_id)
+        .executeTakeFirstOrThrow();
+      await reconcilePayment(id);
+      await reconcilePayment(id);
+
+      expect((await attempts(subId))[0].status).toBe("done");
+      expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledTimes(1);
+    });
+
     test("a pending order Toss reports as declined is not charged again", async () => {
       const { subId } = await dueSubscription();
       toss.chargeBillingKey.mockRejectedValueOnce(
@@ -1013,6 +1085,11 @@ integration("payments against the database", () => {
       expect(sub.status).toBe("active");
       expect(sub.toss_billing_key).toBe("issued-key");
       expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+
+      // A reloaded callback reports the subscription without thanking twice.
+      expect(await confirm(userId, customerKey)).toMatchObject({ ok: true });
+      expect(email.sendSupportThankYouEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendRecurringChargeReceiptEmail).not.toHaveBeenCalled();
     });
 
     // The cancel does not wait for the confirm's lease.
@@ -1071,6 +1148,45 @@ integration("payments against the database", () => {
         status: 402,
       });
       expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+    });
+
+    test("a temporary fault on the first charge keeps the key for the retry", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("일시적인 오류", 400, "PROVIDER_ERROR"),
+      );
+
+      expect(await confirm(userId, customerKey)).toMatchObject({
+        ok: false,
+        status: 503,
+      });
+
+      expect((await subscription(subId)).toss_billing_key).toBe("issued-key");
+      expect(toss.deleteBillingKey).not.toHaveBeenCalled();
+      const [attempt] = await db
+        .selectFrom("payments")
+        .select("status")
+        .where("subscription_id", "=", subId)
+        .execute();
+      expect(attempt.status).toBe("pending");
+    });
+
+    test("a first charge Toss approved despite an error activates", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      toss.chargeBillingKey.mockImplementation(async (params) => {
+        toss.getPaymentByOrderId.mockResolvedValue(
+          tossPayment(params.orderId, params.amount),
+        );
+        throw new toss.TossApiError(
+          "처리 중",
+          400,
+          "ALREADY_PROCESSING_REQUEST",
+        );
+      });
+
+      expect(await confirm(userId, customerKey)).toMatchObject({ ok: true });
+      expect((await subscription(subId)).status).toBe("active");
+      expect(toss.deleteBillingKey).not.toHaveBeenCalled();
     });
 
     test("an ambiguous first charge keeps its key and order for the retry", async () => {

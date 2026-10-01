@@ -30,6 +30,7 @@ import {
 import {
   BillingInterval,
   chargeBillingKey,
+  describeTossError,
   getPaymentByOrderId,
   isDefinitiveTossFailure,
   issueBillingKey,
@@ -40,6 +41,7 @@ import {
   TossApiError,
   TossPaymentResult,
 } from "@/lib/toss";
+import { settleFailedOrder } from "@/lib/toss-orders";
 
 // The subscribe flow, step by step: prepareSubscription records the chosen
 // plan and hands back the customerKey for requestBillingAuth; Toss redirects
@@ -522,31 +524,52 @@ async function confirmClaimedSubscription(opts: {
       idempotencyKey: attempt.order_id,
     });
   } catch (err) {
-    // A transport error is ambiguous: Toss may have completed the charge.
-    // Keep the attempt pending, and the key with it, so the next callback or
-    // the reconciler settles this orderId.
-    if (!isDefinitiveTossFailure(err)) {
+    // A failed call is not yet a failed charge: Toss may have completed it.
+    // Only the order's own outcome decides.
+    const settled = await settleFailedOrder({
+      orderId: attempt.order_id,
+      amount: sub.amount,
+      flow: "billing",
+      error: err,
+    });
+    if (settled.state === "unknown") {
+      // Keep the attempt pending, and the key with it, so the next callback
+      // or the reconciler settles this orderId.
       await notePaymentEvent({
         kind: "charge_unresolved",
         userId,
         paymentId: attempt.id,
         subscriptionId: sub.id,
-        summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): ${err instanceof Error ? err.message : String(err)}`,
+        summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): ${describeTossError(err)}`,
       });
       return fail(
         503,
         "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
       );
     }
-    await failFirstCharge({
-      userId,
-      subscriptionId: sub.id,
-      paymentId: attempt.id,
-      amount: sub.amount,
-      reason: `${err.code ?? err.status} ${err.message}`,
-      set: { raw: JSON.stringify({ error: err.message }) },
-    });
-    return fail(402, err.message);
+    if (settled.state === "refused") {
+      await failFirstCharge({
+        userId,
+        subscriptionId: sub.id,
+        paymentId: attempt.id,
+        amount: sub.amount,
+        reason: describeTossError(err),
+        set: settled.payment
+          ? {
+              ...paymentProviderMetadata(settled.payment, "billing"),
+              toss_payment_key: settled.payment.paymentKey,
+              raw: JSON.stringify(settled.payment),
+            }
+          : { raw: JSON.stringify({ error: describeTossError(err) }) },
+      });
+      return fail(
+        402,
+        err instanceof TossApiError && err.message
+          ? err.message
+          : "결제가 완료되지 않았습니다.",
+      );
+    }
+    payment = settled.payment;
   }
 
   if (payment.status !== "DONE") {
@@ -577,7 +600,9 @@ async function confirmClaimedSubscription(opts: {
     paymentId: attempt.id,
   });
 
-  if (userRow.email && userRow.email_verified_at) {
+  // A doubled callback, or the reconciler settling this order first (it sends
+  // its own receipt), finds the period already granted.
+  if (period.granted && userRow.email && userRow.email_verified_at) {
     try {
       await sendSupportThankYouEmail({
         email: userRow.email,

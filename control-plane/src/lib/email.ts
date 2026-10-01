@@ -387,6 +387,79 @@ export async function sendSupportThankYouEmail(opts: {
   return receipt;
 }
 
+// Sent for every recurring charge after the first — the renewals and a
+// scheduled first charge, which the cron makes while nobody is watching. The
+// supporter's only other sign of it would be the card statement.
+export async function sendRecurringChargeReceiptEmail(opts: {
+  email: string;
+  loginName: string;
+  amount: number;
+  orderId: string;
+  paidAt: Date;
+  periodStart: Date;
+  periodEnd: Date;
+  nextBillingAt: Date | null;
+  receiptUrl: string | null;
+}) {
+  const paymentsUrl = `${process.env.BASE_URL}/support/payments`;
+  const amountLabel = formatKrw(opts.amount);
+  const paidAtLabel = formatKoreanDateTime(opts.paidAt);
+  const periodLabel = `${formatKoreanDateTime(opts.periodStart)} ~ ${formatKoreanDateTime(opts.periodEnd)}`;
+  const nextLabel = opts.nextBillingAt
+    ? formatKoreanDateTime(opts.nextBillingAt)
+    : null;
+
+  const message = createMessage({
+    from: process.env.FROM_EMAIL || "noreply@naru.pub",
+    to: opts.email,
+    subject: "나루 정기 결제가 완료되었습니다",
+    content: {
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>나루 정기 결제 완료 안내</h2>
+          <p>${escapeHtml(opts.loginName)}님, 나루 정기 결제가 처리되었습니다. 늘 함께해 주셔서 감사합니다.</p>
+          <p><strong>결제 금액:</strong> ${amountLabel}</p>
+          <p><strong>결제 일시:</strong> ${paidAtLabel}</p>
+          <p><strong>주문번호:</strong> ${escapeHtml(opts.orderId)}</p>
+          <p><strong>이용 기간:</strong> ${periodLabel}</p>
+          ${nextLabel ? `<p><strong>다음 결제 예정일:</strong> ${nextLabel}</p>` : ""}
+          ${opts.receiptUrl ? `<p><a href="${escapeHtml(opts.receiptUrl)}">카드 매출전표 보기</a></p>` : ""}
+          <p>결제 내역 확인, 정기 결제 해지, 환불 신청은 결제 페이지에서 언제든 하실 수 있습니다.</p>
+          <p>
+            <a href="${paymentsUrl}" style="background-color: #007cba; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+              결제 내역 보기
+            </a>
+          </p>
+        </div>
+      `,
+      text: [
+        "나루 정기 결제 완료 안내",
+        "",
+        `${opts.loginName}님, 나루 정기 결제가 처리되었습니다. 늘 함께해 주셔서 감사합니다.`,
+        "",
+        `결제 금액: ${amountLabel}`,
+        `결제 일시: ${paidAtLabel}`,
+        `주문번호: ${opts.orderId}`,
+        `이용 기간: ${periodLabel}`,
+        ...(nextLabel ? [`다음 결제 예정일: ${nextLabel}`] : []),
+        ...(opts.receiptUrl ? [`카드 매출전표: ${opts.receiptUrl}`] : []),
+        "",
+        "결제 내역 확인, 정기 결제 해지, 환불 신청은 결제 페이지에서 언제든 하실 수 있습니다.",
+        paymentsUrl,
+      ].join("\n"),
+    },
+    tags: ["billing", "recurring-receipt"],
+  });
+
+  const receipt = await transport.send(message);
+  if (!receipt.successful) {
+    throw new Error(
+      `Failed to send recurring charge receipt email: ${receipt.errorMessages?.join(", ")}`,
+    );
+  }
+  return receipt;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

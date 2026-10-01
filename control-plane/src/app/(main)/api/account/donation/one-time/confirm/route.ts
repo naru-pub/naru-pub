@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
 import { sendSupportThankYouEmail } from "@/lib/email";
 import {
   confirmPayment,
+  describeTossError,
   isDefinitiveTossFailure,
   oneTimeYearsForAmount,
   paymentProviderMetadata,
   TossApiError,
 } from "@/lib/toss";
+import { settleFailedOrder } from "@/lib/toss-orders";
 import { applyOneTimePayment } from "@/lib/subscriptions";
 import { notePaymentEvent, won } from "@/lib/payment-events";
 
@@ -81,37 +84,82 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const params = { paymentKey, orderId, amount: pendingPayment.amount };
     let payment;
     try {
-      payment = await confirmPayment({ paymentKey, orderId, amount }, orderId);
+      payment = await confirmPayment(params, orderId);
     } catch (err) {
-      // A transport failure may follow a successful approval. Keep the order
-      // pending and retry safely with the same idempotency key.
-      await notePaymentEvent({
-        kind: isDefinitiveTossFailure(err) ? "charge_failed" : "charge_unresolved",
-        userId: user.id,
-        paymentId: pendingPayment.id,
-        summary: `한 번만 결제 ${won(pendingPayment.amount)} 승인 ${isDefinitiveTossFailure(err) ? "실패" : "결과 불분명"}: ${err instanceof TossApiError ? `${err.code ?? err.status} ${err.message}` : String(err)}`,
+      let error = err;
+      // A failed confirm is not yet a failed payment: look the order up first.
+      let settled = await settleFailedOrder({
+        orderId,
+        amount: pendingPayment.amount,
+        flow: "one-time",
+        error,
       });
-      if (isDefinitiveTossFailure(err)) {
-        await db
-          .updateTable("payments")
-          .set({
-            status: "failed",
-            raw: JSON.stringify({ error: err.message }),
-          })
-          .where("id", "=", pendingPayment.id)
-          .where("status", "=", "pending")
-          .execute();
+      // Still authenticated but not approved after an ambiguous failure:
+      // confirm once more under a new idempotency key. The old key would
+      // only replay the first answer, while the 10 minutes Toss allows for
+      // confirming run out. A second approval of the same payment is
+      // refused by Toss (ALREADY_PROCESSED_PAYMENT), so a new key cannot
+      // charge twice. A 409 means the first confirm is still running.
+      if (
+        settled.state === "unknown" &&
+        settled.tossStatus === "IN_PROGRESS" &&
+        !isDefinitiveTossFailure(error) &&
+        !(error instanceof TossApiError && error.status === 409)
+      ) {
+        try {
+          payment = await confirmPayment(params, `${orderId}:${randomUUID()}`);
+        } catch (retryError) {
+          error = retryError;
+          settled = await settleFailedOrder({
+            orderId,
+            amount: pendingPayment.amount,
+            flow: "one-time",
+            error,
+          });
+        }
       }
-      const message =
-        err instanceof TossApiError
-          ? err.message
-          : "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.";
-      return NextResponse.json(
-        { success: false, message },
-        { status: isDefinitiveTossFailure(err) ? 402 : 503 },
-      );
+      if (!payment && settled.state === "paid") payment = settled.payment;
+
+      if (!payment) {
+        const refused = settled.state === "refused";
+        await notePaymentEvent({
+          kind: refused ? "charge_failed" : "charge_unresolved",
+          userId: user.id,
+          paymentId: pendingPayment.id,
+          summary: `한 번만 결제 ${won(pendingPayment.amount)} 승인 ${refused ? "실패" : "결과 불분명"}: ${describeTossError(error)}`,
+        });
+        if (settled.state === "refused") {
+          const declined = settled.payment;
+          await db
+            .updateTable("payments")
+            .set({
+              ...(declined
+                ? {
+                    ...paymentProviderMetadata(declined, "one-time"),
+                    toss_payment_key: declined.paymentKey,
+                  }
+                : {}),
+              status: "failed",
+              raw: JSON.stringify(
+                declined ?? { error: describeTossError(error) },
+              ),
+            })
+            .where("id", "=", pendingPayment.id)
+            .where("status", "=", "pending")
+            .execute();
+        }
+        const message =
+          refused && error instanceof TossApiError
+            ? error.message
+            : "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.";
+        return NextResponse.json(
+          { success: false, message },
+          { status: refused ? 402 : 503 },
+        );
+      }
     }
 
     // Grant based on the amount Toss actually confirmed.

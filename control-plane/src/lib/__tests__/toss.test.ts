@@ -24,6 +24,7 @@ import {
   oneTimeYearsForAmount,
   TossApiError,
 } from "@/lib/toss";
+import { settleFailedOrder } from "@/lib/toss-orders";
 
 describe("Toss payment requests", () => {
   const originalBillingSecret = process.env.TOSS_BILLING_SECRET_KEY;
@@ -223,6 +224,23 @@ describe("Toss payment requests", () => {
     );
   });
 
+  // Toss answers some requests with a 4xx that is no verdict on the card: a
+  // temporary fault, a request already in flight, or 나루's own keys.
+  test.each([
+    [403, "REJECT_CARD_PAYMENT", true],
+    [400, "INVALID_STOPPED_CARD", true],
+    [400, "PROVIDER_ERROR", false],
+    [400, "ALREADY_PROCESSING_REQUEST", false],
+    [400, "ALREADY_PROCESSED_PAYMENT", false],
+    [403, "FORBIDDEN_REQUEST", false],
+    [401, "UNAUTHORIZED_KEY", false],
+    [429, "TOO_MANY_REQUESTS", false],
+  ])("classifies HTTP %i %s", (status, code, definitive) => {
+    expect(
+      isDefinitiveTossFailure(new TossApiError("failure", status, code)),
+    ).toBe(definitive);
+  });
+
   test("treats transport failures as ambiguous", () => {
     expect(isDefinitiveTossFailure(new TypeError("network failure"))).toBe(
       false,
@@ -386,5 +404,112 @@ describe("record ids from requests", () => {
     "019c175b89e8700085ff5f03f7b0abd4",
   ])("refuses %p", (value) => {
     expect(parseUuid(value)).toBeNull();
+  });
+});
+
+describe("settling a failed charge", () => {
+  const originalBillingSecret = process.env.TOSS_BILLING_SECRET_KEY;
+
+  function lookUpReturns(status: number, body: unknown) {
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: status < 400,
+      status,
+      text: async () => JSON.stringify(body),
+    } as Response);
+  }
+
+  function settle(error: unknown) {
+    return settleFailedOrder({
+      orderId: "order",
+      amount: 1000,
+      flow: "billing",
+      error,
+    });
+  }
+
+  const declined = new TossApiError("declined", 403, "REJECT_CARD_PAYMENT");
+  const temporary = new TossApiError("일시적인 오류", 400, "PROVIDER_ERROR");
+
+  beforeEach(() => {
+    process.env.TOSS_BILLING_SECRET_KEY = "test_billing_secret";
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (originalBillingSecret === undefined) {
+      delete process.env.TOSS_BILLING_SECRET_KEY;
+    } else {
+      process.env.TOSS_BILLING_SECRET_KEY = originalBillingSecret;
+    }
+  });
+
+  test("an order Toss approved is paid, whatever the call said", async () => {
+    lookUpReturns(200, {
+      paymentKey: "pk",
+      orderId: "order",
+      status: "DONE",
+      totalAmount: 1000,
+    });
+    expect(await settle(temporary)).toMatchObject({ state: "paid" });
+    expect(fetch).toHaveBeenCalledWith(
+      "https://api.tosspayments.com/v1/payments/orders/order",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  test("a decline for an order Toss never recorded is refused", async () => {
+    lookUpReturns(404, { code: "NOT_FOUND_PAYMENT", message: "없음" });
+    expect(await settle(declined)).toEqual({
+      state: "refused",
+      payment: null,
+    });
+  });
+
+  test("a temporary fault for an order Toss never recorded stays unknown", async () => {
+    lookUpReturns(404, { code: "NOT_FOUND_PAYMENT", message: "없음" });
+    expect(await settle(temporary)).toEqual({
+      state: "unknown",
+      tossStatus: null,
+    });
+  });
+
+  test("Toss's own verdict on the order is final", async () => {
+    lookUpReturns(200, {
+      paymentKey: "pk",
+      orderId: "order",
+      status: "ABORTED",
+      totalAmount: 1000,
+    });
+    expect(await settle(temporary)).toMatchObject({ state: "refused" });
+  });
+
+  test("an order still waiting for approval stays unknown", async () => {
+    lookUpReturns(200, {
+      paymentKey: "pk",
+      orderId: "order",
+      status: "IN_PROGRESS",
+      totalAmount: 1000,
+    });
+    expect(await settle(temporary)).toEqual({
+      state: "unknown",
+      tossStatus: "IN_PROGRESS",
+    });
+  });
+
+  test("an approved order for another amount is not taken as paid", async () => {
+    lookUpReturns(200, {
+      paymentKey: "pk",
+      orderId: "order",
+      status: "DONE",
+      totalAmount: 100,
+    });
+    expect(await settle(temporary)).toMatchObject({ state: "unknown" });
+  });
+
+  test("a lookup that fails leaves the order unknown", async () => {
+    global.fetch = jest
+      .fn<typeof fetch>()
+      .mockRejectedValue(new TypeError("fetch failed"));
+    expect(await settle(declined)).toMatchObject({ state: "unknown" });
   });
 });

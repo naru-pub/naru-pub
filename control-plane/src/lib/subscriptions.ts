@@ -179,7 +179,8 @@ export async function applyOneTimePayment(opts: {
 // Applies a successful Toss charge atomically: records the payment, extends the
 // subscription period, and mirrors the paid-through date onto users.supporter_until
 // (the column the proxy and entitlement layer gate on). Used by both the initial
-// confirm flow and the recurring-charge cron.
+// confirm flow and the recurring-charge cron. `granted` is false when the
+// payment had already been applied, so the caller's receipt goes out once.
 //
 // The new period never starts before the user's current supporter_until: a
 // one-time purchase may have stacked prepaid time past current_period_end, and
@@ -195,7 +196,7 @@ export async function applySuccessfulCharge(opts: {
   from: Date; // base for the new period (now for first charge, current_period_end for renewals)
   payment: TossPaymentResult;
   paymentId?: string;
-}): Promise<{ periodStart: Date; periodEnd: Date }> {
+}): Promise<{ periodStart: Date; periodEnd: Date; granted: boolean }> {
   const now = new Date();
 
   return db.transaction().execute(async (trx) => {
@@ -214,6 +215,7 @@ export async function applySuccessfulCharge(opts: {
         return {
           periodStart: new Date(ledger.period_start),
           periodEnd: new Date(ledger.period_end),
+          granted: false,
         };
       }
       assertGrantable(opts.paymentId, ledger.status);
@@ -318,7 +320,7 @@ export async function applySuccessfulCharge(opts: {
             : " · 빌링키가 없어 자동 갱신은 하지 않음"
       }`,
     });
-    return { periodStart, periodEnd };
+    return { periodStart, periodEnd, granted: true };
   });
 }
 

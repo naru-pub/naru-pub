@@ -1,15 +1,18 @@
 import { db } from "@/lib/database";
 import { sendSubscriptionPaymentGraceEmail } from "@/lib/email";
 import { sql } from "kysely";
+import { sendChargeReceipt } from "@/lib/charge-receipts";
 import {
   BillingInterval,
   chargeBillingKey,
+  describeTossError,
   getPaymentByOrderId,
-  isDefinitiveTossFailure,
   newOrderId,
   PLAN_ORDER_NAMES,
   TossApiError,
+  TossPaymentResult,
 } from "@/lib/toss";
+import { settleFailedOrder } from "@/lib/toss-orders";
 import {
   notePaymentEvent,
   recordPaymentEvent,
@@ -369,6 +372,114 @@ export async function chargeDueSubscriptions(
   console.log(`[charge-subscriptions] ${seen.length} subscription(s) due`);
 }
 
+type ChargeOutcome =
+  | { state: "paid"; payment: TossPaymentResult }
+  | { state: "refused"; error: unknown; keepAttemptStatus: boolean }
+  | { state: "unknown"; error: unknown };
+
+function declinedOrder(attempt: PaymentAttempt) {
+  return new TossApiError(
+    `order ${attempt.order_id} was declined`,
+    400,
+    "ABORTED",
+  );
+}
+
+// Charges one claimed attempt and says what became of it. A failed call is
+// not taken as a failed payment until the order agrees (settleFailedOrder):
+// Toss can answer an approved order with an error, and a failure counts
+// against the card and may end in past_due.
+async function chargeAttempt(
+  sub: DueSubscription,
+  attempt: PaymentAttempt,
+  declined: boolean,
+): Promise<ChargeOutcome> {
+  if (declined) {
+    return {
+      state: "refused",
+      error: declinedOrder(attempt),
+      // A declined order keeps the status and response Toss reported.
+      keepAttemptStatus: true,
+    };
+  }
+  try {
+    const existingPayment = await getPaymentByOrderId(
+      attempt.order_id,
+      "billing",
+    );
+    if (existingPayment.status === "DONE") {
+      return { state: "paid", payment: existingPayment };
+    }
+    if (existingPayment.status === "ABORTED") {
+      // Toss already declined this order, and an orderId is never
+      // reused; charging it again would only replay the decline.
+      return {
+        state: "refused",
+        error: declinedOrder(attempt),
+        keepAttemptStatus: false,
+      };
+    }
+  } catch (error) {
+    if (!(error instanceof TossApiError && error.status === 404)) {
+      return { state: "unknown", error };
+    }
+  }
+
+  let payment: TossPaymentResult;
+  try {
+    payment = await chargeBillingKey({
+      billingKey: sub.toss_billing_key,
+      customerKey: sub.toss_customer_key,
+      amount: sub.amount,
+      orderId: attempt.order_id,
+      orderName: PLAN_ORDER_NAMES[sub.billing_interval as BillingInterval],
+      idempotencyKey: attempt.order_id,
+    });
+  } catch (error) {
+    const settled = await settleFailedOrder({
+      orderId: attempt.order_id,
+      amount: sub.amount,
+      flow: "billing",
+      error,
+    });
+    if (settled.state === "paid") {
+      return { state: "paid", payment: settled.payment };
+    }
+    return settled.state === "refused"
+      ? { state: "refused", error, keepAttemptStatus: false }
+      : { state: "unknown", error };
+  }
+  if (payment.status !== "DONE") {
+    return {
+      state: "unknown",
+      error: new Error(`unexpected payment status: ${payment.status}`),
+    };
+  }
+  return { state: "paid", payment };
+}
+
+// Toss may have completed the request. Preserve the attempt so the next run
+// reconciles the same order instead of charging a new one.
+async function leaveUnresolved(
+  sub: DueSubscription,
+  attempt: PaymentAttempt,
+  error: unknown,
+  now: Date,
+) {
+  await releaseLease(sub);
+  await notePaymentEvent({
+    kind: "charge_unresolved",
+    userId: sub.user_id,
+    paymentId: attempt.id,
+    subscriptionId: sub.id,
+    summary: `갱신 결제 ${won(sub.amount)} 결과 불분명, 같은 주문(${attempt.order_id})으로 다시 확인 예정: ${describeTossError(error)}`,
+  });
+  await markPastDueAfterGrace(sub, now);
+  console.error(
+    `[charge-subscriptions] user ${sub.user_id}: ambiguous charge result; will reconcile ${attempt.order_id}: ${describeTossError(error)}`,
+  );
+}
+
 async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
   for (const sub of due) {
     const interval = sub.billing_interval as BillingInterval;
@@ -390,107 +501,59 @@ async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
       continue;
     }
 
-    try {
-      if (declined) {
-        throw new TossApiError(
-          `order ${attempt.order_id} was declined`,
-          400,
-          "ABORTED",
-        );
-      }
-      let payment = null;
-      try {
-        const existingPayment = await getPaymentByOrderId(
-          attempt.order_id,
-          "billing",
-        );
-        if (existingPayment.status === "DONE") {
-          payment = existingPayment;
-        } else if (existingPayment.status === "ABORTED") {
-          // Toss already declined this order, and an orderId is never
-          // reused; charging it again would only replay the decline.
-          throw new TossApiError(
-            `order ${attempt.order_id} was declined`,
-            400,
-            "ABORTED",
-          );
-        }
-      } catch (error) {
-        if (!(error instanceof TossApiError && error.status === 404)) {
-          throw error;
-        }
-      }
+    const outcome = await chargeAttempt(sub, attempt, declined);
 
-      payment ??= await chargeBillingKey({
-        billingKey: sub.toss_billing_key,
-        customerKey: sub.toss_customer_key,
-        amount: sub.amount,
-        orderId: attempt.order_id,
-        orderName: PLAN_ORDER_NAMES[interval],
-        idempotencyKey: attempt.order_id,
-      });
-
-      if (payment.status !== "DONE") {
-        throw new Error(`unexpected payment status: ${payment.status}`);
-      }
-
+    if (outcome.state === "paid") {
       // Keep periods contiguous, but never grant a period that's already in the past.
       const periodEnd = sub.current_period_end
         ? new Date(sub.current_period_end)
         : now;
       const base = periodEnd > now ? periodEnd : now;
-
-      await applySuccessfulCharge({
-        subscriptionId: sub.id,
-        userId: sub.user_id,
-        interval,
-        amount: sub.amount,
-        from: base,
-        payment,
-        paymentId: attempt.id,
-      });
-      console.log(`[charge-subscriptions] user ${sub.user_id}: renewed`);
-    } catch (err) {
-      if (!isDefinitiveTossFailure(err)) {
-        // Toss may have completed the request. Preserve the attempt so the
-        // next run reconciles the same order instead of charging a new one.
-        await releaseLease(sub);
-        await notePaymentEvent({
-          kind: "charge_unresolved",
-          userId: sub.user_id,
-          paymentId: attempt.id,
+      try {
+        const { granted } = await applySuccessfulCharge({
           subscriptionId: sub.id,
-          summary: `갱신 결제 ${won(sub.amount)} 결과 불분명, 같은 주문(${attempt.order_id})으로 다시 확인 예정: ${err instanceof Error ? err.message : String(err)}`,
+          userId: sub.user_id,
+          interval,
+          amount: sub.amount,
+          from: base,
+          payment: outcome.payment,
+          paymentId: attempt.id,
         });
-        await markPastDueAfterGrace(sub, now);
-        console.error(
-          `[charge-subscriptions] user ${sub.user_id}: ambiguous charge result; will reconcile ${attempt.order_id}: ${err}`,
-        );
+        if (granted) await sendChargeReceipt(attempt.id);
+      } catch (error) {
+        await leaveUnresolved(sub, attempt, error, now);
         continue;
       }
-      const failures = sub.failed_charge_count + 1;
-      const graceEndsAt = sub.current_period_end
-        ? addPaymentGrace(new Date(sub.current_period_end))
-        : now;
-      // A scheduled first charge that fails has still never been paid, so it
-      // stays scheduled while it retries rather than claiming to be active.
-      const nextStatus =
-        failures >= MAX_PAYMENT_RETRY_ATTEMPTS || graceEndsAt <= now
-          ? "past_due"
-          : sub.status;
-      await markAttemptFailed({
-        attempt,
-        sub,
-        failures,
-        nextStatus,
-        error: err,
-        // A declined order keeps the status and response Toss reported.
-        keepAttemptStatus: declined,
-      });
-      await sendGraceNoticeIfNeeded(sub, now);
-      console.error(
-        `[charge-subscriptions] user ${sub.user_id}: charge failed (${failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}) -> ${nextStatus}: ${err}`,
-      );
+      console.log(`[charge-subscriptions] user ${sub.user_id}: renewed`);
+      continue;
     }
+
+    if (outcome.state === "unknown") {
+      await leaveUnresolved(sub, attempt, outcome.error, now);
+      continue;
+    }
+
+    const failures = sub.failed_charge_count + 1;
+    const graceEndsAt = sub.current_period_end
+      ? addPaymentGrace(new Date(sub.current_period_end))
+      : now;
+    // A scheduled first charge that fails has still never been paid, so it
+    // stays scheduled while it retries rather than claiming to be active.
+    const nextStatus =
+      failures >= MAX_PAYMENT_RETRY_ATTEMPTS || graceEndsAt <= now
+        ? "past_due"
+        : sub.status;
+    await markAttemptFailed({
+      attempt,
+      sub,
+      failures,
+      nextStatus,
+      error: outcome.error,
+      keepAttemptStatus: outcome.keepAttemptStatus,
+    });
+    await sendGraceNoticeIfNeeded(sub, now);
+    console.error(
+      `[charge-subscriptions] user ${sub.user_id}: charge failed (${failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}) -> ${nextStatus}: ${describeTossError(outcome.error)}`,
+    );
   }
 }

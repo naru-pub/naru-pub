@@ -75,16 +75,47 @@ export class TossApiError extends Error {
   }
 }
 
-// A response-level 4xx (except an in-progress idempotency conflict) means Toss
-// definitively rejected the request. Network failures, 5xx and 409 are
-// ambiguous and must be reconciled with the same order/idempotency key.
+// 4xx answers that say nothing about the card: a temporary fault at Toss
+// (PROVIDER_ERROR: "잠시 후 다시 시도"), a request for this order already in
+// flight or already approved, or 나루's own keys being wrong. Counting one of
+// these as a decline would fail a payment Toss may have approved, or count a
+// misconfigured key against every subscriber's card.
+// https://docs.tosspayments.com/reference/error-codes
+const NOT_A_DECLINE_CODES = new Set([
+  "PROVIDER_ERROR",
+  "ALREADY_PROCESSING_REQUEST",
+  "ALREADY_PROCESSED_PAYMENT",
+  "DUPLICATED_ORDER_ID",
+  "DUPLICATED_REQUEST",
+  "FORBIDDEN_CONSECUTIVE_REQUEST",
+  "FORBIDDEN_REQUEST",
+  "UNAUTHORIZED_KEY",
+  "INVALID_API_KEY",
+  "INCORRECT_BASIC_AUTH_FORMAT",
+  "NOT_SUPPORTED_METHOD",
+]);
+
+// True when Toss refused the request on its merits — a declined card, an
+// expired authKey. Network failures, 5xx, 401, 409 (the same idempotency key
+// still in flight), 429 and the codes above are ambiguous and must be
+// reconciled with the same order and idempotency key.
 export function isDefinitiveTossFailure(error: unknown): error is TossApiError {
   return (
     error instanceof TossApiError &&
     error.status >= 400 &&
     error.status < 500 &&
-    error.status !== 409
+    error.status !== 401 &&
+    error.status !== 409 &&
+    error.status !== 429 &&
+    !NOT_A_DECLINE_CODES.has(error.code ?? "")
   );
+}
+
+export function describeTossError(error: unknown): string {
+  if (error instanceof TossApiError) {
+    return `${error.code ?? error.status} ${error.message}`;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 function secretKey(flow: TossPaymentFlow): string | undefined {

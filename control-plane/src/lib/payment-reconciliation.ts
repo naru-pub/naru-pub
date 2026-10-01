@@ -1,3 +1,4 @@
+import { sendChargeReceipt } from "@/lib/charge-receipts";
 import { db } from "@/lib/database";
 import {
   BillingInterval,
@@ -340,7 +341,7 @@ async function reconcilePaymentCore(
     : now;
   const from = initialAttempt || currentEnd < now ? now : currentEnd;
 
-  await applySuccessfulCharge({
+  const { granted } = await applySuccessfulCharge({
     subscriptionId: payment.subscription_id,
     userId: payment.user_id,
     interval: subscription.billing_interval as BillingInterval,
@@ -349,6 +350,9 @@ async function reconcilePaymentCore(
     payment: tossPayment,
     paymentId: payment.id,
   });
+  // The charge's own run left it unresolved, so nobody has told the
+  // supporter about it yet.
+  if (granted) await sendChargeReceipt(payment.id);
   return { state: "done" };
 }
 
