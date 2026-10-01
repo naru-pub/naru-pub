@@ -11,6 +11,7 @@ import {
   chargeBillingKey,
   describeTossError,
   getPaymentByOrderId,
+  isTossLiveMode,
   withNewOrderId,
   PLAN_ORDER_NAMES,
   TossApiError,
@@ -50,6 +51,8 @@ type DueSubscription = {
   // The plan's key and its customerKey.
   billing_key: string;
   customer_key: string;
+  // The MID that issued the key (billing_keys.toss_mid).
+  key_mid: string | null;
   current_period_end: Date | string | null;
   payment_grace_notice_sent_at: Date | string | null;
   failed_charge_count: number;
@@ -105,6 +108,7 @@ function dueSubscriptions(
       s.amount,
       k.billing_key,
       k.customer_key,
+      k.toss_mid AS key_mid,
       s.current_period_end,
       s.payment_grace_notice_sent_at,
       s.failed_charge_count
@@ -532,12 +536,43 @@ async function leaveUnresolved(
 }
 
 // Charges one due subscription. Runs under its account's lock.
+// Why the plan's key cannot be charged through the billing secret key in use,
+// or null when it can. A key is chargeable only through the MID that issued
+// it: one of another MID — a test-mode key once the live keys are in — would
+// be refused, and counting that as the card's decline would mail the
+// supporter a failure that is 나루's. TOSS_BILLING_MID names the MID of
+// TOSS_BILLING_SECRET_KEY; live mode charges nothing without it.
+export function keyMidProblem(keyMid: string | null): string | null {
+  const expected = process.env.TOSS_BILLING_MID?.trim() || null;
+  if (!expected) {
+    return isTossLiveMode() ? "TOSS_BILLING_MID가 설정되지 않음" : null;
+  }
+  if (keyMid === expected) return null;
+  return `빌링키의 MID ${keyMid ?? "(기록 없음)"}, 현재 키의 MID ${expected}`;
+}
+
 async function chargeSubscription(
   sub: DueSubscription,
   now: Date,
   newCard: boolean,
 ) {
   const interval = sub.billing_interval as BillingInterval;
+
+  // Not charged, and nothing counted against the card: the plan stays due,
+  // and the operators hear of it once a day (renewal jobs are daily).
+  const midProblem = keyMidProblem(sub.key_mid);
+  if (midProblem) {
+    await notePaymentEvent({
+      kind: "billing_mid_mismatch",
+      userId: sub.user_id,
+      subscriptionId: sub.id,
+      summary: `정기 결제 ${won(sub.amount)} 청구하지 않음: ${midProblem}`,
+    });
+    console.error(
+      `[charge-subscriptions] subscription ${sub.id}: not charged, ${midProblem}`,
+    );
+    return;
+  }
   const { attempt, declined } = await getOrCreatePaymentAttempt(sub, newCard);
 
   if (attempt.status === "done") {

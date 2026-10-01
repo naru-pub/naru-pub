@@ -237,6 +237,7 @@ export type IssueOutcome =
   | {
       kind: "issued";
       billingKey: string;
+      mid: string | null;
       cardCompany: string | null;
       cardNumber: string | null;
     }
@@ -256,6 +257,7 @@ export async function issueKey(
     return {
       kind: "issued",
       billingKey: issued.billingKey,
+      mid: issued.mId ?? null,
       cardCompany: issued.card?.issuerCode ?? issued.cardCompany ?? null,
       cardNumber: issued.card?.number ?? issued.cardNumber ?? null,
     };

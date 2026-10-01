@@ -43,6 +43,7 @@ export interface BillingKeys {
   id: Generated<string>;
   retired_at: Timestamp | null;
   status: ColumnType<"active" | "retired" | "deleted", "active" | "retired" | "deleted" | undefined>;
+  toss_mid: string | null;
   user_id: string | null;
 }
 
@@ -145,6 +146,15 @@ export interface CardRegistrations {
   kind: "signup" | "card_change";
   subscription_id: string | null;
   user_id: string;
+}
+
+export interface CronJobs {
+  every_seconds: number;
+  id: Generated<string>;
+  last_started_at: Generated<Timestamp>;
+  name: string;
+  process: "cron" | "worker";
+  stalled_at: Timestamp | null;
 }
 
 export interface CustomDomains {
@@ -331,7 +341,7 @@ export interface Payments {
   reconciliation_error: string | null;
   refunded_amount: Generated<number>;
   refunded_at: Timestamp | null;
-  status: import("./payment-states").PaymentStatus;
+  status: import("./payments/payment-states").PaymentStatus;
   subscription_id: string | null;
   toss_api_version: string | null;
   toss_approved_at: Timestamp | null;
@@ -453,7 +463,7 @@ export interface Subscriptions {
   payment_grace_notice_sent_at: Timestamp | null;
   plan: Generated<string>;
   renewal_notice_sent_at: Timestamp | null;
-  status: import("./payment-states").SubscriptionStatus;
+  status: import("./payments/payment-states").SubscriptionStatus;
   updated_at: Generated<Timestamp>;
   user_id: string;
 }
@@ -541,6 +551,7 @@ export interface DB {
   board_template_versions: BoardTemplateVersions;
   board_templates: BoardTemplates;
   card_registrations: CardRegistrations;
+  cron_jobs: CronJobs;
   custom_domains: CustomDomains;
   edit_daily_stats: EditDailyStats;
   email_verification_tokens: EmailVerificationTokens;

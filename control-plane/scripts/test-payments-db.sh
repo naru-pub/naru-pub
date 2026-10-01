@@ -27,4 +27,4 @@ export DATABASE_URL="postgresql://payments_test@localhost/naru_payments_test?hos
 # src/lib/db.d.ts is generated from this schema (pnpm kysely-codegen against a
 # migrated database); a migration without regenerated types fails here.
 ./node_modules/.bin/kysely-codegen --config-file .kysely-codegenrc.json --verify
-NARU_PAYMENTS_DB_TEST=1 ./node_modules/.bin/jest --config jest.payment.config.cjs --runInBand src/lib/payments/__tests__/billing-db "$@"
+NARU_PAYMENTS_DB_TEST=1 ./node_modules/.bin/jest --config jest.payment.config.cjs --runInBand src/lib/payments/__tests__/billing-db src/lib/__tests__/scheduled-jobs-db "$@"

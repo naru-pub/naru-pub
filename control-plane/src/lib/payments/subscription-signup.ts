@@ -347,6 +347,7 @@ async function adoptSignupKey(opts: {
       userId: opts.userId,
       customerKey: opts.customerKey,
       billingKey: opts.issued.billingKey,
+      mid: opts.issued.mid,
       cardCompany: opts.issued.cardCompany,
       cardNumber: opts.issued.cardNumber,
     });
@@ -815,6 +816,7 @@ async function swapCard(opts: {
       userId,
       customerKey,
       billingKey: issued.billingKey,
+      mid: issued.mid,
       cardCompany: issued.cardCompany,
       cardNumber: issued.cardNumber,
     });

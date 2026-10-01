@@ -115,3 +115,30 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ]);
   });
 });
+
+// db.d.ts is a declaration file, so an override importing a module that does
+// not exist type-checks quietly as `any`: the payment statuses lost their
+// types that way when the payment code moved. Every import must resolve.
+describe("database type overrides", () => {
+  test("import modules that exist", () => {
+    const config = readFileSync(
+      join(SRC, "..", ".kysely-codegenrc.json"),
+      "utf8",
+    );
+    const imports = [...config.matchAll(/import\(\\"([^\\]+)\\"\)/g)].map(
+      (match) => match[1],
+    );
+    expect(imports.length).toBeGreaterThan(0);
+    const missing = imports.filter(
+      (path) =>
+        ![".ts", ".tsx", ".d.ts"].some((ext) => {
+          try {
+            return statSync(join(SRC, "lib", path + ext)).isFile();
+          } catch {
+            return false;
+          }
+        }),
+    );
+    expect(missing).toEqual([]);
+  });
+});

@@ -7,6 +7,11 @@ import {
   sendOperatorAlert,
 } from "@/lib/operator-alerts";
 import { recordPaymentCronRun } from "@/lib/payments/payment-events";
+import {
+  checkStalledJobs,
+  noteJobStarted,
+  registerJobs,
+} from "@/lib/scheduled-jobs";
 
 const SCREENSHOT_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const SCREENSHOT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
@@ -347,14 +352,45 @@ async function runSiteDataGrantCleanup() {
 // Korea has no daylight saving time, so KST is always UTC+9.
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
+// The jobs scheduled below, registered in cron_jobs at start so that one that
+// stops starting is noticed (lib/scheduled-jobs). Each start is noted there.
+const scheduled: Array<{ name: string; everySeconds: number }> = [];
+
+function started(name: string, fn: () => Promise<void>) {
+  return () => {
+    void noteJobStarted(name);
+    void fn();
+  };
+}
+
+// Every `ms`, and once `firstAfterMs` after start when given.
+function scheduleEvery(
+  name: string,
+  ms: number,
+  fn: () => Promise<void>,
+  firstAfterMs?: number,
+) {
+  scheduled.push({ name, everySeconds: ms / 1000 });
+  const run = started(name, fn);
+  setInterval(run, ms);
+  if (firstAfterMs !== undefined) setTimeout(run, firstAfterMs);
+}
+
 // Daily times are Korean time, whatever zone the container runs in (UTC in
 // production): 04:00 means 04:00 in Seoul, as the docs and the supporters'
 // mail say.
-function scheduleDaily(hour: number, minute: number, fn: () => Promise<void>) {
+function scheduleDaily(
+  name: string,
+  hour: number,
+  minute: number,
+  fn: () => Promise<void>,
+) {
+  scheduled.push({ name, everySeconds: 24 * 60 * 60 });
+  const run = started(name, fn);
   const runIfTime = () => {
     const kst = new Date(Date.now() + KST_OFFSET_MS);
     if (kst.getUTCHours() === hour && kst.getUTCMinutes() === minute) {
-      fn();
+      run();
     }
   };
 
@@ -366,12 +402,32 @@ function scheduleDaily(hour: number, minute: number, fn: () => Promise<void>) {
 }
 
 // Every hour at the given minute.
-function scheduleHourly(minute: number, fn: () => Promise<void>) {
+function scheduleHourly(name: string, minute: number, fn: () => Promise<void>) {
+  scheduled.push({ name, everySeconds: 60 * 60 });
+  const run = started(name, fn);
   const runIfTime = () => {
-    if (new Date().getUTCMinutes() === minute) fn();
+    if (new Date().getUTCMinutes() === minute) run();
   };
   setInterval(runIfTime, 60 * 1000);
   runIfTime();
+}
+
+// Best effort, like every alert here. CRON_HEARTBEAT_URL, when set, is pinged
+// after each check: an outside service (healthchecks.io and the like) that
+// expects it every minute notices what no process here can — the whole server
+// down.
+async function watchScheduledJobs() {
+  try {
+    await checkStalledJobs();
+  } catch (error) {
+    console.error("[cron] scheduled job check failed:", error);
+  }
+  const ping = process.env.CRON_HEARTBEAT_URL;
+  if (ping) {
+    await fetch(ping, { signal: AbortSignal.timeout(10 * 1000) }).catch(
+      (error) => console.error("[cron] heartbeat ping failed:", error),
+    );
+  }
 }
 
 async function main() {
@@ -379,60 +435,96 @@ async function main() {
 
   // Run screenshot updater every 15 minutes
   console.log("[cron] Scheduling screenshot updater every 15 minutes");
-  setInterval(runScreenshotUpdater, SCREENSHOT_INTERVAL);
-
-  // Run on startup after a short delay
-  setTimeout(runScreenshotUpdater, 10 * 1000);
+  // and on startup after a short delay.
+  scheduleEvery(
+    "screenshot-updater",
+    SCREENSHOT_INTERVAL,
+    runScreenshotUpdater,
+    10 * 1000,
+  );
 
   listenForTemplatePublishes();
 
   // Run export processor every 2 minutes
   console.log("[cron] Scheduling export processor every 2 minutes");
-  setInterval(runExportProcessor, EXPORT_INTERVAL);
+  scheduleEvery("export-processor", EXPORT_INTERVAL, runExportProcessor);
 
   // Run site-update dispatcher every 5 minutes
   console.log("[cron] Scheduling site-update dispatcher every 5 minutes");
-  setInterval(runSiteUpdateDispatcher, SITE_UPDATE_INTERVAL);
+  scheduleEvery(
+    "site-update-dispatcher",
+    SITE_UPDATE_INTERVAL,
+    runSiteUpdateDispatcher,
+  );
 
   // Run custom-domain verification poller every 3 minutes
   console.log("[cron] Scheduling custom-domain refresher every 3 minutes");
-  setInterval(runCustomDomainRefresher, CUSTOM_DOMAIN_INTERVAL);
-  setTimeout(runCustomDomainRefresher, 20 * 1000);
+  scheduleEvery(
+    "custom-domain-refresher",
+    CUSTOM_DOMAIN_INTERVAL,
+    runCustomDomainRefresher,
+    20 * 1000,
+  );
 
   console.log("[cron] Scheduling payment reconciliation every 5 minutes");
-  setInterval(runPaymentReconciliation, PAYMENT_RECONCILIATION_INTERVAL);
-  setTimeout(runPaymentReconciliation, 45 * 1000);
+  scheduleEvery(
+    "payment-reconciliation",
+    PAYMENT_RECONCILIATION_INTERVAL,
+    runPaymentReconciliation,
+    45 * 1000,
+  );
 
   console.log("[cron] Scheduling billing key deletion every 5 minutes");
-  setInterval(runBillingKeyDeletion, BILLING_KEY_DELETION_INTERVAL);
-  setTimeout(runBillingKeyDeletion, 55 * 1000);
+  scheduleEvery(
+    "billing-key-deletion",
+    BILLING_KEY_DELETION_INTERVAL,
+    runBillingKeyDeletion,
+    55 * 1000,
+  );
 
   console.log("[cron] Scheduling payment job queue every minute");
-  setInterval(runPaymentJobQueue, PAYMENT_JOB_QUEUE_INTERVAL);
-  setTimeout(runPaymentJobQueue, 15 * 1000);
+  scheduleEvery(
+    "payment-job-queue",
+    PAYMENT_JOB_QUEUE_INTERVAL,
+    runPaymentJobQueue,
+    15 * 1000,
+  );
 
   console.log("[cron] Scheduling payment event digest every minute");
-  setInterval(runPaymentEventDigest, PAYMENT_EVENT_DIGEST_INTERVAL);
+  scheduleEvery(
+    "payment-event-digest",
+    PAYMENT_EVENT_DIGEST_INTERVAL,
+    runPaymentEventDigest,
+  );
 
   // Run expired GitHub deployment cleanup every 15 minutes
   console.log("[cron] Scheduling GitHub deployment cleanup every 15 minutes");
-  setInterval(
-    runExpiredGitHubDeploymentCleanup,
+  scheduleEvery(
+    "github-deployment-cleanup",
     GITHUB_DEPLOYMENT_CLEANUP_INTERVAL,
+    runExpiredGitHubDeploymentCleanup,
+    30 * 1000,
   );
-  setTimeout(runExpiredGitHubDeploymentCleanup, 30 * 1000);
 
   console.log("[cron] Scheduling pending media cleanup every 15 minutes");
-  setInterval(runMediaCleanup, MEDIA_CLEANUP_INTERVAL);
-  setTimeout(runMediaCleanup, 40 * 1000);
+  scheduleEvery(
+    "media-cleanup",
+    MEDIA_CLEANUP_INTERVAL,
+    runMediaCleanup,
+    40 * 1000,
+  );
 
   console.log("[cron] Scheduling site database grant cleanup every 30 minutes");
-  setInterval(runSiteDataGrantCleanup, SITE_DATA_CLEANUP_INTERVAL);
-  setTimeout(runSiteDataGrantCleanup, 50 * 1000);
+  scheduleEvery(
+    "site-data-grant-cleanup",
+    SITE_DATA_CLEANUP_INTERVAL,
+    runSiteDataGrantCleanup,
+    50 * 1000,
+  );
 
   // Daily jobs run at Korean times (scheduleDaily).
   console.log("[cron] Scheduling home directory updater daily at 22:00 KST");
-  scheduleDaily(22, 0, runHomeDirectoryUpdater);
+  scheduleDaily("home-directory-updater", 22, 0, runHomeDirectoryUpdater);
 
   // Renewals bill at 09:00 KST. The job runs every hour, but each run only
   // charges what was due by the last 09:00 and was not tried in the last day
@@ -441,24 +533,38 @@ async function main() {
   console.log(
     "[cron] Scheduling subscription charger hourly (renewals due by 09:00 KST)",
   );
-  scheduleHourly(0, runSubscriptionCharger);
+  scheduleHourly("subscription-charger", 0, runSubscriptionCharger);
 
   console.log("[cron] Scheduling payment refund sync daily at 04:15 KST");
-  scheduleDaily(4, 15, runPaymentRefundSync);
+  scheduleDaily("payment-refund-sync", 4, 15, runPaymentRefundSync);
 
   console.log("[cron] Scheduling billing notifications daily at 09:00 KST");
-  scheduleDaily(9, 0, runBillingNotifications);
+  scheduleDaily("billing-notifications", 9, 0, runBillingNotifications);
 
   console.log(
     "[cron] Scheduling expired custom-domain cleanup daily at 04:30 KST",
   );
-  scheduleDaily(4, 30, runExpiredCustomDomainCleanup);
+  scheduleDaily(
+    "expired-custom-domain-cleanup",
+    4,
+    30,
+    runExpiredCustomDomainCleanup,
+  );
 
   console.log("[cron] Scheduling Toss transaction check daily at 04:45 KST");
-  scheduleDaily(4, 45, runTossTransactionCheck);
+  scheduleDaily("toss-transaction-check", 4, 45, runTossTransactionCheck);
 
   console.log("[cron] Scheduling payment invariant check daily at 05:00 KST");
-  scheduleDaily(5, 0, runPaymentInvariantCheck);
+  scheduleDaily("payment-invariant-check", 5, 0, runPaymentInvariantCheck);
+
+  // This process's own heartbeat, and the watch over every job's, the
+  // worker's heartbeat included (lib/scheduled-jobs).
+  scheduleEvery("cron", 60 * 1000, watchScheduledJobs, 30 * 1000);
+  try {
+    await registerJobs("cron", scheduled);
+  } catch (error) {
+    console.error("[cron] could not register the scheduled jobs:", error);
+  }
 
   // Keep process alive
   process.on("SIGTERM", () => {

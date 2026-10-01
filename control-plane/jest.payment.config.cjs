@@ -3,7 +3,11 @@ const nextJest = require("next/jest");
 module.exports = async () => {
   const config = await nextJest({ dir: "./" })({
     testEnvironment: "node",
-    testMatch: ["<rootDir>/src/lib/payments/__tests__/*.test.ts"],
+    testMatch: [
+      "<rootDir>/src/lib/payments/__tests__/*.test.ts",
+      // Shares the payment suites' disposable database.
+      "<rootDir>/src/lib/__tests__/scheduled-jobs-db.test.ts",
+    ],
     moduleNameMapper: { "^@/(.*)$": "<rootDir>/src/$1" },
   })();
   config.transformIgnorePatterns = [

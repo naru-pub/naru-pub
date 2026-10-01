@@ -51,6 +51,7 @@ export default async function SubscriptionsPage({
       "billing_keys.billing_key",
       "billing_keys.card_company",
       "billing_keys.card_number",
+      "billing_keys.toss_mid",
       "subscriptions.current_period_end",
       "subscriptions.next_billing_at",
       "subscriptions.failed_charge_count",
@@ -156,6 +157,7 @@ export default async function SubscriptionsPage({
                     ? [
                         sub.card_company,
                         sub.card_number ?? maskSecret(sub.billing_key),
+                        sub.toss_mid && `(${sub.toss_mid})`,
                       ]
                         .filter(Boolean)
                         .join(" ")

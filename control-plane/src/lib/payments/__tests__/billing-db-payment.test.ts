@@ -630,6 +630,54 @@ integration("payments against the database", () => {
       );
     });
 
+    test("a key of another MID is not charged, nor counted as a decline", async () => {
+      const periodEnd = new Date(Date.now() - 60 * 1000);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      const { billing_key_id } = await subscription(subId);
+      await db
+        .updateTable("billing_keys")
+        .set({ toss_mid: "tvivarepublica2" })
+        .where("id", "=", billing_key_id!)
+        .execute();
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+      process.env.TOSS_BILLING_MID = "live-mid";
+      try {
+        await chargeDueSubscriptions();
+
+        expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+        const sub = await subscription(subId);
+        expect(sub.status).toBe("active");
+        expect(sub.failed_charge_count).toBe(0);
+        const [event] = await db
+          .selectFrom("payment_events")
+          .select(["kind", "summary"])
+          .where("subscription_id", "=", subId)
+          .execute();
+        expect(event).toEqual({
+          kind: "billing_mid_mismatch",
+          summary: expect.stringContaining("tvivarepublica2"),
+        });
+
+        // Once the key is the MID's, it is charged.
+        await db
+          .updateTable("billing_keys")
+          .set({ toss_mid: "live-mid" })
+          .where("id", "=", billing_key_id!)
+          .execute();
+        await chargeDueSubscriptions();
+        expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+      } finally {
+        delete process.env.TOSS_BILLING_MID;
+      }
+    });
+
     test("a cancel during a failed charge is not overwritten", async () => {
       const periodEnd = new Date(Date.now() - 60 * 1000);
       const userId = await makeUser(periodEnd);

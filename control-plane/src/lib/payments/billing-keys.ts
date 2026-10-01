@@ -30,6 +30,7 @@ export async function storeIssuedKey(
     userId: string;
     customerKey: string;
     billingKey: string;
+    mid?: string | null;
     cardCompany?: string | null;
     cardNumber?: string | null;
   },
@@ -40,6 +41,7 @@ export async function storeIssuedKey(
       user_id: opts.userId,
       customer_key: opts.customerKey,
       billing_key: opts.billingKey,
+      toss_mid: opts.mid ?? null,
       card_company: opts.cardCompany ?? null,
       card_number: opts.cardNumber ?? null,
     })

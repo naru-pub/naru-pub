@@ -376,6 +376,9 @@ async function sendTossRequest<T>(
 export type TossBillingKeyResult = {
   billingKey: string;
   customerKey: string;
+  // The merchant (MID) that issued the key, and the only one that can charge
+  // it.
+  mId?: string | null;
   // The card: its issuer's two-character code (카드사 코드, e.g. "61") and its
   // number, masked by Toss (e.g. "43301234****123*"). API version 2024-06-01
   // moved them from cardCompany and cardNumber, which older versions send.
