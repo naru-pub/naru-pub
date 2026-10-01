@@ -1167,8 +1167,8 @@ integration("payments against the database", () => {
       };
     }
 
-    // Both keys may list the same test account, and Toss's list prefixes
-    // a billing order's id.
+    // Both keys may list the same test account, and Toss's list may write
+    // the order id its own way: transactions are matched by paymentKey.
     test("a day whose books agree reports nothing", async () => {
       const { paidAt } = await paidYesterday("agrees");
       toss.listTransactions.mockImplementation(async () => [

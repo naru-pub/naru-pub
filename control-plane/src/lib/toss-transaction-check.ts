@@ -34,13 +34,6 @@ export function previousKstDay(now = new Date()) {
   return { start, end, startLocal: local(start), endLocal: local(end) };
 }
 
-// Toss's list names a billing order with a prefix before our order id
-// ("1a5321_2026-10-01-7267-3808"); our ids have no underscore.
-function ourOrderId(orderId: string): string {
-  const at = orderId.indexOf("_");
-  return at === -1 ? orderId : orderId.slice(at + 1);
-}
-
 // Both MIDs' transactions, each once: with test keys both secret keys can
 // list the same account.
 async function tossTransactions(startLocal: string, endLocal: string) {
@@ -53,12 +46,7 @@ async function tossTransactions(startLocal: string, endLocal: string) {
         endDate: endLocal,
         startingAfter,
       });
-      for (const row of rows) {
-        all.set(row.transactionKey, {
-          ...row,
-          orderId: ourOrderId(row.orderId),
-        });
-      }
+      for (const row of rows) all.set(row.transactionKey, row);
       if (rows.length < 5000) break;
       startingAfter = rows[rows.length - 1].transactionKey;
     }
@@ -66,19 +54,53 @@ async function tossTransactions(startLocal: string, endLocal: string) {
   return [...all.values()];
 }
 
-async function ledgerCounts(start: Date, end: Date, orderIds?: string[]) {
+// The ledger's rows for the day, counted by payment.
+async function ledgerCounts(start: Date, end: Date, paymentIds?: string[]) {
   const rows = await db
-    .selectFrom("payment_transactions as t")
-    .innerJoin("payments as p", "p.id", "t.payment_id")
-    .select(["p.order_id", (eb) => eb.fn.countAll<number>().as("n")])
-    .where("t.occurred_at", ">=", start)
-    .where("t.occurred_at", "<", end)
-    .$if(orderIds !== undefined, (qb) =>
-      qb.where("p.order_id", "in", orderIds!),
+    .selectFrom("payment_transactions")
+    .select(["payment_id", (eb) => eb.fn.countAll<number>().as("n")])
+    .where("occurred_at", ">=", start)
+    .where("occurred_at", "<", end)
+    .$if(paymentIds !== undefined, (qb) =>
+      qb.where("payment_id", "in", paymentIds!),
     )
-    .groupBy("p.order_id")
+    .groupBy("payment_id")
     .execute();
-  return new Map(rows.map((row) => [row.order_id, Number(row.n)]));
+  return new Map(rows.map((row) => [row.payment_id, Number(row.n)]));
+}
+
+// Which of our payments each Toss transaction belongs to: by its paymentKey,
+// which Toss gives every transaction and we keep (toss_payment_key) once
+// Toss has answered for the payment, or else by its exact orderId. Toss's
+// list may write the orderId differently from what we sent (it prefixes
+// billing orders in test mode), and that is not documented, so it is never
+// pulled apart; a transaction matching neither is reported. By the time this
+// runs, the reconciler has settled yesterday's open orders and learned their
+// paymentKeys.
+async function ourPayments(transactions: TossTransaction[]) {
+  const paymentKeys = [...new Set(transactions.map((t) => t.paymentKey))];
+  const orderIds = [...new Set(transactions.map((t) => t.orderId))];
+  const rows =
+    transactions.length === 0
+      ? []
+      : await db
+          .selectFrom("payments")
+          .select(["id", "order_id", "toss_payment_key"])
+          .where((eb) =>
+            eb.or([
+              eb("toss_payment_key", "in", paymentKeys),
+              eb("order_id", "in", orderIds),
+            ]),
+          )
+          .execute();
+  const byKey = new Map(
+    rows
+      .filter((row) => row.toss_payment_key)
+      .map((row) => [row.toss_payment_key!, row]),
+  );
+  const byOrder = new Map(rows.map((row) => [row.order_id, row]));
+  return (t: TossTransaction) =>
+    byKey.get(t.paymentKey) ?? byOrder.get(t.orderId) ?? null;
 }
 
 export async function checkTossTransactions(now = new Date()): Promise<{
@@ -90,65 +112,70 @@ export async function checkTossTransactions(now = new Date()): Promise<{
   const toss = (await tossTransactions(startLocal, endLocal)).filter((t) =>
     MONEY_MOVED.has(t.status),
   );
-  const tossByOrder = new Map<string, TossTransaction[]>();
+  const paymentOf = await ourPayments(toss);
+  const problems: string[] = [];
+
+  // Toss's transactions by our payment; those of no payment of ours, by the
+  // order Toss names.
+  const tossByPayment = new Map<string, TossTransaction[]>();
+  const orderOf = new Map<string, string>();
+  const unknown = new Map<string, TossTransaction[]>();
   for (const t of toss) {
-    tossByOrder.set(t.orderId, [...(tossByOrder.get(t.orderId) ?? []), t]);
+    const payment = paymentOf(t);
+    if (payment) {
+      tossByPayment.set(payment.id, [
+        ...(tossByPayment.get(payment.id) ?? []),
+        t,
+      ]);
+      orderOf.set(payment.id, payment.order_id);
+    } else {
+      unknown.set(t.orderId, [...(unknown.get(t.orderId) ?? []), t]);
+    }
   }
 
-  const orderIds = [...tossByOrder.keys()];
-  const payments = orderIds.length
-    ? await db
-        .selectFrom("payments")
-        .select(["id", "order_id"])
-        .where("order_id", "in", orderIds)
-        .execute()
-    : [];
-  const paymentByOrder = new Map(payments.map((p) => [p.order_id, p.id]));
-
-  const problems: string[] = [];
   let ledger = await ledgerCounts(start, end);
-  // Orders whose day at Toss and in the ledger differ: reconciled, then
+  // Payments whose day at Toss and in the ledger differ: reconciled, then
   // counted again.
-  const differing = orderIds.filter(
-    (orderId) =>
-      paymentByOrder.has(orderId) &&
-      (ledger.get(orderId) ?? 0) !== tossByOrder.get(orderId)!.length,
+  const differing = [...tossByPayment.keys()].filter(
+    (id) => (ledger.get(id) ?? 0) !== tossByPayment.get(id)!.length,
   );
-  for (const orderId of differing) {
+  for (const id of differing) {
     try {
-      await reconcilePayment(paymentByOrder.get(orderId)!, { waitMs: 0 });
+      await reconcilePayment(id, { waitMs: 0 });
     } catch (error) {
       if (!(error instanceof AccountBusyError)) {
-        console.error(
-          `[toss-transactions] reconciling ${orderId} failed`,
-          error,
-        );
+        console.error(`[toss-transactions] reconciling ${id} failed`, error);
       }
     }
   }
   if (differing.length > 0) {
     const recounted = await ledgerCounts(start, end, differing);
+    for (const id of differing) ledger.delete(id);
     ledger = new Map([...ledger, ...recounted]);
-    for (const orderId of differing) {
-      if (!recounted.has(orderId)) ledger.delete(orderId);
-    }
   }
 
-  for (const [orderId, transactions] of tossByOrder) {
+  for (const [orderId, transactions] of unknown) {
     const amount = won(transactions.reduce((t, x) => t + x.amount, 0));
-    if (!paymentByOrder.has(orderId)) {
+    problems.push(
+      `Toss에만 있는 주문 ${orderId}: 거래 ${transactions.length}건 (${amount})`,
+    );
+  }
+  for (const [id, transactions] of tossByPayment) {
+    if ((ledger.get(id) ?? 0) !== transactions.length) {
       problems.push(
-        `Toss에만 있는 주문 ${orderId}: 거래 ${transactions.length}건 (${amount})`,
-      );
-    } else if ((ledger.get(orderId) ?? 0) !== transactions.length) {
-      problems.push(
-        `주문 ${orderId}: Toss 거래 ${transactions.length}건, 원장 ${ledger.get(orderId) ?? 0}건`,
+        `주문 ${orderOf.get(id)}: Toss 거래 ${transactions.length}건, 원장 ${ledger.get(id) ?? 0}건`,
       );
     }
   }
-  for (const [orderId, count] of ledger) {
-    if (!tossByOrder.has(orderId)) {
-      problems.push(`원장에만 있는 거래: 주문 ${orderId} ${count}건`);
+  const ledgerOnly = [...ledger.keys()].filter((id) => !tossByPayment.has(id));
+  if (ledgerOnly.length > 0) {
+    const rows = await db
+      .selectFrom("payments")
+      .select("order_id")
+      .where("id", "in", ledgerOnly)
+      .execute();
+    for (const row of rows) {
+      problems.push(`원장에만 있는 거래: 주문 ${row.order_id}`);
     }
   }
 
