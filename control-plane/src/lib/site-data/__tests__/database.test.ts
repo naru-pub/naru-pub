@@ -1,5 +1,12 @@
 /** @jest-environment node */
-import { describe, test, expect, beforeAll, afterAll } from "@jest/globals";
+import {
+  describe,
+  test,
+  expect,
+  jest,
+  beforeAll,
+  afterAll,
+} from "@jest/globals";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { executeBatch, executeData } from "../service";
@@ -440,6 +447,17 @@ integration("site database integration", () => {
     ).rejects.toMatchObject({ status: 403 });
   });
   test("public creation rate limits are shared across workers and do not limit owners", async () => {
+    // The limit counts per wall-clock minute. Hold the clock inside one minute
+    // so a burst that straddles a boundary isn't counted in two windows.
+    const minute = Math.floor(Date.now() / 60_000) * 60_000;
+    const now = jest.spyOn(Date, "now").mockReturnValue(minute + 1_000);
+    try {
+      await publicCreationRateLimits();
+    } finally {
+      now.mockRestore();
+    }
+  });
+  const publicCreationRateLimits = async () => {
     await sql`delete from site_data_rate_limits`.execute(db);
     await call("POST", [], { name: "limited", write: "create" }, true);
     const outcomes = await Promise.allSettled(
@@ -472,7 +490,7 @@ integration("site database integration", () => {
       call("POST", ["limited"], { data: 1 }, false, { clientIp: "192.0.2.3" }),
     ).resolves.toBeDefined();
     await sql`delete from site_data_rate_limits`.execute(db);
-  });
+  };
   test("a public write over its limit is refused without waiting for the site lock", async () => {
     await sql`delete from site_data_rate_limits`.execute(db);
     await call("POST", [], { name: "burst", write: "create" }, true);
