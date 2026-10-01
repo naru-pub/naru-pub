@@ -304,10 +304,13 @@ async function markAttemptFailed(opts: {
         summary: `재시도 한도나 유예 기간에 도달해 연체(past_due)로 전환`,
       });
     }
+    // Its own lease only: one that went stale and was taken over is the
+    // new holder's.
     await trx
       .updateTable("subscriptions")
       .set({ charging_started_at: null })
       .where("id", "=", opts.sub.id)
+      .where("charging_started_at", "=", new Date(opts.sub.charging_started_at))
       .execute();
     return { wentPastDue };
   });
@@ -410,11 +413,14 @@ async function sendPastDueNotice(
 async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
   if (!sub.current_period_end) return;
   if (addPaymentGrace(new Date(sub.current_period_end)) > now) return;
+  // Only the period this run saw: a reconciler that granted the order in the
+  // meantime moved it on, and that plan is paid, not past due.
   const updated = await db
     .updateTable("subscriptions")
     .set({ status: "past_due", updated_at: now })
     .where("id", "=", sub.id)
     .where("status", "in", ["active", "scheduled"])
+    .where("current_period_end", "=", new Date(sub.current_period_end))
     .executeTakeFirst();
   if (Number(updated.numUpdatedRows ?? 0) > 0) {
     await notePaymentEvent({
@@ -631,6 +637,9 @@ async function chargeClaimedSubscription(
         leaseHeldAt: sub.charging_started_at,
       });
       if (granted) await sendChargeReceipt(attempt.id);
+      // Granted already — by the reconciler, say — returns before the grant
+      // releases the lease; it is still this run's to release.
+      else await releaseLease(sub);
     } catch (error) {
       await leaveUnresolved(sub, attempt, error, now);
       return;

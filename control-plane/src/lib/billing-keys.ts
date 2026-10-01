@@ -132,6 +132,31 @@ async function deleteQueuedKey(
   row: { id: string; billing_key: string; attempts: number },
   now: Date,
 ): Promise<boolean> {
+  // The last look before a key is gone for good: a key some subscription
+  // holds is its card, whatever queued it. A bug that queues a live key must
+  // cost a stale queue row, never a supporter's card — so the row is dropped,
+  // the key kept, and an operator told.
+  const holder = await db
+    .selectFrom("subscriptions")
+    .select(["id", "user_id"])
+    .where("toss_billing_key", "=", row.billing_key)
+    .executeTakeFirst();
+  if (holder) {
+    await db
+      .deleteFrom("retired_billing_keys")
+      .where("id", "=", row.id)
+      .execute();
+    await notePaymentEvent({
+      kind: "key_deletion_stuck",
+      userId: holder.user_id,
+      subscriptionId: holder.id,
+      summary: `삭제 대기열의 빌링키 ${maskSecret(row.billing_key)}가 아직 정기 결제에 쓰이고 있어 지우지 않음 — 대기열에 잘못 들어간 키`,
+    });
+    console.error(
+      `[delete-retired-billing-keys] key ${row.id}: still held by subscription ${holder.id}; not deleted`,
+    );
+    return false;
+  }
   try {
     await deleteBillingKey(row.billing_key);
   } catch (error) {

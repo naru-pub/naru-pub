@@ -15,7 +15,10 @@ import {
 import { settleFailedOrder } from "@/lib/toss-orders";
 import { applyOneTimePayment } from "@/lib/subscriptions";
 import { notePaymentEvent, won } from "@/lib/payment-events";
-import { oneTimeOrderSuperseded } from "@/lib/payment-reconciliation";
+import {
+  oneTimeOrderSuperseded,
+  subscriptionChargeInFlight,
+} from "@/lib/payment-reconciliation";
 
 // One-time donation step 2: confirms the payment with Toss and grants the
 // purchased years of supporter access. Entitlement is derived from the
@@ -96,6 +99,19 @@ export async function POST(request: NextRequest) {
             "다른 결제로 이미 이용 기간이 늘어나 이 결제는 승인하지 않았습니다. 카드에는 청구되지 않습니다.",
         },
         { status: 409 },
+      );
+    }
+
+    // A renewal being charged right now would land on a plan this approval
+    // switches off. It takes a minute; the callback retries, and so does the
+    // reconciler, inside the 10 minutes Toss allows.
+    if (await subscriptionChargeInFlight(user.id)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "결제를 처리하고 있습니다. 잠시 후 다시 확인해 주세요.",
+        },
+        { status: 503 },
       );
     }
 

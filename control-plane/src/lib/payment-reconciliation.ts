@@ -248,7 +248,8 @@ async function reconcilePaymentCore(
     tossPayment.status === "IN_PROGRESS" &&
     payment.status === "pending" &&
     payment.attempt_key?.startsWith("one_time:") &&
-    !(await oneTimeOrderSuperseded(payment))
+    !(await oneTimeOrderSuperseded(payment)) &&
+    !(await subscriptionChargeInFlight(payment.user_id))
   ) {
     tossPayment = await confirmAuthenticatedPayment(payment, tossPayment);
   }
@@ -304,7 +305,7 @@ async function reconcilePaymentCore(
             .selectFrom("users")
             .select("supporter_until")
             .where("id", "=", payment.user_id)
-            .forUpdate()
+            .forNoKeyUpdate()
             .executeTakeFirst();
           await trx
             .updateTable("payments")
@@ -397,6 +398,28 @@ async function reconcilePaymentCore(
               .where("plan_started_at", "<=", refundedBy)
               .returning("id")
               .executeTakeFirst();
+          }
+          // A plan the refund leaves running — kept on purpose, or started
+          // after the refund — must charge when the paid time it now has
+          // ends. Its own dates may still point past that (a refunded period
+          // it had stacked, prepaid time a scheduled start waited for), and
+          // left there it shows as running while access is gone. Pulled back,
+          // never pushed out; with no paid time left it is charged on the next
+          // run.
+          if (newlyRefunded && !stopped) {
+            const due =
+              recomputed && recomputed > new Date() ? recomputed : new Date();
+            await trx
+              .updateTable("subscriptions")
+              .set({
+                current_period_end: due,
+                next_billing_at: due,
+                updated_at: new Date(),
+              })
+              .where("user_id", "=", payment.user_id)
+              .where("status", "in", ["active", "scheduled"])
+              .where("next_billing_at", ">", due)
+              .execute();
           }
           if (newlyRefunded) {
             await recordPaymentEvent(trx, {
@@ -514,25 +537,12 @@ async function reconcilePaymentCore(
   return { state: "done" };
 }
 
-// A one-time payment the buyer authenticated but nobody confirmed: they
-// closed the tab before the callback ran, or its confirm failed in a way that
-// left the payment open. Toss expires it 10 minutes after authentication, so
-// the reconciler confirms it itself, for the amount recorded at prepare.
-//
-// Under a key of its own, not the order id the callback's first confirm used:
-// Toss keys idempotency on the key, the secret key, the URL and the method, so
-// that key would only replay the callback's answer — an error, or the payment
-// would not still be IN_PROGRESS — until the 10 minutes ran out. A new key
-// cannot approve the payment twice: Toss refuses a second approval
-// (ALREADY_PROCESSED_PAYMENT), and one still running (ALREADY_PROCESSING_
-// REQUEST). Anything but an approval leaves the payment as Toss reported it,
-// to be settled when Toss moves it on.
 // True when another one-time payment of the same account was paid after this
-// order was prepared: the period this order would buy is already bought, by a
-// second tab or by a retry after a confirm that looked stuck. Such an order is
-// not approved — Toss lets the authentication lapse, so the card is not
-// charged — rather than stacking a second year (and a 서비스 제공기간 past
-// the one year card-company review allows).
+// order was prepared: the period this order would buy has just been bought,
+// by a second tab or by paying again after a confirm that looked stuck. Such
+// an order is not approved — Toss lets the authentication lapse, so the card
+// is not charged twice for one decision to pay. A one-time purchase made
+// deliberately after another completes is prepared after it, and goes ahead.
 export async function oneTimeOrderSuperseded(payment: {
   id: string;
   user_id: string;
@@ -550,6 +560,87 @@ export async function oneTimeOrderSuperseded(payment: {
   return other != null;
 }
 
+// True while a renewal or a signup's first charge is being made for the
+// account (its subscription holds a live charge lease). A one-time payment
+// approved now would switch that plan off under a charge that still lands, so
+// one-time approval waits until it has finished — a minute or so, well inside
+// the 10 minutes Toss gives an authenticated payment.
+export async function subscriptionChargeInFlight(
+  userId: string,
+  now = new Date(),
+): Promise<boolean> {
+  const row = await db
+    .selectFrom("subscriptions")
+    .select("charging_started_at")
+    .where("user_id", "=", userId)
+    .executeTakeFirst();
+  return (
+    row?.charging_started_at != null &&
+    new Date(row.charging_started_at).getTime() >
+      now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000
+  );
+}
+
+// Settles the account's pending one-time orders before a new purchase is
+// decided: one the buyer authenticated is confirmed (or not, if superseded),
+// one Toss approved is granted. False when one may still be approved — its
+// confirm is still running at Toss, so it would land beside whatever is
+// bought now: a second year, or a new plan switched straight off. An order
+// Toss never saw (a closed payment window) does not count.
+// The Toss status the last lookup stored on a payment row (payments.raw).
+function storedTossStatus(raw: unknown): unknown {
+  let value = raw;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object"
+    ? (value as { status?: unknown }).status
+    : null;
+}
+
+export async function settleOneTimeOrders(userId: string): Promise<boolean> {
+  const pending = () =>
+    db
+      .selectFrom("payments")
+      .select(["id", "user_id", "created_at", "raw"])
+      .where("user_id", "=", userId)
+      .where("attempt_key", "like", "one_time:%")
+      .where("status", "=", "pending")
+      .execute();
+  for (const payment of await pending()) {
+    await reconcilePayment(payment.id).catch((error) =>
+      console.error(`Settling one-time order ${payment.id} failed`, error),
+    );
+  }
+  for (const payment of await pending()) {
+    const tossStatus = storedTossStatus(payment.raw);
+    if (
+      tossStatus === "IN_PROGRESS" &&
+      !(await oneTimeOrderSuperseded(payment))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A one-time payment the buyer authenticated but nobody confirmed: they
+// closed the tab before the callback ran, or its confirm failed in a way that
+// left the payment open. Toss expires it 10 minutes after authentication, so
+// the reconciler confirms it itself, for the amount recorded at prepare.
+//
+// Under a key of its own, not the order id the callback's first confirm used:
+// Toss keys idempotency on the key, the secret key, the URL and the method, so
+// that key would only replay the callback's answer — an error, or the payment
+// would not still be IN_PROGRESS — until the 10 minutes ran out. A new key
+// cannot approve the payment twice: Toss refuses a second approval
+// (ALREADY_PROCESSED_PAYMENT), and one still running (ALREADY_PROCESSING_
+// REQUEST). Anything but an approval leaves the payment as Toss reported it,
+// to be settled when Toss moves it on.
 async function confirmAuthenticatedPayment(
   payment: { id: string; order_id: string; amount: number },
   inProgress: TossPaymentResult,

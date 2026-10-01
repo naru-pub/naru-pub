@@ -1,4 +1,4 @@
-import { retireBillingKey } from "@/lib/billing-keys";
+import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
@@ -26,10 +26,13 @@ function leaseLive(chargingStartedAt: Date | string | null, now = new Date()) {
 }
 
 // Run before anything of the account is deleted, so a refusal leaves it
-// whole. Settles the subscription's charges whose outcome is unknown, then
-// says whether the account can go: no charge holding the lease, and none
-// still pending. One-time orders do not block — one the buyer authenticated
-// is never approved once its row is gone, and Toss lets it lapse.
+// whole. Settles the subscription's charges whose outcome is unknown; then,
+// when no charge holds the lease and none is still pending, ends the plan —
+// the supporter is deleting the account — so no renewal can start while the
+// site's files are being deleted, which takes long enough for the 04:00 run
+// to claim it. False (and nothing changed) when the account must wait.
+// One-time orders do not block — one the buyer authenticated is never
+// approved once its row is gone, and Toss lets it lapse.
 export async function settleChargesBeforeDeletion(
   userId: string,
 ): Promise<boolean> {
@@ -48,12 +51,6 @@ export async function settleChargesBeforeDeletion(
       ),
     );
   }
-  const subscription = await db
-    .selectFrom("subscriptions")
-    .select("charging_started_at")
-    .where("user_id", "=", userId)
-    .executeTakeFirst();
-  if (leaseLive(subscription?.charging_started_at ?? null)) return false;
   const left = await db
     .selectFrom("payments")
     .select("id")
@@ -61,7 +58,40 @@ export async function settleChargesBeforeDeletion(
     .where("subscription_id", "is not", null)
     .where("status", "=", "pending")
     .executeTakeFirst();
-  return left == null;
+  if (left) return false;
+
+  const outcome = await db.transaction().execute(async (trx) => {
+    const subscription = await trx
+      .selectFrom("subscriptions")
+      .select(["id", "status", "charging_started_at"])
+      .where("user_id", "=", userId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!subscription) return { ok: true, retiredKey: null };
+    if (leaseLive(subscription.charging_started_at)) {
+      return { ok: false, retiredKey: null };
+    }
+    if (!["canceled", "switched_to_one_time"].includes(subscription.status)) {
+      await trx
+        .updateTable("subscriptions")
+        .set({
+          status: "canceled",
+          next_billing_at: null,
+          canceled_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where("id", "=", subscription.id)
+        .execute();
+    }
+    return {
+      ok: true,
+      retiredKey: await retireBillingKey(trx, {
+        subscriptionId: subscription.id,
+      }),
+    };
+  });
+  await deleteRetiredBillingKey(outcome.retiredKey);
+  return outcome.ok;
 }
 
 // The only place a users row is deleted. Deleting it cascades to the

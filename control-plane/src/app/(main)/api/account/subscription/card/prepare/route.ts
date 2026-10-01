@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertSameOriginRequest } from "@/lib/utils";
+import { assertJsonContentType } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { prepareCardChange } from "@/lib/subscription-signup";
 
@@ -9,7 +9,10 @@ import { prepareCardChange } from "@/lib/subscription-signup";
 export async function POST(request: NextRequest) {
   try {
     try {
-      assertSameOriginRequest(request);
+      // JSON only: a form a page on a user's subdomain posts (same site,
+      // so the session cookie goes along) cannot set this type, and older
+      // browsers send no Sec-Fetch-Site to refuse it by.
+      assertJsonContentType(request);
     } catch {
       return NextResponse.json(
         { success: false, message: "잘못된 요청입니다." },

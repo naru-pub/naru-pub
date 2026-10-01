@@ -73,6 +73,8 @@ const { deleteUserRow, settleChargesBeforeDeletion } =
   require("@/lib/account-deletion") as typeof import("@/lib/account-deletion");
 const { POST: oneTimePrepareRoute } =
   require("@/app/(main)/api/account/donation/one-time/prepare/route") as typeof import("@/app/(main)/api/account/donation/one-time/prepare/route");
+const { POST: oneTimeConfirmRoute } =
+  require("@/app/(main)/api/account/donation/one-time/confirm/route") as typeof import("@/app/(main)/api/account/donation/one-time/confirm/route");
 const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
 const { NextRequest } = require("next/server") as typeof import("next/server");
@@ -1120,6 +1122,8 @@ integration("payments against the database", () => {
       return cancelSubscriptionRoute(
         new NextRequest("http://localhost/api/account/subscription/cancel", {
           method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
         }),
       );
     }
@@ -3659,10 +3663,18 @@ integration("payments against the database", () => {
       test("a closed payment window does not block another try", async () => {
         const userId = await makeUser();
         await oneTimeOrder(userId, { orderId: "window-closed" });
+        toss.getPaymentByOrderId.mockRejectedValue(
+          new toss.TossApiError("not found", 404),
+        );
 
         const response = await prepare(userId);
 
         expect(response.status).toBe(200);
+        // It was looked up, and found to be nothing Toss knows.
+        expect(toss.getPaymentByOrderId).toHaveBeenCalledWith(
+          "window-closed",
+          "one-time",
+        );
       });
 
       test("prepare waits for a signup charge that may yet succeed", async () => {
@@ -3753,6 +3765,347 @@ integration("payments against the database", () => {
 
         expect(await settleChargesBeforeDeletion(userId)).toBe(true);
       });
+    });
+  });
+
+  describe("third review", () => {
+    function signedIn(userId: string) {
+      auth.validateRequest.mockResolvedValue({
+        user: {
+          id: userId,
+          email: "payer@example.com",
+          emailVerifiedAt: new Date(),
+          loginName: "payer",
+        },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+    }
+
+    function prepareOneTime(userId: string) {
+      signedIn(userId);
+      return oneTimePrepareRoute(
+        new NextRequest(
+          "http://localhost/api/account/donation/one-time/prepare",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ years: 1 }),
+          },
+        ),
+      );
+    }
+
+    async function pendingOneTime(userId: string, orderId: string) {
+      return makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: `one_time:1:${orderId}`,
+        orderId,
+        amount: 12000,
+      });
+    }
+
+    async function holdLease(subId: string) {
+      await db
+        .updateTable("subscriptions")
+        .set({ charging_started_at: new Date() })
+        .where("id", "=", subId)
+        .execute();
+    }
+
+    test("a queued key a subscription still holds is never deleted", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "live-key",
+      });
+      await db
+        .insertInto("retired_billing_keys")
+        .values({ billing_key: "live-key" })
+        .execute();
+
+      await deleteRetiredBillingKeys();
+
+      expect(toss.deleteBillingKey).not.toHaveBeenCalled();
+      expect((await subscription(subId)).toss_billing_key).toBe("live-key");
+      const queued = await db
+        .selectFrom("retired_billing_keys")
+        .select("id")
+        .execute();
+      expect(queued).toEqual([]);
+      const events = await db
+        .selectFrom("payment_events")
+        .select("kind")
+        .execute();
+      expect(events).toEqual([{ kind: "key_deletion_stuck" }]);
+    });
+
+    test("a first charge Toss has not finished keeps the card", async () => {
+      const userId = await makeUser();
+      const prepared = await prepareSubscription({ userId, interval: "month" });
+      if (!prepared.ok) throw new Error(prepared.message);
+      toss.issueBillingKey.mockResolvedValue({
+        billingKey: "fresh-key",
+        customerKey: prepared.customerKey,
+      });
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount, { status: "IN_PROGRESS" }),
+      );
+
+      expect(
+        await confirmSubscription({
+          userId,
+          authKey: "auth",
+          customerKey: prepared.customerKey,
+          registrationId: prepared.registrationId,
+        }),
+      ).toMatchObject({ ok: false, status: 503 });
+
+      const sub = await db
+        .selectFrom("subscriptions")
+        .select(["status", "toss_billing_key"])
+        .where("user_id", "=", userId)
+        .executeTakeFirstOrThrow();
+      expect(sub).toEqual({
+        status: "incomplete",
+        toss_billing_key: "fresh-key",
+      });
+      expect(toss.deleteBillingKey).not.toHaveBeenCalled();
+    });
+
+    test("a signup waits for a one-time order still being approved", async () => {
+      const userId = await makeUser();
+      await pendingOneTime(userId, "being-approved");
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("being-approved", 12000, { status: "IN_PROGRESS" }),
+      );
+      toss.confirmPayment.mockRejectedValue(
+        new toss.TossApiError("처리 중", 400, "ALREADY_PROCESSING_REQUEST"),
+      );
+
+      expect(
+        await prepareSubscription({ userId, interval: "month" }),
+      ).toMatchObject({ ok: false, status: 409 });
+    });
+
+    test("one-time prepare waits while a renewal is being charged", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, { status: "active" });
+      await holdLease(subId);
+
+      expect((await prepareOneTime(userId)).status).toBe(409);
+    });
+
+    test("one-time confirm waits while a renewal is being charged", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, { status: "active" });
+      await holdLease(subId);
+      await pendingOneTime(userId, "confirm-waits");
+      signedIn(userId);
+
+      const response = await oneTimeConfirmRoute(
+        new NextRequest(
+          "http://localhost/api/account/donation/one-time/confirm",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              paymentKey: "pk-confirm-waits",
+              orderId: "confirm-waits",
+              amount: 12000,
+            }),
+          },
+        ),
+      );
+
+      expect(response.status).toBe(503);
+      expect(toss.confirmPayment).not.toHaveBeenCalled();
+      expect((await subscription(subId)).status).toBe("active");
+    });
+
+    test("one-time confirm refuses an order another payment covered", async () => {
+      const userId = await makeUser();
+      await pendingOneTime(userId, "second-tab-route");
+      await db
+        .insertInto("payments")
+        .values({
+          user_id: userId,
+          subscription_id: null,
+          attempt_key: "one_time:1:first-tab-route",
+          order_id: "first-tab-route",
+          amount: 12000,
+          status: "done",
+          paid_at: new Date(Date.now() + 1000),
+        })
+        .execute();
+      signedIn(userId);
+
+      const response = await oneTimeConfirmRoute(
+        new NextRequest(
+          "http://localhost/api/account/donation/one-time/confirm",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              paymentKey: "pk-second-tab-route",
+              orderId: "second-tab-route",
+              amount: 12000,
+            }),
+          },
+        ),
+      );
+
+      expect(response.status).toBe(409);
+      expect(toss.confirmPayment).not.toHaveBeenCalled();
+    });
+
+    test("a refund that leaves a plan running moves its next charge to the paid time left", async () => {
+      const userId = await makeUser();
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:prepaid",
+        orderId: "prepaid",
+        amount: 12000,
+      });
+      const prepaidEnd = new Date(Date.now() + 300 * DAY);
+      await db
+        .updateTable("payments")
+        .set({
+          status: "done",
+          paid_at: new Date(Date.now() - 10 * DAY),
+          period_start: new Date(Date.now() - 10 * DAY),
+          period_end: prepaidEnd,
+        })
+        .where("id", "=", paymentId)
+        .execute();
+      await db
+        .updateTable("users")
+        .set({ supporter_until: prepaidEnd })
+        .where("id", "=", userId)
+        .execute();
+      // Scheduled to start when the prepaid year ends, signed up after the
+      // refund happened (which the ledger only now learns of).
+      const subId = await makeSubscription(userId, {
+        status: "scheduled",
+        currentPeriodEnd: prepaidEnd,
+        nextBillingAt: prepaidEnd,
+        planStartedAt: new Date(Date.now() - DAY),
+      });
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("prepaid", 12000, {
+          status: "CANCELED",
+          cancels: [
+            {
+              cancelAmount: 12000,
+              canceledAt: new Date(Date.now() - 2 * DAY).toISOString(),
+            },
+          ],
+        }),
+      );
+
+      await reconcilePayment(paymentId);
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("scheduled");
+      expect(new Date(sub.next_billing_at!).getTime()).toBeLessThanOrEqual(
+        Date.now(),
+      );
+      expect(await supporterUntil(userId)).toBeNull();
+    });
+
+    test("deleting an account ends its plan before anything is deleted", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "deleting-key",
+      });
+
+      expect(await settleChargesBeforeDeletion(userId)).toBe(true);
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("canceled");
+      expect(sub.next_billing_at).toBeNull();
+      expect(sub.toss_billing_key).toBeNull();
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("deleting-key");
+    });
+
+    test("a plan the reconciler paid meanwhile is not marked past due", async () => {
+      const periodEnd = new Date(Date.now() - 10 * DAY);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: subId,
+        attemptKey: `subscription:${subId}:${periodEnd.toISOString()}:1`,
+        orderId: "paid-elsewhere",
+        amount: 1000,
+      });
+      // The renewal's lookup fails; the reconciler grants the same order at
+      // that moment.
+      toss.getPaymentByOrderId.mockImplementationOnce(async () => {
+        await applySuccessfulCharge({
+          subscriptionId: subId,
+          userId,
+          interval: "month",
+          amount: 1000,
+          from: new Date(),
+          payment: tossPayment("paid-elsewhere", 1000),
+          paymentId,
+        });
+        throw new toss.TossApiError("bad gateway", 502);
+      });
+
+      await chargeDueSubscriptions();
+
+      expect((await subscription(subId)).status).toBe("active");
+      expect(email.sendSubscriptionPastDueEmail).not.toHaveBeenCalled();
+    });
+
+    test("a signup's first charge declined by webhook retires its card", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "incomplete",
+        billingKey: "declined-signup-key",
+      });
+      const before = await subscription(subId);
+      await makePendingPayment({
+        userId,
+        subscriptionId: subId,
+        attemptKey: `subscription_initial:${subId}:1`,
+        orderId: "declined-by-webhook",
+        amount: 1000,
+      });
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("declined-by-webhook", 1000, { status: "ABORTED" }),
+      );
+
+      const response = await tossWebhook(
+        new NextRequest("http://localhost/api/webhooks/toss", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            eventType: "PAYMENT_STATUS_CHANGED",
+            data: { orderId: "declined-by-webhook", status: "ABORTED" },
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      const sub = await subscription(subId);
+      expect(sub.toss_billing_key).toBeNull();
+      expect(sub.card_registration_id).not.toBe(before.card_registration_id);
+      // Deleted at Toss by the cron, not inside the webhook.
+      expect(toss.deleteBillingKey).not.toHaveBeenCalled();
+      const queued = await db
+        .selectFrom("retired_billing_keys")
+        .select("billing_key")
+        .execute();
+      expect(queued).toEqual([{ billing_key: "declined-signup-key" }]);
     });
   });
 });

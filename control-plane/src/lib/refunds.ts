@@ -235,7 +235,18 @@ export async function refundPayment(opts: {
       // Toss answered and did not cancel (a 4xx — NOT_CANCELABLE_PAYMENT, a
       // temporary PROVIDER_ERROR): the supporter can try again. A 5xx or a
       // dropped call may have canceled all the same.
-      if (error instanceof TossApiError && error.status < 500) throw error;
+      if (error instanceof TossApiError && error.status < 500) {
+        // Not canceled, so the choice made for this attempt must not carry
+        // over to a refund made later another way — the Toss dashboard, say.
+        if (keepPlan) {
+          await db
+            .updateTable("payments")
+            .set({ refund_keeps_plan: false })
+            .where("id", "=", payment.id)
+            .execute();
+        }
+        throw error;
+      }
       // No answer either way. The webhook and the refund sweep will see the
       // cancel if it happened; until then the supporter is told so rather
       // than that it failed, which would invite a second request.

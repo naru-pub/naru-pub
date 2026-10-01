@@ -87,40 +87,81 @@ export function isTrustedWebhookSource(
   return cfConnectingIp != null && TOSS_WEBHOOK_IPS.has(cfConnectingIp.trim());
 }
 
-// The headers a delivery is stored with: everything Toss sent, minus what
-// could carry a credential. Whether payment and billing events are signed is
-// read from these (see the migration that adds the column).
+// A Toss webhook body is a few hundred bytes — a Payment object at most. The
+// endpoint is public and reads the body before anything about the sender is
+// known, so anything far larger is refused unread.
+export const MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
+
+// Reads the body up to `limit` bytes; null when it is longer, without reading
+// the rest.
+export async function readCappedBody(
+  request: Request,
+  limit = MAX_WEBHOOK_BODY_BYTES,
+): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) return null;
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+// The headers a delivery is stored with: what Toss sent, minus what could
+// carry a credential, and bounded — the sender is anyone until proven
+// otherwise.
 const UNSTORED_HEADERS = new Set(["authorization", "cookie"]);
+const MAX_STORED_HEADERS = 50;
+const MAX_STORED_HEADER_LENGTH = 1000;
 
 export function storedWebhookHeaders(headers: Headers): Record<string, string> {
   const stored: Record<string, string> = {};
+  let count = 0;
   headers.forEach((value, name) => {
     const key = name.toLowerCase();
-    if (!UNSTORED_HEADERS.has(key)) stored[key] = value;
+    if (UNSTORED_HEADERS.has(key) || count >= MAX_STORED_HEADERS) return;
+    stored[key] = value.slice(0, MAX_STORED_HEADER_LENGTH);
+    count += 1;
   });
   return stored;
 }
 
-// The names of any signature headers, for the log line: a signed delivery
-// shows up in the logs without anyone reading the table.
+// The two signature headers Toss documents. Only these are read: a header is
+// the sender's to invent, and every one checked costs HMACs over the body.
+const SIGNATURE_HEADERS = ["toss-signature", "tosspayments-webhook-signature"];
+// Toss sends up to four values while a key is being reissued.
+const MAX_SIGNATURE_VALUES = 4;
+
+// The signature headers a delivery came with, for the log line: a signed
+// delivery shows up in the logs without anyone reading the table. Real Toss
+// payment and billing webhooks have carried none (docs/billing.md); this is
+// kept to notice if live keys change that.
 export function signatureHeaderNames(
   headers: Record<string, string>,
 ): string[] {
-  return Object.keys(headers)
-    .filter((name) => name.includes("signature"))
-    .sort();
+  return SIGNATURE_HEADERS.filter((name) => name in headers);
 }
 
 // Which secret key, over which string, produced a delivery's signature —
 // found by trying them, because the docs do not settle it. The webhook pages
 // sign `{payload}:{tosspayments-webhook-transmission-time}` with the payouts
 // security key, for payout and seller events only, in
-// tosspayments-webhook-signature as `v1:<base64>` values (up to four while a
-// key is being reissued). A 2024-09 release note instead says every event
-// carries a Toss-Signature made with the secret key. So both signed strings
-// are tried against both of 나루's secret keys, and every `v1:` value in any
-// signature header. Nothing is rejected on this yet: the result is logged and
-// stored until real deliveries show which one Toss uses.
+// tosspayments-webhook-signature as `v1:<base64>` values. A 2024-09 release
+// note instead says every event carries a Toss-Signature made with the secret
+// key. Both signed strings are tried against both of 나루's secret keys — four
+// HMACs at most, whatever the request — and compared with every value of the
+// two headers. Nothing is rejected on this: real deliveries have been
+// unsigned.
 const SIGNED_STRINGS: Array<{
   name: string;
   build: (rawBody: string, transmissionTime: string | null) => string | null;
@@ -135,6 +176,7 @@ const SIGNED_STRINGS: Array<{
 function signatureValues(header: string): Buffer[] {
   return header
     .split(",")
+    .slice(0, MAX_SIGNATURE_VALUES)
     .map((part) => part.trim())
     .filter(Boolean)
     .map((part) => part.replace(/^v1:/, ""))
@@ -150,22 +192,20 @@ export function checkWebhookSignature(opts: {
   const names = signatureHeaderNames(opts.headers);
   if (names.length === 0) return null;
   const time = opts.headers["tosspayments-webhook-transmission-time"] ?? null;
-  for (const name of names) {
-    const values = signatureValues(opts.headers[name]);
-    for (const { flow, key } of opts.keys) {
-      for (const signed of SIGNED_STRINGS) {
-        const message = signed.build(opts.rawBody, time);
-        if (message == null) continue;
-        const expected = createHmac("sha256", key).update(message).digest();
-        if (
-          values.some(
-            (value) =>
-              value.length === expected.length &&
-              timingSafeEqual(value, expected),
-          )
-        ) {
-          return `${name} verified (${flow} key, ${signed.name})`;
-        }
+  const candidates = names.flatMap((name) =>
+    signatureValues(opts.headers[name]).map((value) => ({ name, value })),
+  );
+  for (const { flow, key } of opts.keys) {
+    for (const signed of SIGNED_STRINGS) {
+      const message = signed.build(opts.rawBody, time);
+      if (message == null) continue;
+      const expected = createHmac("sha256", key).update(message).digest();
+      const match = candidates.find(
+        ({ value }) =>
+          value.length === expected.length && timingSafeEqual(value, expected),
+      );
+      if (match) {
+        return `${match.name} verified (${flow} key, ${signed.name})`;
       }
     }
   }

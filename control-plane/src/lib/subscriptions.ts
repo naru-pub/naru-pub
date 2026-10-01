@@ -160,7 +160,7 @@ export async function applyOneTimePayment(opts: {
         .selectFrom("users")
         .select("supporter_until")
         .where("id", "=", opts.userId)
-        .forUpdate()
+        .forNoKeyUpdate()
         .executeTakeFirstOrThrow();
       const periodStart =
         current.supporter_until && new Date(current.supporter_until) > now
@@ -297,11 +297,14 @@ export async function applySuccessfulCharge(opts: {
       }
 
       // Same lock order as applyOneTimePayment: payments, users, subscriptions.
+      // FOR NO KEY UPDATE on the user serializes grants without blocking the
+      // key-share lock a payment_events insert takes on it, which a transaction
+      // holding the subscription may need.
       const current = await trx
         .selectFrom("users")
         .select("supporter_until")
         .where("id", "=", opts.userId)
-        .forUpdate()
+        .forNoKeyUpdate()
         .executeTakeFirstOrThrow();
       const subscription = await trx
         .selectFrom("subscriptions")

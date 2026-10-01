@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertSameOriginRequest } from "@/lib/utils";
+import { assertJsonContentType } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
@@ -12,7 +12,10 @@ import { recordPaymentEvent } from "@/lib/payment-events";
 export async function POST(request: NextRequest) {
   try {
     try {
-      assertSameOriginRequest(request);
+      // JSON only: a form a page on a user's subdomain posts (same site,
+      // so the session cookie goes along) cannot set this type, and older
+      // browsers send no Sec-Fetch-Site to refuse it by.
+      assertJsonContentType(request);
     } catch {
       return NextResponse.json(
         { success: false, message: "잘못된 요청입니다." },
@@ -47,11 +50,23 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const cancelingSchedule = sub.status === "scheduled";
-    const billingKey = await db.transaction().execute(async (trx) => {
+    // The status is read again under the row lock: a scheduled plan the 04:00
+    // run has just charged is active now, and ending it is a cancel, not the
+    // withdrawal of a schedule that never charged.
+    const result = await db.transaction().execute(async (trx) => {
+      const current = await trx
+        .selectFrom("subscriptions")
+        .select("status")
+        .where("id", "=", sub.id)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
       // Not again: a second click, or a refund that stopped the plan
       // meanwhile, already did this and mailed about it.
-      const updated = await trx
+      if (["canceled", "switched_to_one_time"].includes(current.status)) {
+        return undefined;
+      }
+      const cancelingSchedule = current.status === "scheduled";
+      await trx
         .updateTable("subscriptions")
         .set({
           status: cancelingSchedule ? "switched_to_one_time" : "canceled",
@@ -60,19 +75,22 @@ export async function POST(request: NextRequest) {
           updated_at: new Date(),
         })
         .where("id", "=", sub.id)
-        .where("status", "not in", ["canceled", "switched_to_one_time"])
-        .executeTakeFirst();
-      if (Number(updated.numUpdatedRows ?? 0) === 0) return undefined;
+        .execute();
       await recordPaymentEvent(trx, {
         kind: "subscription_canceled",
         userId: user.id,
         subscriptionId: sub.id,
         summary: cancelingSchedule
           ? "사용자가 예약된 정기 결제를 취소"
-          : `사용자가 정기 결제를 취소 (${sub.status}에서), 결제한 기간은 유지`,
+          : `사용자가 정기 결제를 취소 (${current.status}에서), 결제한 기간은 유지`,
       });
-      return retireBillingKey(trx, { subscriptionId: sub.id });
+      return {
+        cancelingSchedule,
+        billingKey: await retireBillingKey(trx, { subscriptionId: sub.id }),
+      };
     });
+    const cancelingSchedule = result?.cancelingSchedule ?? false;
+    const billingKey = result === undefined ? undefined : result.billingKey;
     if (billingKey !== undefined) {
       await deleteRetiredBillingKey(billingKey);
       await sendSubscriptionCanceledNotice(

@@ -245,6 +245,8 @@ export default function SupportCard({
     try {
       const res = await fetch("/api/account/subscription/cancel", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
       });
       const data = await res.json();
       if (res.ok && data.success) {

@@ -10,6 +10,7 @@ import {
 } from "@/lib/toss";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { retireBillingKey } from "@/lib/billing-keys";
+import { retireUnusedSignupKey } from "@/lib/subscriptions";
 import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
 import {
   notePaymentEvent,
@@ -20,6 +21,7 @@ import {
   formatWebhookLog,
   isTrustedWebhookSource,
   parseTossWebhook,
+  readCappedBody,
   checkWebhookSignature,
   storedWebhookHeaders,
   webhookLedgerAction,
@@ -72,7 +74,11 @@ export async function POST(request: NextRequest) {
     );
   };
 
-  const rawBody = await request.text();
+  const rawBody = await readCappedBody(request);
+  if (rawBody === null) {
+    // Not a Toss webhook; nothing of it is read, hashed or stored.
+    return respond(413, "ignored: body too large");
+  }
   delivery.signature = checkWebhookSignature({
     rawBody,
     headers,
@@ -237,6 +243,20 @@ export async function POST(request: NextRequest) {
         .where("id", "=", ledger.id)
         .where("status", "=", "pending")
         .executeTakeFirst();
+      if (
+        Number(failed.numUpdatedRows ?? 0) > 0 &&
+        ledger.subscription_id &&
+        ledger.attempt_key?.startsWith("subscription_initial:")
+      ) {
+        // A signup's first charge Toss ended: the key registered for it has
+        // nothing left to charge, as when the reconciler learns the same.
+        // Queued for the deletion cron rather than deleted here, inside
+        // Toss's 10-second window.
+        const subscriptionId = ledger.subscription_id;
+        await db
+          .transaction()
+          .execute((trx) => retireUnusedSignupKey(trx, subscriptionId));
+      }
       if (Number(failed.numUpdatedRows ?? 0) > 0) {
         await notePaymentEvent({
           kind: action.status === "expired" ? "order_expired" : "charge_failed",

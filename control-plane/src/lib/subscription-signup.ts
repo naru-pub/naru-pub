@@ -8,7 +8,10 @@ import {
   retireBillingKey,
 } from "@/lib/billing-keys";
 import { sendSupportThankYouEmail } from "@/lib/email";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
+import {
+  reconcilePayment,
+  settleOneTimeOrders,
+} from "@/lib/payment-reconciliation";
 import { chargeDueSubscriptions } from "@/lib/subscription-renewals";
 import {
   kstDate,
@@ -145,6 +148,13 @@ export async function prepareSubscription(opts: {
   const { userId, interval } = opts;
   const now = opts.now ?? new Date();
 
+  // A one-time order the buyer authenticated and left is confirmed by the
+  // reconciler within minutes, and its approval switches off whatever plan
+  // the account has — this one included. Settle it first; one still being
+  // confirmed at Toss makes the signup wait.
+  if (!(await settleOneTimeOrders(userId))) {
+    return fail(409, PREVIOUS_CHARGE_PENDING_MESSAGE);
+  }
   const existingId = await db
     .selectFrom("subscriptions")
     .select("id")
@@ -371,6 +381,18 @@ async function storeIssuedBillingKey(
     if (Number(result.numUpdatedRows ?? 0) > 0) {
       return { stored: true, discarded: null };
     }
+    // Toss replays the key it issued for an authKey, so a doubled callback
+    // gets back the key the first one already stored. That key is the
+    // subscription's own: it must never be queued for deletion.
+    const current = await trx
+      .selectFrom("subscriptions")
+      .select(["status", "toss_billing_key"])
+      .where("id", "=", subscriptionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (current?.toss_billing_key === billingKey) {
+      return { stored: current.status === "incomplete", discarded: null };
+    }
     return {
       stored: false,
       discarded: await discardIssuedBillingKey(trx, billingKey),
@@ -526,8 +548,15 @@ export async function confirmSubscription(opts: {
   }
 
   try {
+    // Read again under the lease: the copy above predates it, and a confirm
+    // that held the lease meanwhile may have stored the key already.
+    const claimed = await db
+      .selectFrom("subscriptions")
+      .select(subscriptionFields)
+      .where("id", "=", sub.id)
+      .executeTakeFirstOrThrow();
     return await confirmClaimedSubscription({
-      sub,
+      sub: claimed,
       userId,
       userRow,
       authKey,
@@ -688,6 +717,26 @@ async function confirmClaimedSubscription(opts: {
     payment = settled.payment;
   }
 
+  // An answer that is neither approved nor ended (ABORTED, EXPIRED) is not a
+  // decline: Toss may still approve it, as the renewal treats it. The key and
+  // the order stay for the reconciler.
+  if (
+    payment.status !== "DONE" &&
+    payment.status !== "ABORTED" &&
+    payment.status !== "EXPIRED"
+  ) {
+    await notePaymentEvent({
+      kind: "charge_unresolved",
+      userId,
+      paymentId: attempt.id,
+      subscriptionId: sub.id,
+      summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): Toss 상태 ${payment.status}`,
+    });
+    return fail(
+      503,
+      "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
+    );
+  }
   if (payment.status !== "DONE") {
     await failFirstCharge({
       userId,

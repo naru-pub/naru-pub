@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  VERIFICATION_EMAIL_COOLDOWN_MESSAGE,
+  verificationEmailSentRecently,
+} from "@/lib/email-verification";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { sendVerificationEmail, generateVerificationToken } from "@/lib/email";
@@ -44,6 +48,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, message: "이미 다른 계정에서 사용 중인 이메일입니다." },
         { status: 400 }
+      );
+    }
+
+    if (await verificationEmailSentRecently(user.id)) {
+      return NextResponse.json(
+        { success: false, message: VERIFICATION_EMAIL_COOLDOWN_MESSAGE },
+        { status: 429 }
       );
     }
 

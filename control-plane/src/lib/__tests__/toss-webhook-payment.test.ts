@@ -4,7 +4,9 @@ import {
   checkWebhookSignature,
   formatWebhookLog,
   isTrustedWebhookSource,
+  MAX_WEBHOOK_BODY_BYTES,
   parseTossWebhook,
+  readCappedBody,
   signatureHeaderNames,
   storedWebhookHeaders,
   webhookLedgerAction,
@@ -242,5 +244,51 @@ describe("Toss webhook signature check", () => {
         keys,
       }),
     ).toBeNull();
+  });
+});
+
+describe("Toss webhook request limits", () => {
+  test("only the two documented signature headers are read", () => {
+    const headers: Record<string, string> = {};
+    for (let i = 0; i < 1000; i++) headers[`x${i}-signature`] = "v1:AAAA";
+    expect(signatureHeaderNames(headers)).toEqual([]);
+    expect(
+      checkWebhookSignature({
+        rawBody: "{}",
+        headers,
+        keys: [{ flow: "billing" as const, key: "k" }],
+      }),
+    ).toBeNull();
+  });
+
+  test("a body past the limit is refused unread", async () => {
+    const big = new Request("http://localhost/api/webhooks/toss", {
+      method: "POST",
+      body: "x".repeat(MAX_WEBHOOK_BODY_BYTES + 1),
+    });
+    expect(await readCappedBody(big)).toBeNull();
+
+    const declared = new Request("http://localhost/api/webhooks/toss", {
+      method: "POST",
+      headers: { "content-length": String(10 * 1024 * 1024) },
+      body: "{}",
+    });
+    expect(await readCappedBody(declared)).toBeNull();
+
+    const small = new Request("http://localhost/api/webhooks/toss", {
+      method: "POST",
+      body: '{"eventType":"BILLING_DELETED"}',
+    });
+    expect(await readCappedBody(small)).toBe('{"eventType":"BILLING_DELETED"}');
+  });
+
+  test("stored headers are bounded", () => {
+    const headers = new Headers();
+    for (let i = 0; i < 200; i++) headers.set(`x-h${i}`, "v".repeat(5000));
+    const stored = storedWebhookHeaders(headers);
+    expect(Object.keys(stored).length).toBeLessThanOrEqual(50);
+    expect(Object.values(stored).every((value) => value.length <= 1000)).toBe(
+      true,
+    );
   });
 });

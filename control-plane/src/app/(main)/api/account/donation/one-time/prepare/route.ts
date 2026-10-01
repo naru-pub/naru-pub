@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assertSameOriginRequest } from "@/lib/utils";
+import { assertJsonContentType } from "@/lib/utils";
 import { randomUUID } from "crypto";
 import { validateRequest } from "@/lib/auth";
 import {
@@ -14,7 +14,10 @@ import {
   oneTimeOrderName,
 } from "@/lib/toss";
 import { canStartOneTimePurchase } from "@/lib/support-purchases";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
+import {
+  settleOneTimeOrders,
+  subscriptionChargeInFlight,
+} from "@/lib/payment-reconciliation";
 import { settlePendingCharges } from "@/lib/subscription-signup";
 
 // One-time donation step 1: returns a server-generated orderId + the
@@ -22,7 +25,10 @@ import { settlePendingCharges } from "@/lib/subscription-signup";
 export async function POST(request: NextRequest) {
   try {
     try {
-      assertSameOriginRequest(request);
+      // JSON only: a form a page on a user's subdomain posts (same site,
+      // so the session cookie goes along) cannot set this type, and older
+      // browsers send no Sec-Fetch-Site to refuse it by.
+      assertJsonContentType(request);
     } catch {
       return NextResponse.json(
         { success: false, message: "잘못된 요청입니다." },
@@ -59,22 +65,19 @@ export async function POST(request: NextRequest) {
 
     // Settle what may still turn into paid time before deciding whether a
     // one-time purchase is allowed: an earlier one-time order the buyer
-    // authenticated (the reconciler confirms it) or that Toss already
-    // approved, and a subscription's unresolved charges. An order Toss never
-    // saw — a closed payment window — stays pending and does not block.
-    const pendingOneTime = await db
-      .selectFrom("payments")
-      .select("id")
-      .where("user_id", "=", user.id)
-      .where("attempt_key", "like", "one_time:%")
-      .where("status", "=", "pending")
-      .execute();
-    for (const payment of pendingOneTime) {
-      await reconcilePayment(payment.id).catch((error) =>
-        console.error(
-          `One-time prepare: reconciling payment ${payment.id} failed`,
-          error,
-        ),
+    // authenticated (confirmed now) or that Toss already approved. One whose
+    // confirm is still running blocks, as does a renewal being charged right
+    // now. An order Toss never saw — a closed payment window — does not.
+    if (
+      !(await settleOneTimeOrders(user.id)) ||
+      (await subscriptionChargeInFlight(user.id))
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "이전 결제를 처리하고 있습니다. 잠시 후 다시 시도해 주세요.",
+        },
+        { status: 409 },
       );
     }
     const existingSubscription = await db
