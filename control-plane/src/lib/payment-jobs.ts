@@ -97,11 +97,13 @@ export async function runDueJobs(
     .select("id")
     .where("done_at", "is", null)
     .where("failed_at", "is", null)
-    .where("run_at", "<=", new Date())
+    // The database's clock, as the claim uses: run_at has microseconds, and
+    // a JavaScript Date would see a job enqueued this millisecond as not due.
+    .where("run_at", "<=", sql<Date>`now()`)
     .where((eb) =>
       eb.or([
         eb("locked_until", "is", null),
-        eb("locked_until", "<", new Date()),
+        eb("locked_until", "<", sql<Date>`now()`),
       ]),
     )
     .orderBy("run_at")
