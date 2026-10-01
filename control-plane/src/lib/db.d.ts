@@ -281,9 +281,9 @@ export interface PaymentCronRuns {
 
 export interface PaymentEvents {
   created_at: Generated<Timestamp>;
-  emailed_at: Timestamp | null;
   id: Generated<string>;
   kind: string;
+  notified_at: Timestamp | null;
   payment_id: string | null;
   subscription_id: string | null;
   summary: string;

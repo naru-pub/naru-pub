@@ -197,7 +197,6 @@ jest.mock("@/lib/email", () => ({
   sendSubscriptionPastDueEmail: jest.fn(async () => {}),
   sendSupportThankYouEmail: jest.fn(async () => {}),
   sendRecurringChargeReceiptEmail: jest.fn(async () => {}),
-  sendPaymentEventDigestEmail: jest.fn(async () => {}),
   sendPaymentCanceledEmail: jest.fn(async () => {}),
   sendSubscriptionCanceledEmail: jest.fn(async () => {}),
 }));

@@ -1,16 +1,15 @@
 import { db } from "@/lib/database";
-// Keeps the digest mail in payment_mails.
-import "@/lib/payment-mails";
-import { sendPaymentEventDigestEmail } from "@/lib/email";
+import {
+  operatorAlertsConfigured,
+  sendOperatorAlert,
+} from "@/lib/operator-alerts";
 import type { Executor } from "@/lib/entitlements";
 import { isTossLiveMode, maskBody } from "@/lib/toss";
 
-// Payment and billing events, recorded where they happen and mailed to the
-// operators. Recording is unconditional (and /admin lists them); mail goes
-// out only in production — where every Toss key is a live key — so test
-// payments never reach the inbox.
-
-export const PAYMENT_EVENTS_EMAIL = "hello@naru.pub";
+// Payment and billing events, recorded where they happen and posted to the
+// operators' Discord channel (lib/operator-alerts). Recording is unconditional
+// (and /admin lists them); they are posted only in production — where every
+// Toss key is a live key — so test payments never reach the channel.
 
 export const PAYMENT_EVENT_LABELS = {
   charge_succeeded: "결제 완료",
@@ -41,6 +40,16 @@ export function kstDate(value: Date | string): string {
     dateStyle: "medium",
     timeZone: "Asia/Seoul",
   }).format(new Date(value));
+}
+
+function kstTime(value: Date): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Seoul",
+  }).format(value);
 }
 
 // Records an event in the caller's transaction where there is one, so the
@@ -79,13 +88,13 @@ export async function notePaymentEvent(
   }
 }
 
-// Events are merged into one email while they keep coming: a digest goes out
+// Events are merged into one message while they keep coming: a digest goes out
 // once nothing new has arrived for QUIET_MS, or once its oldest event has
 // waited MAX_WAIT_MS — so a renewal run, a decline and its grace notice, or a
 // refund and the cancel it causes arrive as one message, and none waits long.
 const QUIET_MS = 2 * 60 * 1000;
 const MAX_WAIT_MS = 15 * 60 * 1000;
-const MAX_EVENTS_PER_EMAIL = 300;
+const MAX_EVENTS_PER_DIGEST = 300;
 
 function digestSubject(
   events: Array<{ kind: string; loginName: string | null; summary: string }>,
@@ -117,17 +126,19 @@ export type DigestResult =
 export async function sendPaymentEventDigest(
   opts: { now?: Date; enabled?: boolean } = {},
 ): Promise<DigestResult> {
-  if (!(opts.enabled ?? isTossLiveMode())) return { state: "disabled" };
+  if (!(opts.enabled ?? (isTossLiveMode() && operatorAlertsConfigured()))) {
+    return { state: "disabled" };
+  }
   const now = opts.now ?? new Date();
 
   return db.transaction().execute(async (trx) => {
-    // Locked so two runs can never mail the same events.
+    // Locked so two runs can never post the same events.
     const pending = await trx
       .selectFrom("payment_events")
       .select(["id", "created_at", "kind", "summary", "user_id"])
-      .where("emailed_at", "is", null)
+      .where("notified_at", "is", null)
       .orderBy("id", "asc")
-      .limit(MAX_EVENTS_PER_EMAIL)
+      .limit(MAX_EVENTS_PER_DIGEST)
       .forUpdate()
       .skipLocked()
       .execute();
@@ -137,7 +148,7 @@ export async function sendPaymentEventDigest(
     const newest = new Date(pending[pending.length - 1].created_at).getTime();
     const quiet = now.getTime() - newest >= QUIET_MS;
     const waitedLongEnough = now.getTime() - oldest >= MAX_WAIT_MS;
-    const full = pending.length === MAX_EVENTS_PER_EMAIL;
+    const full = pending.length === MAX_EVENTS_PER_DIGEST;
     if (!quiet && !waitedLongEnough && !full) {
       return { state: "waiting" as const, pending: pending.length };
     }
@@ -154,27 +165,32 @@ export async function sendPaymentEventDigest(
             .execute()
         : [];
     const loginNames = new Map(users.map((user) => [user.id, user.login_name]));
-    const events = pending.map((event) => ({
-      createdAt: new Date(event.created_at),
-      loginName: event.user_id ? (loginNames.get(event.user_id) ?? null) : null,
-      kind: PAYMENT_EVENT_LABELS[event.kind as PaymentEventKind] ?? event.kind,
-      rawKind: event.kind,
-      summary: event.summary,
-    }));
-
-    // Mailed before the rows are marked: if marking fails the transaction
-    // rolls back and the next run mails them again. A duplicate digest is
+    // Posted before the rows are marked: if marking fails the transaction
+    // rolls back and the next run posts them again. A duplicate digest is
     // better than a lost one.
-    await sendPaymentEventDigestEmail({
-      to: PAYMENT_EVENTS_EMAIL,
-      subject: digestSubject(
-        events.map((event) => ({ ...event, kind: event.rawKind })),
+    await sendOperatorAlert({
+      title: digestSubject(
+        pending.map((event) => ({
+          kind: event.kind,
+          loginName: event.user_id
+            ? (loginNames.get(event.user_id) ?? null)
+            : null,
+          summary: event.summary,
+        })),
       ),
-      events,
+      lines: pending.map((event) => {
+        const who = event.user_id
+          ? (loginNames.get(event.user_id) ?? "(삭제된 계정)")
+          : "-";
+        const label =
+          PAYMENT_EVENT_LABELS[event.kind as PaymentEventKind] ?? event.kind;
+        return `${kstTime(new Date(event.created_at))} ${who} [${label}] ${event.summary}`;
+      }),
+      more: `${process.env.BASE_URL ?? ""}/admin/events`,
     });
     await trx
       .updateTable("payment_events")
-      .set({ emailed_at: now })
+      .set({ notified_at: now })
       .where(
         "id",
         "in",
@@ -239,8 +255,8 @@ const RAW_PAYMENT_LOG_RETENTION_DAYS = 5 * 365;
 const PAYMENT_EVENT_RETENTION_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Keeps both logs bounded. Payment events are kept for a year once mailed;
-// outside production, where nothing is mailed, they go after the same year.
+// Keeps the logs bounded. Payment events are kept for a year once posted;
+// outside production, where nothing is posted, they go after the same year.
 export async function prunePaymentLogs(now = new Date()) {
   const deliveries = await db
     .deleteFrom("toss_webhook_deliveries")
@@ -266,7 +282,7 @@ export async function prunePaymentLogs(now = new Date()) {
       new Date(now.getTime() - PAYMENT_EVENT_RETENTION_DAYS * DAY_MS),
     )
     .where((eb) =>
-      isTossLiveMode() ? eb("emailed_at", "is not", null) : eb.lit(true),
+      isTossLiveMode() ? eb("notified_at", "is not", null) : eb.lit(true),
     )
     .executeTakeFirst();
   const windows = await db

@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Mail, MailX } from "lucide-react";
+import { Bell, BellOff } from "lucide-react";
 import { db } from "@/lib/database";
 import {
   PAYMENT_EVENT_LABELS,
-  PAYMENT_EVENTS_EMAIL,
   type PaymentEventKind,
 } from "@/lib/payment-events";
 import { isTossLiveMode } from "@/lib/toss";
+import { operatorAlertsConfigured } from "@/lib/operator-alerts";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -72,27 +72,27 @@ export default async function PaymentEventsPage({
       "payment_events.kind",
       "payment_events.summary",
       "payment_events.payment_id",
-      "payment_events.emailed_at",
+      "payment_events.notified_at",
       "users.login_name",
     ])
     .$if(filter !== null, (qb) => qb.where("payment_events.kind", "=", filter!))
     .$if(loginName !== null, (qb) =>
       qb.where("users.login_name", "=", loginName!),
     )
-    .$if(unsent, (qb) => qb.where("payment_events.emailed_at", "is", null))
+    .$if(unsent, (qb) => qb.where("payment_events.notified_at", "is", null))
     .orderBy("payment_events.id", "desc")
     .limit(200)
     .execute();
 
-  const mailing = isTossLiveMode();
+  const notifying = isTossLiveMode() && operatorAlertsConfigured();
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         결제·정기 결제·환불·웹훅이 바꾼 상태를 최근 200건까지 보여 줍니다.{" "}
-        {mailing
-          ? `운영 환경이라 ${PAYMENT_EVENTS_EMAIL}로 메일을 보냅니다 — 이어서 일어난 이벤트는 2분 동안 새 이벤트가 없을 때(최대 15분) 한 통으로 묶습니다.`
-          : "Toss 라이브 키가 아닌 환경이라 메일은 보내지 않습니다."}
+        {notifying
+          ? "운영 환경이라 운영자 Discord 채널에 알립니다 — 이어서 일어난 이벤트는 2분 동안 새 이벤트가 없을 때(최대 15분) 한 메시지로 묶습니다."
+          : "Toss 라이브 키가 아니거나 Discord 웹훅이 설정되지 않은 환경이라 알리지 않습니다."}
       </p>
 
       <div className="flex flex-wrap gap-2 text-sm">
@@ -116,7 +116,7 @@ export default async function PaymentEventsPage({
           href={href({ unsent: !unsent })}
           className={unsent ? "font-bold" : "text-muted-foreground"}
         >
-          메일 대기만
+          알림 대기만
         </Link>
         {loginName ? (
           <Link href={href({ user: null })} className="font-bold">
@@ -133,7 +133,7 @@ export default async function PaymentEventsPage({
               <TableHead>계정</TableHead>
               <TableHead>이벤트</TableHead>
               <TableHead>내용</TableHead>
-              <TableHead>메일</TableHead>
+              <TableHead>알림</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -169,16 +169,16 @@ export default async function PaymentEventsPage({
                   {event.summary}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-muted-foreground">
-                  {event.emailed_at ? (
+                  {event.notified_at ? (
                     <span
                       className="flex items-center gap-1"
-                      title={`발송 ${formatDate(event.emailed_at)}`}
+                      title={`알림 ${formatDate(event.notified_at)}`}
                     >
-                      <Mail size={14} /> {formatDate(event.emailed_at)}
+                      <Bell size={14} /> {formatDate(event.notified_at)}
                     </span>
                   ) : (
                     <span className="flex items-center gap-1">
-                      <MailX size={14} /> {mailing ? "대기" : "보내지 않음"}
+                      <BellOff size={14} /> {notifying ? "대기" : "알리지 않음"}
                     </span>
                   )}
                 </TableCell>

@@ -2,7 +2,11 @@ import { spawn } from "child_process";
 import { resolve } from "path";
 import { Client } from "pg";
 import { TEMPLATE_PUBLISHED_CHANNEL } from "@/lib/board/preview";
-import { notePaymentEvent, recordPaymentCronRun } from "@/lib/payment-events";
+import {
+  operatorAlertsConfigured,
+  sendOperatorAlert,
+} from "@/lib/operator-alerts";
+import { recordPaymentCronRun } from "@/lib/payment-events";
 
 const SCREENSHOT_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const SCREENSHOT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
@@ -39,7 +43,46 @@ const MEDIA_CLEANUP_TIMEOUT = 5 * 60 * 1000;
 const SITE_DATA_CLEANUP_INTERVAL = 30 * 60 * 1000;
 const SITE_DATA_CLEANUP_TIMEOUT = 5 * 60 * 1000;
 
-function runWithTimeout(
+// Jobs whose last run failed. The operators hear when a job starts failing
+// and when it recovers, not every run in between: a job that runs every few
+// minutes would otherwise flood the channel.
+const failingJobs = new Set<string>();
+
+async function runWithTimeout(
+  script: string,
+  timeout: number,
+  scriptArgs: string[] = [],
+): ReturnType<typeof spawnScript> {
+  const result = await spawnScript(script, timeout, scriptArgs);
+  const name = scriptArgs.length ? `${script} ${scriptArgs.join(" ")}` : script;
+  if (!result.success && !failingJobs.has(name)) {
+    failingJobs.add(name);
+    await alertOperators({
+      title: `작업 실패: ${name}`,
+      lines: [
+        result.timedOut
+          ? `제한 시간 ${timeout / 60_000}분을 넘겨 중단했습니다.`
+          : `종료 코드 ${result.code ?? "없음"}.`,
+        ...result.outputTail.trim().split("\n").slice(-8),
+      ],
+    });
+  } else if (result.success && failingJobs.delete(name)) {
+    await alertOperators({ title: `작업 복구: ${name}`, lines: [] });
+  }
+  return result;
+}
+
+// Best effort: an alert that cannot be sent is logged, never a job failure.
+async function alertOperators(alert: { title: string; lines: string[] }) {
+  if (!operatorAlertsConfigured()) return;
+  try {
+    await sendOperatorAlert(alert);
+  } catch (error) {
+    console.error("[cron] operator alert could not be sent:", error);
+  }
+}
+
+function spawnScript(
   script: string,
   timeout: number,
   scriptArgs: string[] = [],
@@ -190,11 +233,9 @@ async function runCustomDomainRefresher() {
   await runWithTimeout("refresh-custom-domains.ts", CUSTOM_DOMAIN_TIMEOUT);
 }
 
-// A payment job is never started while its last run is still going, and one
-// that fails or is killed for its timeout is recorded as a payment event, so
-// it reaches the operators' digest instead of only the container's log. (The
-// digest job itself is not: its own failure would only pile up events it
-// cannot send. /admin shows mail waiting too long instead.)
+// A payment job is never started while its last run is still going, and each
+// run is kept in payment_cron_runs. A failure alerts the operators like any
+// other job's (runWithTimeout).
 const paymentJobsRunning = new Set<string>();
 
 async function runPaymentJob(script: string, timeout: number) {
@@ -220,12 +261,6 @@ async function runPaymentJob(script: string, timeout: number) {
         exitCode: code,
         timedOut,
         outputTail,
-      });
-    }
-    if (!success) {
-      await notePaymentEvent({
-        kind: "job_failed",
-        summary: `결제 작업 ${script}가 실패했습니다 (종료 코드 ${code ?? "없음"}, 제한 시간 ${timeout / 60_000}분). 로그를 확인하세요.`,
       });
     }
   } finally {

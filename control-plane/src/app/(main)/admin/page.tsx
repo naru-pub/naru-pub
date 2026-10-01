@@ -4,7 +4,6 @@ import { sql } from "kysely";
 import { db } from "@/lib/database";
 import {
   PAYMENT_EVENT_LABELS,
-  PAYMENT_EVENTS_EMAIL,
   type PaymentEventKind,
 } from "@/lib/payment-events";
 import { isTossLiveMode, isTossTestMode } from "@/lib/toss";
@@ -125,11 +124,11 @@ export default async function AdminOverviewPage() {
     db
       .selectFrom("payment_events")
       .select([
-        sql<number>`count(*) filter (where emailed_at is null)::int`.as(
+        sql<number>`count(*) filter (where notified_at is null)::int`.as(
           "unsent",
         ),
-        sql<Date | null>`max(emailed_at)`.as("lastEmailed"),
-        sql<Date | null>`min(created_at) filter (where emailed_at is null)`.as(
+        sql<Date | null>`max(notified_at)`.as("lastNotified"),
+        sql<Date | null>`min(created_at) filter (where notified_at is null)`.as(
           "oldestUnsent",
         ),
       ])
@@ -183,8 +182,8 @@ export default async function AdminOverviewPage() {
       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         <Badge variant={live ? "default" : "outline"}>Toss {mode} 키</Badge>
         {live
-          ? `결제 이벤트는 ${PAYMENT_EVENTS_EMAIL}로 메일을 보냅니다${events.lastEmailed ? ` (마지막 ${formatDate(events.lastEmailed)})` : ""}.`
-          : "이 환경에서는 결제 이벤트 메일을 보내지 않습니다."}
+          ? `결제 이벤트는 운영자 Discord 채널에 알립니다${events.lastNotified ? ` (마지막 ${formatDate(events.lastNotified)})` : ""}.`
+          : "이 환경에서는 결제 이벤트를 알리지 않습니다."}
       </div>
 
       <section className="space-y-2">
@@ -286,12 +285,12 @@ export default async function AdminOverviewPage() {
             alert={webhooks.failedWeek > 0}
           />
           <Stat
-            label="메일 대기 중 이벤트"
+            label="알림 대기 중 이벤트"
             value={live ? events.unsent : "-"}
             detail={live ? "몇 분 안에 한 통으로 발송" : "운영 환경에서만 발송"}
             href="/admin/events?unsent=1"
-            // The digest goes out within 15 minutes; mail waiting longer
-            // means the digest job or the mail provider is failing.
+            // The digest goes out within 15 minutes; an event waiting longer
+            // means the digest job or the Discord webhook is failing.
             alert={
               live &&
               events.oldestUnsent != null &&

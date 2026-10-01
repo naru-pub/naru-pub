@@ -31,12 +31,15 @@ jest.mock("@/lib/email", () => ({
   sendSubscriptionPastDueEmail: jest.fn(async () => {}),
   sendSupportThankYouEmail: jest.fn(async () => {}),
   sendRecurringChargeReceiptEmail: jest.fn(async () => {}),
-  sendPaymentEventDigestEmail: jest.fn(async () => {}),
   sendPaymentCanceledEmail: jest.fn(async () => {}),
   sendSubscriptionCanceledEmail: jest.fn(async () => {}),
 }));
 
 jest.mock("@/lib/auth", () => ({ validateRequest: jest.fn() }));
+jest.mock("@/lib/operator-alerts", () => ({
+  operatorAlertsConfigured: () => true,
+  sendOperatorAlert: jest.fn(async () => {}),
+}));
 
 // Required after the mocks: this transform does not hoist jest.mock above
 // imports.
@@ -98,6 +101,9 @@ const {
 const { checkPaymentInvariants } =
   require("@/lib/payment-invariants") as typeof import("@/lib/payment-invariants");
 const { NextRequest } = require("next/server") as typeof import("next/server");
+const alerts = require("@/lib/operator-alerts") as jest.Mocked<
+  typeof import("@/lib/operator-alerts")
+>;
 const { POST: paymentWindowRoute } =
   require("@/app/(main)/api/account/payment-window/route") as typeof import("@/app/(main)/api/account/payment-window/route");
 const { checkTossTransactions, previousKstDay } =
@@ -3723,7 +3729,7 @@ integration("payments against the database", () => {
     function events() {
       return db
         .selectFrom("payment_events")
-        .select(["kind", "summary", "emailed_at", "created_at"])
+        .select(["kind", "summary", "notified_at", "created_at"])
         .orderBy("id")
         .execute();
     }
@@ -3851,7 +3857,7 @@ integration("payments against the database", () => {
         expect(await sendPaymentEventDigest({ enabled: false })).toEqual({
           state: "disabled",
         });
-        expect(email.sendPaymentEventDigestEmail).not.toHaveBeenCalled();
+        expect(alerts.sendOperatorAlert).not.toHaveBeenCalled();
       });
 
       test("waits while events are still arriving", async () => {
@@ -3862,10 +3868,10 @@ integration("payments against the database", () => {
           state: "waiting",
           pending: 2,
         });
-        expect(email.sendPaymentEventDigestEmail).not.toHaveBeenCalled();
+        expect(alerts.sendOperatorAlert).not.toHaveBeenCalled();
       });
 
-      test("merges everything pending into one email, once", async () => {
+      test("merges everything pending into one message, once", async () => {
         await eventAt(400, "first");
         await eventAt(300, "second");
         await eventAt(200, "third");
@@ -3874,20 +3880,19 @@ integration("payments against the database", () => {
           state: "sent",
           events: 3,
         });
-        expect(email.sendPaymentEventDigestEmail).toHaveBeenCalledTimes(1);
-        const [message] = email.sendPaymentEventDigestEmail.mock.calls[0];
-        expect(message.to).toBe("hello@naru.pub");
-        expect(message.subject).toBe("[나루 결제] 3건: 결제 완료 3");
-        expect(message.events.map((event) => event.summary)).toEqual([
-          "first",
-          "second",
-          "third",
+        expect(alerts.sendOperatorAlert).toHaveBeenCalledTimes(1);
+        const [message] = alerts.sendOperatorAlert.mock.calls[0];
+        expect(message.title).toBe("[나루 결제] 3건: 결제 완료 3");
+        expect(message.lines).toEqual([
+          expect.stringMatching(/\[결제 완료\] first$/),
+          expect.stringMatching(/\[결제 완료\] second$/),
+          expect.stringMatching(/\[결제 완료\] third$/),
         ]);
 
         expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
           state: "idle",
         });
-        expect(email.sendPaymentEventDigestEmail).toHaveBeenCalledTimes(1);
+        expect(alerts.sendOperatorAlert).toHaveBeenCalledTimes(1);
       });
 
       test("does not hold events back forever while they keep coming", async () => {
@@ -3902,14 +3907,14 @@ integration("payments against the database", () => {
 
       test("a failed send keeps the events for the next run", async () => {
         await eventAt(300, "kept");
-        email.sendPaymentEventDigestEmail.mockRejectedValueOnce(
-          new Error("resend down"),
+        alerts.sendOperatorAlert.mockRejectedValueOnce(
+          new Error("discord down"),
         );
 
         await expect(sendPaymentEventDigest({ enabled: true })).rejects.toThrow(
-          "resend down",
+          "discord down",
         );
-        expect((await events())[0].emailed_at).toBeNull();
+        expect((await events())[0].notified_at).toBeNull();
         expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
           state: "sent",
           events: 1,

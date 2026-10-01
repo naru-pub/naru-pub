@@ -23,7 +23,6 @@ const MAIL_KINDS: Record<string, string> = {
   past_due_notice: "연체",
   payment_canceled: "결제 취소",
   subscription_canceled: "해지",
-  operator_digest: "운영자 알림",
 };
 
 // What payments leave nowhere else: the last run of each payment cron job,
