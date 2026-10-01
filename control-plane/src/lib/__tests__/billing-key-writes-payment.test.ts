@@ -39,13 +39,13 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ).toEqual([]);
   });
 
-  // Setting a key is allowed only where a subscription has none: confirm
-  // stores the key Toss just issued. Replacing one must retire the old key.
+  // Setting a key is allowed only where a subscription has none: the
+  // subscribe confirm stores the key Toss just issued. Replacing one must retire the old key.
   test("only confirm stores a new key", () => {
     expect(
       offenders(STORES_KEY, [
         "lib/billing-keys.ts",
-        "app/(main)/api/account/subscription/confirm/route.ts",
+        "lib/subscription-signup.ts",
       ]),
     ).toEqual([]);
   });
@@ -63,9 +63,7 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     expect(offenders(/toss_billing_key\s*:\s*null/, []).length).toBeGreaterThan(
       0,
     );
-    expect(offenders(STORES_KEY, [])).toEqual([
-      "app/(main)/api/account/subscription/confirm/route.ts",
-    ]);
+    expect(offenders(STORES_KEY, [])).toEqual(["lib/subscription-signup.ts"]);
     expect(offenders(/deleteFrom\(\s*["']users["']\s*\)/, [])).toEqual([
       "lib/account-deletion.ts",
     ]);

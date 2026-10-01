@@ -17,7 +17,11 @@ import {
   MAX_PAYMENT_RETRY_ATTEMPTS,
 } from "@/lib/subscriptions";
 
-const BATCH_SIZE = 50;
+// A claimed subscription holds its lease while the rest of its batch is
+// charged, and a charge may take up to 90 seconds (the request timeout). Ten
+// of them finish well inside CHARGE_LEASE_MINUTES, so no lease goes stale —
+// and open to the subscribe flow — while its charge is still to come.
+const BATCH_SIZE = 10;
 
 type DueSubscription = {
   id: number;
@@ -53,14 +57,23 @@ function renewalAttemptKey(sub: DueSubscription) {
   return `subscription:${sub.id}:${periodEnd}:${attemptNumber}`;
 }
 
-async function claimDueSubscriptions(now: Date) {
+// `seen` holds the subscriptions this run already tried. A failed or
+// ambiguous charge leaves next_billing_at in the past and releases its lease,
+// so without it the next batch would claim the same subscription again.
+//
+// `now` decides what is due; the lease itself is wall-clock time, taken per
+// batch, so a later batch in a long run does not start with an aged lease.
+async function claimDueSubscriptions(now: Date, seen: number[]) {
+  const leasedAt = new Date();
   const staleLeaseBefore = new Date(
-    now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000,
+    leasedAt.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000,
   );
+  const notSeen =
+    seen.length > 0 ? sql`AND NOT (id = ANY(${seen}::int[]))` : sql``;
 
   const result = await sql<DueSubscription>`
     UPDATE subscriptions
-    SET charging_started_at = ${now}, updated_at = ${now}
+    SET charging_started_at = ${leasedAt}, updated_at = ${leasedAt}
     WHERE id IN (
       SELECT id
       FROM subscriptions
@@ -71,6 +84,7 @@ async function claimDueSubscriptions(now: Date) {
           charging_started_at IS NULL
           OR charging_started_at < ${staleLeaseBefore}
         )
+        ${notSeen}
       ORDER BY next_billing_at ASC, id ASC
       FOR UPDATE SKIP LOCKED
       LIMIT ${BATCH_SIZE}
@@ -276,11 +290,37 @@ async function sendGraceNoticeIfNeeded(sub: DueSubscription, now: Date) {
   }
 }
 
+// A subscription whose charges keep ending ambiguously (Toss 5xx, timeouts)
+// never gets a definitive failure to count, and its pending order must keep
+// its number — a new one could charge the card twice. Once the grace period is
+// over it is still past due; the reconciler revives it if the order turns out
+// to have been paid.
+async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
+  if (!sub.current_period_end) return;
+  if (addPaymentGrace(new Date(sub.current_period_end)) > now) return;
+  await db
+    .updateTable("subscriptions")
+    .set({ status: "past_due", updated_at: now })
+    .where("id", "=", sub.id)
+    .where("status", "in", ["active", "scheduled"])
+    .execute();
+  console.error(
+    `[charge-subscriptions] user ${sub.user_id}: grace period over with the charge still unresolved -> past_due`,
+  );
+}
+
 export async function chargeDueSubscriptions(now = new Date()) {
-  const due = await claimDueSubscriptions(now);
+  const seen: number[] = [];
+  for (;;) {
+    const due = await claimDueSubscriptions(now, seen);
+    if (due.length === 0) break;
+    seen.push(...due.map((sub) => sub.id));
+    await chargeClaimedSubscriptions(due, now);
+  }
+  console.log(`[charge-subscriptions] ${seen.length} subscription(s) due`);
+}
 
-  console.log(`[charge-subscriptions] ${due.length} subscription(s) due`);
-
+async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
   for (const sub of due) {
     const interval = sub.billing_interval as BillingInterval;
     const { attempt, declined } = await getOrCreatePaymentAttempt(sub);
@@ -366,6 +406,7 @@ export async function chargeDueSubscriptions(now = new Date()) {
         // Toss may have completed the request. Preserve the attempt so the
         // next run reconciles the same order instead of charging a new one.
         await releaseLease(sub);
+        await markPastDueAfterGrace(sub, now);
         console.error(
           `[charge-subscriptions] user ${sub.user_id}: ambiguous charge result; will reconcile ${attempt.order_id}: ${err}`,
         );

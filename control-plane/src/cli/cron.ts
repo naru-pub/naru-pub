@@ -13,13 +13,16 @@ const SITE_UPDATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const CUSTOM_DOMAIN_INTERVAL = 3 * 60 * 1000; // 3 minutes
 const GITHUB_DEPLOYMENT_CLEANUP_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const CUSTOM_DOMAIN_TIMEOUT = 2 * 60 * 1000; // 2 minutes
-const SUBSCRIPTION_CHARGE_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+// Every due subscription is charged in one run, and a billing charge alone can
+// take up to 60 seconds at Toss.
+const SUBSCRIPTION_CHARGE_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours
 const BILLING_NOTIFICATION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const PAYMENT_RECONCILIATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const PAYMENT_RECONCILIATION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 const BILLING_KEY_DELETION_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const BILLING_KEY_DELETION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
-const PAYMENT_REFUND_SYNC_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+// One Toss lookup per paid payment in the lookback window.
+const PAYMENT_REFUND_SYNC_TIMEOUT = 60 * 60 * 1000; // 60 minutes
 const EXPIRED_CUSTOM_DOMAIN_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const EXPIRED_GITHUB_DEPLOYMENT_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const MEDIA_CLEANUP_INTERVAL = 15 * 60 * 1000;

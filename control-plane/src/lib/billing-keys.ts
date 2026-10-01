@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import { deleteBillingKey, TossApiError } from "@/lib/toss";
@@ -53,9 +54,32 @@ export async function retireBillingKey(
   return opts.deletedAtToss ? null : billingKey;
 }
 
+// A key Toss issued that never reached a subscription — the signup it was for
+// was canceled while Toss was issuing it — is queued for deletion the same way
+// a retired one is. Pass the result to deleteRetiredBillingKey after commit.
+export async function discardIssuedBillingKey(
+  trx: Executor,
+  billingKey: string,
+): Promise<string> {
+  await trx
+    .insertInto("retired_billing_keys")
+    .values({ billing_key: billingKey })
+    .onConflict((oc) => oc.column("billing_key").doNothing())
+    .execute();
+  return billingKey;
+}
+
 const BATCH_SIZE = 100;
-// A key Toss would not delete is retried at most this often.
-const RETRY_AFTER_MS = 60 * 60 * 1000;
+// A key Toss would not delete is retried after an hour, then backs off by
+// doubling up to once a day. The docs do not say how DELETE answers a key Toss
+// no longer knows, so a refusal that is really "already gone" would otherwise
+// be retried hourly forever; past STUCK_AFTER_ATTEMPTS it is logged as stuck
+// so someone looks at the error it keeps getting. (The exponent is capped
+// before the day cap applies: 2^n hours overflows an interval long before n
+// reaches the attempt counts a stuck key piles up.)
+const RETRY_AFTER = "1 hour";
+const MAX_RETRY_AFTER = "1 day";
+const STUCK_AFTER_ATTEMPTS = 5;
 
 // Toss answers a key it no longer has with a not-found error. That key is as
 // deleted as it will ever be.
@@ -70,14 +94,20 @@ function alreadyGone(error: unknown): boolean {
 // that adds it) at Toss. The row, which holds the key in plain text, is removed
 // as soon as Toss confirms; a failure stays queued and is retried later.
 export async function deleteRetiredBillingKeys(now = new Date()) {
-  const retryBefore = new Date(now.getTime() - RETRY_AFTER_MS);
   const queued = await db
     .selectFrom("retired_billing_keys")
-    .select(["id", "billing_key"])
+    .select(["id", "billing_key", "attempts"])
     .where((eb) =>
       eb.or([
         eb("last_attempted_at", "is", null),
-        eb("last_attempted_at", "<", retryBefore),
+        eb(
+          sql<Date>`last_attempted_at + least(
+            interval '${sql.raw(RETRY_AFTER)}' * power(2, least(greatest(attempts - 1, 0), 5)),
+            interval '${sql.raw(MAX_RETRY_AFTER)}'
+          )`,
+          "<=",
+          now,
+        ),
       ]),
     )
     .orderBy("id", "asc")
@@ -97,7 +127,7 @@ export async function deleteRetiredBillingKeys(now = new Date()) {
 }
 
 async function deleteQueuedKey(
-  row: { id: number; billing_key: string },
+  row: { id: number; billing_key: string; attempts: number },
   now: Date,
 ): Promise<boolean> {
   try {
@@ -116,8 +146,11 @@ async function deleteQueuedKey(
         }))
         .where("id", "=", row.id)
         .execute();
+      const attempts = row.attempts + 1;
       console.error(
-        `[delete-retired-billing-keys] key ${row.id}: deletion failed`,
+        attempts >= STUCK_AFTER_ATTEMPTS
+          ? `[delete-retired-billing-keys] key ${row.id}: STUCK, deletion failed ${attempts} times`
+          : `[delete-retired-billing-keys] key ${row.id}: deletion failed`,
         error,
       );
       return false;
@@ -140,7 +173,7 @@ export async function deleteRetiredBillingKey(
   try {
     const row = await db
       .selectFrom("retired_billing_keys")
-      .select(["id", "billing_key"])
+      .select(["id", "billing_key", "attempts"])
       .where("billing_key", "=", billingKey)
       .executeTakeFirst();
     if (row) await deleteQueuedKey(row, new Date());

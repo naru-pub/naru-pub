@@ -18,10 +18,12 @@ jest.mock("@/lib/toss", () => {
     chargeBillingKey: jest.fn(),
     deleteBillingKey: jest.fn(),
     getPaymentByOrderId: jest.fn(),
+    issueBillingKey: jest.fn(),
   };
 });
 jest.mock("@/lib/email", () => ({
   sendSubscriptionPaymentGraceEmail: jest.fn(async () => {}),
+  sendSupportThankYouEmail: jest.fn(async () => {}),
 }));
 
 // Required after the mocks: this transform does not hoist jest.mock above
@@ -45,10 +47,14 @@ const { reconcilePayment } =
   require("@/lib/payment-reconciliation") as typeof import("@/lib/payment-reconciliation");
 const { refundPayment } =
   require("@/lib/refunds") as typeof import("@/lib/refunds");
+const { syncPaymentRefunds } =
+  require("@/lib/refund-sync") as typeof import("@/lib/refund-sync");
 const { deleteRetiredBillingKeys, retireBillingKey } =
   require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
 const { deleteUserRow } =
   require("@/lib/account-deletion") as typeof import("@/lib/account-deletion");
+const { confirmSubscription, prepareSubscription } =
+  require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
 
 // Runs against a disposable, migrated database (scripts/test-payments-db.sh),
 // never the developer's own.
@@ -174,6 +180,7 @@ integration("payments against the database", () => {
     toss.cancelPayment.mockReset();
     toss.deleteBillingKey.mockReset();
     toss.deleteBillingKey.mockResolvedValue(undefined);
+    toss.issueBillingKey.mockReset();
     toss.getPaymentByOrderId.mockRejectedValue(
       new toss.TossApiError("not found", 404),
     );
@@ -949,6 +956,572 @@ integration("payments against the database", () => {
 
       expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
       expect((await subscription(subId)).failed_charge_count).toBe(1);
+    });
+  });
+
+  describe("the subscribe flow", () => {
+    // A user part-way through signup: prepare has run, Toss has redirected
+    // back with an authKey.
+    async function signingUp(supporterUntilAt: Date | null = null) {
+      const userId = await makeUser(supporterUntilAt);
+      const customerKey = randomUUID();
+      await db
+        .updateTable("users")
+        .set({ toss_customer_key: customerKey })
+        .where("id", "=", userId)
+        .execute();
+      const subId = await makeSubscription(userId, {
+        status: "incomplete",
+        billingKey: null,
+      });
+      toss.issueBillingKey.mockResolvedValue({
+        billingKey: "issued-key",
+        customerKey,
+      });
+      return { userId, subId, customerKey };
+    }
+
+    function confirm(userId: number, customerKey: string) {
+      return confirmSubscription({ userId, authKey: "auth", customerKey });
+    }
+
+    function queuedKeys() {
+      return db
+        .selectFrom("retired_billing_keys")
+        .select("billing_key")
+        .execute();
+    }
+
+    test("charges the first period and activates", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+
+      expect(await confirm(userId, customerKey)).toMatchObject({ ok: true });
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("active");
+      expect(sub.toss_billing_key).toBe("issued-key");
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+    });
+
+    // The cancel does not wait for the confirm's lease.
+    test("a cancel that lands while Toss issues the key gets no key and no charge", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      toss.issueBillingKey.mockImplementation(async () => {
+        await db
+          .updateTable("subscriptions")
+          .set({ status: "canceled" })
+          .where("id", "=", subId)
+          .execute();
+        return { billingKey: "orphan-key", customerKey };
+      });
+
+      const result = await confirm(userId, customerKey);
+
+      expect(result).toMatchObject({ ok: false, status: 409 });
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("canceled");
+      expect(sub.toss_billing_key).toBeNull();
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("orphan-key");
+      expect(await queuedKeys()).toEqual([]);
+    });
+
+    test("a declined first charge retires the key it was made with", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("card declined", 403, "REJECT_CARD_PAYMENT"),
+      );
+
+      expect(await confirm(userId, customerKey)).toMatchObject({
+        ok: false,
+        status: 402,
+      });
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("incomplete");
+      expect(sub.toss_billing_key).toBeNull();
+      expect(sub.charging_started_at).toBeNull();
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("issued-key");
+      const [attempt] = await db
+        .selectFrom("payments")
+        .select("status")
+        .where("subscription_id", "=", subId)
+        .execute();
+      expect(attempt.status).toBe("failed");
+
+      // Reloading the callback cannot charge the card again: the key is gone
+      // and the authKey was already spent.
+      toss.issueBillingKey.mockRejectedValue(
+        new toss.TossApiError("used", 400, "INVALID_AUTH_KEY"),
+      );
+      expect(await confirm(userId, customerKey)).toMatchObject({
+        ok: false,
+        status: 402,
+      });
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+    });
+
+    test("an ambiguous first charge keeps its key and order for the retry", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("server error", 500),
+      );
+
+      expect(await confirm(userId, customerKey)).toMatchObject({
+        ok: false,
+        status: 503,
+      });
+
+      expect((await subscription(subId)).toss_billing_key).toBe("issued-key");
+      expect(toss.deleteBillingKey).not.toHaveBeenCalled();
+    });
+
+    test("a key Toss could not confirm issuing is asked for again, not reported as a failure", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      toss.issueBillingKey.mockRejectedValue(new TypeError("fetch failed"));
+
+      expect(await confirm(userId, customerKey)).toMatchObject({
+        ok: false,
+        status: 503,
+      });
+      expect((await subscription(subId)).charging_started_at).toBeNull();
+    });
+
+    test("a stale callback cannot charge a subscription that moved on", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      await db
+        .updateTable("subscriptions")
+        .set({ status: "past_due", toss_billing_key: "old-key" })
+        .where("id", "=", subId)
+        .execute();
+
+      expect(await confirm(userId, customerKey)).toMatchObject({
+        ok: false,
+        status: 409,
+      });
+      expect(toss.issueBillingKey).not.toHaveBeenCalled();
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+    });
+
+    test("a doubled callback on a scheduled start reports the schedule", async () => {
+      const startsAt = new Date(Date.now() + 10 * DAY);
+      const { userId, subId, customerKey } = await signingUp(startsAt);
+
+      const first = await confirm(userId, customerKey);
+      const second = await confirm(userId, customerKey);
+
+      expect(first).toMatchObject({ ok: true, scheduled: true });
+      expect(second).toEqual(first);
+      expect(toss.issueBillingKey).toHaveBeenCalledTimes(1);
+      expect((await subscription(subId)).status).toBe("scheduled");
+    });
+
+    test("a new card waits for a renewal charge in flight", async () => {
+      const userId = await makeUser(new Date(Date.now() - DAY));
+      const subId = await makeSubscription(userId, {
+        status: "past_due",
+        billingKey: "old-key",
+      });
+      await db
+        .updateTable("subscriptions")
+        .set({ charging_started_at: new Date() })
+        .where("id", "=", subId)
+        .execute();
+
+      expect(
+        await prepareSubscription({ userId, interval: "month" }),
+      ).toMatchObject({ ok: false, status: 409 });
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("past_due");
+      expect(sub.toss_billing_key).toBe("old-key");
+    });
+
+    test("a new card waits until an unsettled charge is known", async () => {
+      const userId = await makeUser(new Date(Date.now() - DAY));
+      const subId = await makeSubscription(userId, {
+        status: "past_due",
+        billingKey: "old-key",
+      });
+      await makePendingPayment({
+        userId,
+        subscriptionId: subId,
+        attemptKey: `subscription:${subId}:x:1`,
+        orderId: "unsettled",
+        amount: 1000,
+      });
+
+      // Toss has not heard of it yet, and it is too young to expire.
+      expect(
+        await prepareSubscription({ userId, interval: "year" }),
+      ).toMatchObject({ ok: false, status: 409 });
+      expect((await subscription(subId)).toss_billing_key).toBe("old-key");
+
+      // Once Toss reports it paid, the subscription is simply active again.
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("unsettled", 1000),
+      );
+      expect(
+        await prepareSubscription({ userId, interval: "year" }),
+      ).toMatchObject({ ok: false, status: 409 });
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("active");
+      expect(sub.toss_billing_key).toBe("old-key");
+    });
+
+    test("a renewal paid after the old key was retired leaves room for the new card", async () => {
+      const { userId, subId, customerKey } = await signingUp();
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: subId,
+        attemptKey: `subscription:${subId}:late:1`,
+        orderId: "late-renewal",
+        amount: 1000,
+      });
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("late-renewal", 1000),
+      );
+
+      await reconcilePayment(paymentId);
+
+      let sub = await subscription(subId);
+      expect(sub.status).toBe("incomplete");
+      expect(sub.next_billing_at).toBeNull();
+      expect((await supporterUntil(userId))! > new Date()).toBe(true);
+
+      // The new card's confirm stores its key and starts after the paid month.
+      toss.getPaymentByOrderId.mockRejectedValue(
+        new toss.TossApiError("not found", 404),
+      );
+      expect(await confirm(userId, customerKey)).toMatchObject({
+        ok: true,
+        scheduled: true,
+      });
+      sub = await subscription(subId);
+      expect(sub.status).toBe("scheduled");
+      expect(sub.toss_billing_key).toBe("issued-key");
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("abandoned signups", () => {
+    async function abandoned(lease: Date | null) {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "incomplete",
+        billingKey: "signup-key",
+      });
+      await db
+        .updateTable("subscriptions")
+        .set({ charging_started_at: lease })
+        .where("id", "=", subId)
+        .execute();
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: subId,
+        attemptKey: `subscription_initial:${subId}:1`,
+        orderId: `initial-${subId}`,
+        amount: 1000,
+      });
+      await db
+        .updateTable("payments")
+        .set({ created_at: new Date(Date.now() - DAY) })
+        .where("id", "=", paymentId)
+        .execute();
+      return { subId, paymentId };
+    }
+
+    test("a first charge Toss never saw retires the signup's key", async () => {
+      const { subId, paymentId } = await abandoned(null);
+
+      expect(await reconcilePayment(paymentId)).toEqual({ state: "expired" });
+
+      expect((await subscription(subId)).toss_billing_key).toBeNull();
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("signup-key");
+    });
+
+    test("a first charge Toss declined retires the signup's key", async () => {
+      const { subId, paymentId } = await abandoned(null);
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(`initial-${subId}`, 1000, { status: "ABORTED" }),
+      );
+
+      await reconcilePayment(paymentId);
+
+      expect((await subscription(subId)).toss_billing_key).toBeNull();
+    });
+
+    test("a signup still confirming keeps its key", async () => {
+      const { subId, paymentId } = await abandoned(new Date());
+
+      await reconcilePayment(paymentId);
+
+      expect((await subscription(subId)).toss_billing_key).toBe("signup-key");
+    });
+  });
+
+  describe("renewal runs", () => {
+    test("every due subscription is charged, however many there are", async () => {
+      const periodEnd = new Date(Date.now() - 60 * 1000);
+      const subIds: number[] = [];
+      for (let i = 0; i < 23; i++) {
+        const userId = await makeUser(periodEnd);
+        subIds.push(
+          await makeSubscription(userId, {
+            status: "active",
+            currentPeriodEnd: periodEnd,
+            nextBillingAt: periodEnd,
+          }),
+        );
+      }
+      // Every third one fails ambiguously and must not be retried this run.
+      let calls = 0;
+      toss.chargeBillingKey.mockImplementation(async (params) => {
+        calls += 1;
+        if (calls % 3 === 0) throw new toss.TossApiError("server error", 500);
+        return tossPayment(params.orderId, params.amount);
+      });
+
+      await chargeDueSubscriptions();
+
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(23);
+      const charged = new Set(
+        toss.chargeBillingKey.mock.calls.map(([params]) => params.customerKey),
+      );
+      expect(charged.size).toBe(23);
+    });
+
+    test("an unresolved charge past the grace period is past due", async () => {
+      const periodEnd = new Date(Date.now() - 10 * DAY);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("server error", 500),
+      );
+
+      await chargeDueSubscriptions();
+
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("past_due");
+      // Not a counted failure: the order may yet turn out paid.
+      expect(sub.failed_charge_count).toBe(0);
+    });
+
+    test("an unresolved charge inside the grace period stays active", async () => {
+      const periodEnd = new Date(Date.now() - 60 * 1000);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("server error", 500),
+      );
+
+      await chargeDueSubscriptions();
+
+      expect((await subscription(subId)).status).toBe("active");
+    });
+  });
+
+  describe("settled orders", () => {
+    test("an order settled elsewhere is not granted again", async () => {
+      const userId = await makeUser();
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:expired-order",
+        orderId: "expired-order",
+        amount: 12000,
+      });
+      await db
+        .updateTable("payments")
+        .set({ status: "expired" })
+        .where("id", "=", paymentId)
+        .execute();
+
+      await expect(
+        applyOneTimePayment({
+          userId,
+          amount: 12000,
+          years: 1,
+          payment: tossPayment("expired-order", 12000),
+          paymentId,
+        }),
+      ).rejects.toThrow("not pending");
+      expect(await supporterUntil(userId)).toBeNull();
+    });
+  });
+
+  describe("billing key deletion retries", () => {
+    test("a key Toss keeps refusing is retried less and less often", async () => {
+      const lastAttempt = new Date();
+      await db
+        .insertInto("retired_billing_keys")
+        .values({
+          billing_key: "stubborn",
+          attempts: 3,
+          last_attempted_at: lastAttempt,
+        })
+        .execute();
+      const at = (hours: number) =>
+        new Date(lastAttempt.getTime() + hours * 60 * 60 * 1000);
+
+      // Third failure: the next try waits four hours, not one.
+      await deleteRetiredBillingKeys(at(2));
+      expect(toss.deleteBillingKey).not.toHaveBeenCalled();
+      await deleteRetiredBillingKeys(at(4.1));
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("stubborn");
+    });
+
+    test("the wait never grows past a day", async () => {
+      const lastAttempt = new Date();
+      await db
+        .insertInto("retired_billing_keys")
+        .values({
+          billing_key: "very-stubborn",
+          attempts: 40,
+          last_attempted_at: lastAttempt,
+        })
+        .execute();
+
+      await deleteRetiredBillingKeys(
+        new Date(lastAttempt.getTime() + DAY + 60 * 1000),
+      );
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("very-stubborn");
+    });
+  });
+
+  describe("the refund sweep", () => {
+    // A paid payment `ageDays` old, last checked `checkedDaysAgo` ago.
+    async function paid(
+      ageDays: number,
+      checkedDaysAgo: number | null,
+      orderId = `paid-${ageDays}-${checkedDaysAgo}`,
+    ) {
+      const userId = await makeUser();
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: `one_time:1:${orderId}`,
+        orderId,
+        amount: 12000,
+      });
+      const paidAt = new Date(Date.now() - ageDays * DAY);
+      await db
+        .updateTable("payments")
+        .set({
+          status: "done",
+          paid_at: paidAt,
+          created_at: paidAt,
+          toss_payment_key: `pk-${orderId}`,
+          last_reconciled_at:
+            checkedDaysAgo === null
+              ? null
+              : new Date(Date.now() - checkedDaysAgo * DAY),
+        })
+        .where("id", "=", paymentId)
+        .execute();
+      return orderId;
+    }
+
+    function checkedOrders() {
+      return toss.getPaymentByOrderId.mock.calls.map(([orderId]) => orderId);
+    }
+
+    beforeEach(() => {
+      toss.getPaymentByOrderId.mockImplementation(async (orderId) =>
+        tossPayment(orderId, 12000),
+      );
+    });
+
+    test("checks each payment as often as its age calls for", async () => {
+      const due = [
+        await paid(3, 2), // refund window: daily
+        await paid(3, null), // never checked
+        await paid(100, 8), // within a year: weekly
+        await paid(1000, 31), // up to Toss's five-year lookup: monthly
+      ];
+      const notDue = [
+        await paid(3, 0.5),
+        await paid(100, 3),
+        await paid(1000, 10),
+        // Older than Toss can look up.
+        await paid(6 * 365, null),
+      ];
+
+      await syncPaymentRefunds();
+
+      expect(checkedOrders().sort()).toEqual([...due].sort());
+      expect(checkedOrders()).not.toEqual(expect.arrayContaining(notDue));
+    });
+
+    test("has no cap on how many payments one run checks", async () => {
+      for (let i = 0; i < 1203; i++) {
+        await paid(3, null, `many-${i}`);
+      }
+
+      const result = await syncPaymentRefunds();
+
+      expect(result).toMatchObject({ checked: 1203, incomplete: false });
+      expect(new Set(checkedOrders()).size).toBe(1203);
+    });
+
+    test("a run out of time leaves the rest first in line", async () => {
+      const longest = await paid(200, 60);
+      const shorter = await paid(200, 20);
+      const recent = await paid(3, 2);
+
+      expect(await syncPaymentRefunds({ budgetMs: 0 })).toMatchObject({
+        checked: 0,
+        incomplete: true,
+      });
+
+      // Most overdue first.
+      toss.getPaymentByOrderId.mockClear();
+      await syncPaymentRefunds();
+      expect(checkedOrders()).toEqual([longest, shorter, recent]);
+    });
+
+    test("a payment whose check fails is not retried in the same run", async () => {
+      const orderId = await paid(3, null);
+      toss.getPaymentByOrderId.mockRejectedValue(
+        new toss.TossApiError("server error", 500),
+      );
+
+      expect(await syncPaymentRefunds()).toMatchObject({
+        checked: 1,
+        failed: 1,
+      });
+      expect(checkedOrders()).toEqual([orderId]);
+    });
+
+    test("finds a refund made in the Toss dashboard", async () => {
+      const orderId = await paid(30, 8);
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(orderId, 12000, {
+          status: "CANCELED",
+          cancels: [
+            { cancelAmount: 12000, canceledAt: new Date().toISOString() },
+          ],
+        }),
+      );
+
+      expect(await syncPaymentRefunds()).toMatchObject({ refunded: 1 });
+      const [row] = await db
+        .selectFrom("payments")
+        .select(["status", "refunded_amount"])
+        .where("order_id", "=", orderId)
+        .execute();
+      expect(row).toEqual({ status: "canceled", refunded_amount: 12000 });
     });
   });
 });

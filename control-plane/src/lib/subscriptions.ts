@@ -1,5 +1,6 @@
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import type { Executor } from "@/lib/entitlements";
 import {
   addInterval,
   addMonths,
@@ -38,6 +39,16 @@ export function addPaymentGrace(until: Date): Date {
   return graceEndsAt;
 }
 
+// Only an order still waiting on its outcome may be granted. The check that
+// it was pending ran before Toss was called; by the time the grant's lock is
+// held, another path may have settled it — failed, expired or refunded — and
+// that state must not be overwritten with a fresh period.
+function assertGrantable(paymentId: number, status: string) {
+  if (status !== "pending") {
+    throw new Error(`Payment ${paymentId} is ${status}, not pending`);
+  }
+}
+
 // Applies a one-time payment: records the ledger row and extends supporter_until,
 // stacking on top of any remaining time rather than resetting. If recurring
 // billing exists, the same transaction disables it so only prepaid access
@@ -74,6 +85,7 @@ export async function applyOneTimePayment(opts: {
             retiredKey: null,
           };
         }
+        assertGrantable(opts.paymentId, ledger.status);
       }
 
       // Serialize entitlement extensions for this user. Two distinct donations
@@ -196,6 +208,7 @@ export async function applySuccessfulCharge(opts: {
           periodEnd: new Date(ledger.period_end),
         };
       }
+      assertGrantable(opts.paymentId, ledger.status);
     }
 
     // Same lock order as applyOneTimePayment: payments, users, subscriptions.
@@ -207,7 +220,7 @@ export async function applySuccessfulCharge(opts: {
       .executeTakeFirstOrThrow();
     const subscription = await trx
       .selectFrom("subscriptions")
-      .select("status")
+      .select(["status", "toss_billing_key"])
       .where("id", "=", opts.subscriptionId)
       .forUpdate()
       .executeTakeFirstOrThrow();
@@ -256,14 +269,20 @@ export async function applySuccessfulCharge(opts: {
         .execute();
     }
 
+    // Without a billing key there is nothing to renew with: a late renewal
+    // reconciled after the supporter began registering a new card lands on
+    // an incomplete subscription whose old key is gone. Marking that active
+    // would make the new card's confirm report "already subscribed" and never
+    // store the new key, so the status is left for the confirm to settle.
     const stopped = STOPPED_SUBSCRIPTION_STATUSES.includes(subscription.status);
+    const renewable = !stopped && subscription.toss_billing_key != null;
     await trx
       .updateTable("subscriptions")
       .set({
-        status: stopped ? subscription.status : "active",
+        status: renewable ? "active" : subscription.status,
         current_period_start: periodStart,
         current_period_end: periodEnd,
-        next_billing_at: stopped ? null : periodEnd,
+        next_billing_at: renewable ? periodEnd : null,
         failed_charge_count: 0,
         charging_started_at: null,
         renewal_notice_sent_at: null,
@@ -282,10 +301,11 @@ export async function applySuccessfulCharge(opts: {
   });
 }
 
-// Takes the charge lease on a subscription, or returns null when another
-// charge holds a live lease or the subscription is already active. The
-// subscribe confirm uses this so a doubled callback cannot charge the first
-// period twice.
+// Takes the charge lease on a subscription that is waiting for its card, or
+// returns null when another charge holds a live lease or the subscription is
+// not incomplete. The subscribe confirm uses this so a doubled callback cannot
+// charge the first period twice, and a stale callback cannot charge a
+// subscription that has since moved on (past_due, canceled, scheduled).
 export async function claimSubscriptionForConfirm(
   subscriptionId: number,
   now = new Date(),
@@ -297,7 +317,7 @@ export async function claimSubscriptionForConfirm(
     .updateTable("subscriptions")
     .set({ charging_started_at: now, updated_at: now })
     .where("id", "=", subscriptionId)
-    .where("status", "!=", "active")
+    .where("status", "=", "incomplete")
     .where((eb) =>
       eb.or([
         eb("charging_started_at", "is", null),
@@ -326,12 +346,14 @@ export async function releaseSubscriptionLease(
 // markers are reset because they may be left over from an earlier, canceled
 // subscription; the renewal notice cron would otherwise skip the reminder
 // owed before this first charge.
+// Returns false when the subscription stopped waiting for its first charge
+// (the supporter canceled it) before the schedule could be written.
 export async function scheduleSubscriptionStart(
   subscriptionId: number,
   startsAt: Date,
   now = new Date(),
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const result = await db
     .updateTable("subscriptions")
     .set({
       status: "scheduled",
@@ -345,5 +367,33 @@ export async function scheduleSubscriptionStart(
       updated_at: now,
     })
     .where("id", "=", subscriptionId)
-    .execute();
+    .where("status", "in", ["incomplete", "scheduled"])
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0) > 0;
+}
+
+// A subscription still incomplete holds a key only for the signup under way.
+// Once that signup's first charge has failed for good, the key has nothing
+// left to charge and is retired, rather than kept in plain text until the
+// supporter happens to start over. A signup that holds the charge lease is
+// still using its key, unless the caller is that signup (ownsLease).
+export async function retireUnusedSignupKey(
+  trx: Executor,
+  subscriptionId: number,
+  opts: { ownsLease?: boolean; now?: Date } = {},
+): Promise<string | null> {
+  const now = opts.now ?? new Date();
+  const row = await trx
+    .selectFrom("subscriptions")
+    .select(["status", "charging_started_at"])
+    .where("id", "=", subscriptionId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!row || row.status !== "incomplete") return null;
+  const leaseLive =
+    row.charging_started_at != null &&
+    new Date(row.charging_started_at).getTime() >
+      now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000;
+  if (leaseLive && !opts.ownsLease) return null;
+  return retireBillingKey(trx, { subscriptionId });
 }

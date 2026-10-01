@@ -8,7 +8,11 @@ import {
 } from "@/lib/toss";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { retireBillingKey } from "@/lib/billing-keys";
-import { parseTossWebhook, webhookLedgerAction } from "@/lib/toss-webhooks";
+import {
+  isTrustedWebhookSource,
+  parseTossWebhook,
+  webhookLedgerAction,
+} from "@/lib/toss-webhooks";
 // General Toss payment webhooks are not signed. Treat the payload only as a
 // notification and retrieve the authoritative payment before changing state.
 export async function POST(request: NextRequest) {
@@ -25,6 +29,14 @@ export async function POST(request: NextRequest) {
     const event = parseTossWebhook(body);
 
     if (event.type === "billing-deleted") {
+      // Acted on without a lookup, so it must at least come from Toss.
+      const sourceIp = request.headers.get("cf-connecting-ip");
+      if (!isTrustedWebhookSource(sourceIp)) {
+        console.warn(
+          `Toss webhook: ignored BILLING_DELETED from untrusted address ${sourceIp}`,
+        );
+        return NextResponse.json({ received: true });
+      }
       await db.transaction().execute(async (trx) => {
         const subscription = await trx
           .selectFrom("subscriptions")
@@ -70,7 +82,7 @@ export async function POST(request: NextRequest) {
 
     const ledger = await db
       .selectFrom("payments")
-      .select(["id", "amount", "attempt_key", "toss_flow"])
+      .select(["id", "amount", "attempt_key", "toss_flow", "toss_mid"])
       .where("order_id", "=", orderId)
       .executeTakeFirst();
     if (!ledger) return NextResponse.json({ received: true });
@@ -79,7 +91,17 @@ export async function POST(request: NextRequest) {
       orderId,
       paymentFlowForRecord(ledger.toss_flow, ledger.attempt_key),
     );
-    if (payment.orderId === orderId && payment.totalAmount === ledger.amount) {
+    // Toss's checklist: the looked-up payment must match on orderId, amount
+    // and MID before anything is written.
+    const sameMid =
+      ledger.toss_mid == null ||
+      payment.mId == null ||
+      payment.mId === ledger.toss_mid;
+    if (
+      payment.orderId === orderId &&
+      payment.totalAmount === ledger.amount &&
+      sameMid
+    ) {
       const action = webhookLedgerAction(payment.status);
       if (action.type === "reconcile") {
         await reconcilePayment(ledger.id);

@@ -13,6 +13,7 @@ import {
   confirmPayment,
   deleteBillingKey,
   isDefinitiveTossFailure,
+  issueBillingKey,
   isOneTimeYears,
   isPurchasableOneTimeYears,
   newOrderId,
@@ -81,6 +82,27 @@ describe("Toss payment requests", () => {
         }),
       }),
     );
+  });
+
+  // An authKey works once. A retry after a lost response must replay the key
+  // Toss already issued rather than be refused for reusing the authKey.
+  test("billing key issuance is idempotent per authKey", async () => {
+    const authKey = "a".repeat(300);
+    await issueBillingKey(authKey, "customer");
+    await issueBillingKey(authKey, "customer");
+    await issueBillingKey("another-auth-key", "customer");
+
+    const keys = jest
+      .mocked(fetch)
+      .mock.calls.map(
+        ([, init]) =>
+          (init?.headers as Record<string, string>)["Idempotency-Key"],
+      );
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[0]);
+    // Toss caps idempotency keys at 300 characters.
+    expect(keys[0].length).toBeLessThanOrEqual(300);
+    expect(keys[0]).not.toContain(authKey);
   });
 
   test("one-time confirmation retries use the same idempotency key", async () => {
@@ -217,13 +239,17 @@ describe("Toss payment requests", () => {
 
 describe("billing periods", () => {
   test.each([
-    ["2026-01-15T00:00:00", "month", "2026-02-15T00:00:00"],
-    ["2026-01-31T00:00:00", "month", "2026-02-28T00:00:00"],
-    ["2028-01-31T00:00:00", "month", "2028-02-29T00:00:00"],
-    ["2026-03-31T00:00:00", "month", "2026-04-30T00:00:00"],
-    ["2026-12-31T00:00:00", "month", "2027-01-31T00:00:00"],
-    ["2028-02-29T00:00:00", "year", "2029-02-28T00:00:00"],
-    ["2026-06-10T00:00:00", "year", "2027-06-10T00:00:00"],
+    ["2026-01-15T00:00:00+09:00", "month", "2026-02-15T00:00:00+09:00"],
+    ["2026-01-31T00:00:00+09:00", "month", "2026-02-28T00:00:00+09:00"],
+    ["2028-01-31T00:00:00+09:00", "month", "2028-02-29T00:00:00+09:00"],
+    ["2026-03-31T00:00:00+09:00", "month", "2026-04-30T00:00:00+09:00"],
+    ["2026-12-31T00:00:00+09:00", "month", "2027-01-31T00:00:00+09:00"],
+    ["2028-02-29T00:00:00+09:00", "year", "2029-02-28T00:00:00+09:00"],
+    ["2026-06-10T00:00:00+09:00", "year", "2027-06-10T00:00:00+09:00"],
+    // Still Jan 30 in UTC, but Jan 31 where the supporter paid.
+    ["2026-01-31T08:00:00+09:00", "month", "2026-02-28T08:00:00+09:00"],
+    // Still Mar 31 in UTC, but already Apr 1 in Seoul.
+    ["2026-04-01T02:00:00+09:00", "month", "2026-05-01T02:00:00+09:00"],
   ] as const)(
     "%s plus one %s ends %s without spilling into the next month",
     (from, interval, expected) => {

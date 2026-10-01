@@ -22,6 +22,22 @@ const ONE_TIME_AMOUNT = 12000;
 // neutral notice rather than an error.
 const USER_CANCELED_CODES = new Set(["PAY_PROCESS_CANCELED", "USER_CANCEL"]);
 
+// Where the window is a popup (desktop), the SDK does not redirect to failUrl
+// but rejects requestPayment/requestBillingAuth with the same { code, message }.
+function paymentWindowError(error: unknown) {
+  const { code, message } = (error ?? {}) as {
+    code?: unknown;
+    message?: unknown;
+  };
+  if (typeof code === "string" && USER_CANCELED_CODES.has(code)) {
+    toast("결제가 취소되었습니다.");
+  } else if (typeof code === "string" && typeof message === "string") {
+    toast.error(message);
+  } else {
+    toast.error("결제 창을 여는 중 오류가 발생했습니다.");
+  }
+}
+
 type SubscriptionInfo = {
   status: string;
   billingInterval: string;
@@ -126,8 +142,8 @@ export default function SupportCard({
         failUrl: `${window.location.origin}/support?support=failed`,
       });
       // requestBillingAuth redirects the browser; control resumes on the callback page.
-    } catch {
-      toast.error("결제 창을 여는 중 오류가 발생했습니다.");
+    } catch (error) {
+      paymentWindowError(error);
       setPending(false);
     }
   }
@@ -164,8 +180,8 @@ export default function SupportCard({
         failUrl: `${window.location.origin}/support?support=failed`,
       });
       // requestPayment redirects the browser; control resumes on the callback page.
-    } catch {
-      toast.error("결제 창을 여는 중 오류가 발생했습니다.");
+    } catch (error) {
+      paymentWindowError(error);
       setPending(false);
     }
   }

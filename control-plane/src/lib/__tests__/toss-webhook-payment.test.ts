@@ -1,5 +1,9 @@
 import { describe, expect, test } from "@jest/globals";
-import { parseTossWebhook, webhookLedgerAction } from "@/lib/toss-webhooks";
+import {
+  isTrustedWebhookSource,
+  parseTossWebhook,
+  webhookLedgerAction,
+} from "@/lib/toss-webhooks";
 
 describe("Toss webhook parsing", () => {
   test("accepts payment status events", () => {
@@ -60,4 +64,26 @@ describe("Toss webhook ledger updates", () => {
       expect(webhookLedgerAction(status)).toEqual({ type: "reconcile" });
     },
   );
+});
+
+// BILLING_DELETED cancels a subscription without any lookup to confirm it.
+describe("Toss webhook sender", () => {
+  test("accepts Toss's published addresses behind a trusted ingress", () => {
+    expect(isTrustedWebhookSource("13.124.18.147", true)).toBe(true);
+    expect(isTrustedWebhookSource("115.92.221.127", true)).toBe(true);
+  });
+
+  test.each([null, "", "203.0.113.9", "115.92.221.124"])(
+    "refuses %p behind a trusted ingress",
+    (ip) => {
+      expect(isTrustedWebhookSource(ip, true)).toBe(false);
+    },
+  );
+
+  // Without an ingress that overwrites the header, anyone could claim a Toss
+  // address, so the header is not consulted at all.
+  test("does not check a header the caller controls", () => {
+    expect(isTrustedWebhookSource(null, false)).toBe(true);
+    expect(isTrustedWebhookSource("203.0.113.9", false)).toBe(true);
+  });
 });

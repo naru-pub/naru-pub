@@ -45,9 +45,11 @@ CUSTOM_DOMAIN_CNAME_TARGET=customers.naru.pub
 CLOUDFLARE_ZONE_ID=your-cloudflare-zone-id
 CLOUDFLARE_USER_API_TOKEN=your-cloudflare-api-token
 
-# Toss Payments (결제 흐름) — 테스트 키 사용
-TOSS_CLIENT_KEY=your-toss-client-key
-TOSS_SECRET_KEY=your-toss-secret-key
+# Toss Payments (결제 흐름) — 테스트 키 사용. 자동결제와 한 번만 결제는 MID가 달라 키도 따로입니다.
+TOSS_BILLING_CLIENT_KEY=your-toss-billing-client-key
+TOSS_BILLING_SECRET_KEY=your-toss-billing-secret-key
+TOSS_PAYMENT_CLIENT_KEY=your-toss-payment-client-key
+TOSS_PAYMENT_SECRET_KEY=your-toss-payment-secret-key
 ```
 
 `naru-media`에는 `media.naru.pub` 공개 커스텀 도메인을 연결하세요. 객체 쓰기는

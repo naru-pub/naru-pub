@@ -94,6 +94,7 @@ export async function POST(request: NextRequest) {
             raw: JSON.stringify({ error: err.message }),
           })
           .where("id", "=", pendingPayment.id)
+          .where("status", "=", "pending")
           .execute();
       }
       const message =
@@ -122,6 +123,7 @@ export async function POST(request: NextRequest) {
           raw: JSON.stringify(payment),
         })
         .where("id", "=", pendingPayment.id)
+        .where("status", "=", "pending")
         .execute();
       return NextResponse.json(
         { success: false, message: "결제가 올바르게 완료되지 않았습니다." },

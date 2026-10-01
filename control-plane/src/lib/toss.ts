@@ -1,4 +1,4 @@
-import { randomInt } from "crypto";
+import { createHash, randomInt } from "crypto";
 
 const TOSS_API = "https://api.tosspayments.com";
 
@@ -102,6 +102,11 @@ function authHeader(flow: TossPaymentFlow): string {
   return "Basic " + Buffer.from(`${secret}:`).toString("base64");
 }
 
+// A billing charge can take up to 60 seconds at Toss (자동결제 승인은 최대
+// 60초가 소요됩니다). Past this the request is abandoned and, like any transport
+// failure, left for the same order and idempotency key to settle later.
+const TOSS_REQUEST_TIMEOUT_MS = 90 * 1000;
+
 async function tossRequest<T>(
   flow: TossPaymentFlow,
   path: string,
@@ -121,6 +126,7 @@ async function tossRequest<T>(
         : {}),
     },
     body: init.body == null ? undefined : JSON.stringify(init.body),
+    signal: AbortSignal.timeout(TOSS_REQUEST_TIMEOUT_MS),
   });
 
   // A gateway in front of Toss can answer with an HTML error page. That is
@@ -154,12 +160,16 @@ export type TossBillingKeyResult = {
 };
 
 // Exchanges the authKey from requestBillingAuth for a reusable billing key.
+// The authKey works once, so a retry after a lost response must replay the
+// first answer instead of asking again: the idempotency key is derived from it
+// (hashed, since an authKey may be as long as the 300-character key limit).
 export function issueBillingKey(authKey: string, customerKey: string) {
   return tossRequest<TossBillingKeyResult>(
     "billing",
     "/v1/billing/authorizations/issue",
     {
       body: { authKey, customerKey },
+      idempotencyKey: `issue-${createHash("sha256").update(authKey).digest("hex")}`,
     },
   );
 }
@@ -290,17 +300,24 @@ export function paymentProviderMetadata(
   };
 }
 
+// Korea has no daylight saving time, so KST is always UTC+9.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
 // Adds whole calendar months, clamping to the target month's last day. Plain
 // setMonth overflows — Jan 31 + 1 month is Mar 3 — and every later renewal
-// would inherit that drift.
+// would inherit that drift. The calendar is KST's whatever the server's time
+// zone: a payment at 08:00 on Jan 31 in Seoul is still Jan 30 in UTC, and
+// would otherwise renew on Feb 28 for the wrong reason, or on the 30th.
 export function addMonths(from: Date, months: number): Date {
-  const d = new Date(from);
-  const day = d.getDate();
-  d.setDate(1);
-  d.setMonth(d.getMonth() + months);
-  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-  d.setDate(Math.min(day, lastDay));
-  return d;
+  const d = new Date(from.getTime() + KST_OFFSET_MS);
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  d.setUTCDate(Math.min(day, lastDay));
+  return new Date(d.getTime() - KST_OFFSET_MS);
 }
 
 export function addInterval(from: Date, interval: BillingInterval): Date {

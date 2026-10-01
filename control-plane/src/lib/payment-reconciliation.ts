@@ -11,6 +11,7 @@ import {
 import {
   applyOneTimePayment,
   applySuccessfulCharge,
+  retireUnusedSignupKey,
 } from "@/lib/subscriptions";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 
@@ -109,6 +110,12 @@ async function reconcilePaymentCore(
     return { state: "failed", status: payment.status };
   }
 
+  // A signup's first charge that went nowhere leaves the signup's key with
+  // nothing to charge; retireUnusedSignupKey decides whether it is still in use.
+  const initialAttempt =
+    payment.subscription_id != null &&
+    (payment.attempt_key?.startsWith("subscription_initial:") ?? false);
+
   let tossPayment;
   try {
     tossPayment = await getPaymentByOrderId(
@@ -122,12 +129,18 @@ async function reconcilePaymentCore(
         Date.now() - new Date(payment.created_at).getTime() >
           UNCONFIRMED_EXPIRY_MS
       ) {
-        await db
-          .updateTable("payments")
-          .set({ status: "expired" })
-          .where("id", "=", payment.id)
-          .where("status", "=", "pending")
-          .execute();
+        const retiredKey = await db.transaction().execute(async (trx) => {
+          await trx
+            .updateTable("payments")
+            .set({ status: "expired" })
+            .where("id", "=", payment.id)
+            .where("status", "=", "pending")
+            .execute();
+          return initialAttempt
+            ? retireUnusedSignupKey(trx, payment.subscription_id!)
+            : null;
+        });
+        await deleteRetiredBillingKey(retiredKey);
         return { state: "expired" };
       }
       return { state: "pending" };
@@ -253,6 +266,9 @@ async function reconcilePaymentCore(
             subscriptionId: payment.subscription_id,
           });
         }
+        if (initialAttempt && refundedAmount === 0) {
+          return retireUnusedSignupKey(trx, payment.subscription_id!);
+        }
         return null;
       });
       await deleteRetiredBillingKey(retiredKey);
@@ -291,11 +307,10 @@ async function reconcilePaymentCore(
     .where("user_id", "=", payment.user_id)
     .executeTakeFirstOrThrow();
   const now = new Date();
-  const initial = payment.attempt_key?.startsWith("subscription_initial:");
   const currentEnd = subscription.current_period_end
     ? new Date(subscription.current_period_end)
     : now;
-  const from = initial || currentEnd < now ? now : currentEnd;
+  const from = initialAttempt || currentEnd < now ? now : currentEnd;
 
   await applySuccessfulCharge({
     subscriptionId: payment.subscription_id,
