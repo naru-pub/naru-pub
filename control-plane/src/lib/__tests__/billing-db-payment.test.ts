@@ -24,6 +24,7 @@ jest.mock("@/lib/toss", () => {
 });
 jest.mock("@/lib/email", () => ({
   sendSubscriptionPaymentGraceEmail: jest.fn(async () => {}),
+  sendSubscriptionPastDueEmail: jest.fn(async () => {}),
   sendSupportThankYouEmail: jest.fn(async () => {}),
   sendRecurringChargeReceiptEmail: jest.fn(async () => {}),
   sendPaymentEventDigestEmail: jest.fn(async () => {}),
@@ -42,9 +43,11 @@ const email = require("@/lib/email") as jest.Mocked<
   typeof import("@/lib/email")
 >;
 const {
+  addPaymentGrace,
   applyOneTimePayment,
   applySuccessfulCharge,
   claimSubscriptionForConfirm,
+  MAX_PAYMENT_RETRY_ATTEMPTS,
   releaseSubscriptionLease,
   scheduleSubscriptionStart,
 } = require("@/lib/subscriptions") as typeof import("@/lib/subscriptions");
@@ -2349,6 +2352,81 @@ integration("payments against the database", () => {
       await chargeDueSubscriptions();
 
       expect((await subscription(subId)).status).toBe("active");
+    });
+  });
+
+  describe("past due mail", () => {
+    async function dueSince(periodEnd: Date, failedChargeCount = 0) {
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+        failedChargeCount,
+        graceNoticeSentAt: failedChargeCount > 0 ? new Date() : null,
+      });
+      return subId;
+    }
+
+    test("spent retries inside the grace period say when features end", async () => {
+      const periodEnd = new Date(Date.now() - 60 * 1000);
+      const subId = await dueSince(periodEnd, MAX_PAYMENT_RETRY_ATTEMPTS - 1);
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("card declined", 400),
+      );
+
+      await chargeDueSubscriptions();
+      await chargeDueSubscriptions();
+
+      expect((await subscription(subId)).status).toBe("past_due");
+      expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: expect.stringMatching(/@example\.com$/),
+          amount: 1000,
+          reason: "declined",
+          accessEndsAt: addPaymentGrace(periodEnd),
+        }),
+      );
+    });
+
+    test("a decline after the grace period says features have ended", async () => {
+      await dueSince(new Date(Date.now() - 10 * DAY));
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("card declined", 400),
+      );
+
+      await chargeDueSubscriptions();
+
+      expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "declined", accessEndsAt: null }),
+      );
+    });
+
+    test("an unresolved charge past the grace period is mailed as such", async () => {
+      await dueSince(new Date(Date.now() - 10 * DAY));
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("server error", 500),
+      );
+
+      await chargeDueSubscriptions();
+
+      expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "unresolved", accessEndsAt: null }),
+      );
+    });
+
+    test("a decline with retries left is not mailed as past due", async () => {
+      await dueSince(new Date(Date.now() - 60 * 1000));
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("card declined", 400),
+      );
+
+      await chargeDueSubscriptions();
+
+      expect(email.sendSubscriptionPaymentGraceEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSubscriptionPastDueEmail).not.toHaveBeenCalled();
     });
   });
 

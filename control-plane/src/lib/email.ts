@@ -626,6 +626,82 @@ export async function sendSubscriptionCanceledEmail(opts: {
   return receipt;
 }
 
+export type SubscriptionPastDueReason =
+  // The card was declined until the retries or the grace period ran out.
+  | "declined"
+  // The grace period ran out while Toss had not said whether the renewal
+  // went through.
+  | "unresolved";
+
+// Sent when a recurring plan stops renewing because its charge could not be
+// made: the grace notice promised a deadline, and this is what happened at
+// it. Paid access follows supporter_until and the grace window, not the
+// plan's status, so it may still run for a few days.
+export async function sendSubscriptionPastDueEmail(opts: {
+  email: string;
+  loginName: string;
+  amount: number;
+  reason: SubscriptionPastDueReason;
+  // When paid features end; null when they already have. Omitted (undefined)
+  // when no date applies, as for a comp.
+  accessEndsAt: Date | null | undefined;
+}) {
+  const accountUrl = `${process.env.BASE_URL}/account`;
+  const amountLabel = formatKrw(opts.amount);
+  const intro =
+    opts.reason === "declined"
+      ? `나루 정기 결제(${amountLabel})를 여러 번 시도했지만 등록된 카드로 결제하지 못해 정기 결제를 멈췄습니다. 더 이상 자동으로 결제를 시도하지 않습니다.`
+      : `나루 정기 결제(${amountLabel})의 결과를 결제사에서 확인하지 못한 채 유예 기간이 끝나 정기 결제를 멈췄습니다. 결제가 된 것으로 확인되면 자동으로 다시 이어지고 영수증을 보내드립니다.`;
+  const accessLine =
+    opts.accessEndsAt === undefined
+      ? null
+      : opts.accessEndsAt
+        ? `유료 기능은 ${formatKoreanDateTime(opts.accessEndsAt)}까지 유지됩니다. 그 전에 다시 결제하시면 끊기지 않고 이어집니다.`
+        : "커스텀 도메인 같은 유료 기능은 중단되었고, 연결된 커스텀 도메인은 해제될 수 있습니다.";
+  const closing =
+    "계정 페이지에서 결제 수단을 다시 등록하면 정기 결제를 다시 시작할 수 있습니다.";
+
+  const message = createMessage({
+    from: process.env.FROM_EMAIL || "noreply@naru.pub",
+    to: opts.email,
+    subject: "나루 정기 결제가 중단되었습니다",
+    content: {
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>나루 정기 결제 중단 안내</h2>
+          <p>${escapeHtml(opts.loginName)}님, ${intro}</p>
+          ${accessLine ? `<p>${accessLine}</p>` : ""}
+          <p>${closing}</p>
+          <p>
+            <a href="${accountUrl}" style="background-color: #d97706; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+              다시 결제하기
+            </a>
+          </p>
+        </div>
+      `,
+      text: [
+        "나루 정기 결제 중단 안내",
+        "",
+        `${opts.loginName}님, ${intro}`,
+        "",
+        ...(accessLine ? [accessLine] : []),
+        closing,
+        "",
+        `다시 결제하기: ${accountUrl}`,
+      ].join("\n"),
+    },
+    tags: ["billing", "subscription-past-due"],
+  });
+
+  const receipt = await transport.send(message);
+  if (!receipt.successful) {
+    throw new Error(
+      `Failed to send subscription past due email: ${receipt.errorMessages?.join(", ")}`,
+    );
+  }
+  return receipt;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

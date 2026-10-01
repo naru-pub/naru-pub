@@ -1,5 +1,10 @@
 import { db } from "@/lib/database";
-import { sendSubscriptionPaymentGraceEmail } from "@/lib/email";
+import {
+  sendSubscriptionPastDueEmail,
+  sendSubscriptionPaymentGraceEmail,
+  type SubscriptionPastDueReason,
+} from "@/lib/email";
+import { getUserEntitlement } from "@/lib/entitlements";
 import { sql } from "kysely";
 import { sendChargeReceipt } from "@/lib/charge-receipts";
 import {
@@ -220,9 +225,9 @@ async function markAttemptFailed(opts: {
   nextStatus: string;
   error: unknown;
   keepAttemptStatus?: boolean;
-}) {
+}): Promise<{ wentPastDue: boolean }> {
   const now = new Date();
-  await db.transaction().execute(async (trx) => {
+  return db.transaction().execute(async (trx) => {
     if (!opts.keepAttemptStatus) {
       await trx
         .updateTable("payments")
@@ -260,10 +265,9 @@ async function markAttemptFailed(opts: {
       subscriptionId: opts.sub.id,
       summary: `갱신 결제 실패 ${won(opts.sub.amount)} (${opts.failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}회): ${reason}`,
     });
-    if (
-      Number(updated.numUpdatedRows ?? 0) > 0 &&
-      opts.nextStatus === "past_due"
-    ) {
+    const wentPastDue =
+      Number(updated.numUpdatedRows ?? 0) > 0 && opts.nextStatus === "past_due";
+    if (wentPastDue) {
       await recordPaymentEvent(trx, {
         kind: "past_due",
         userId: opts.sub.user_id,
@@ -276,6 +280,7 @@ async function markAttemptFailed(opts: {
       .set({ charging_started_at: null })
       .where("id", "=", opts.sub.id)
       .execute();
+    return { wentPastDue };
   });
 }
 
@@ -326,6 +331,46 @@ async function sendGraceNoticeIfNeeded(sub: DueSubscription, now: Date) {
   }
 }
 
+// Tells the supporter their plan stopped renewing. Called only by the update
+// that moved it to past_due, so it goes out once per lapse. Best effort: a
+// failed send is logged and never undoes the status change.
+async function sendPastDueNotice(
+  sub: DueSubscription,
+  reason: SubscriptionPastDueReason,
+) {
+  try {
+    const user = await db
+      .selectFrom("users")
+      .select(["email", "email_verified_at", "login_name"])
+      .where("id", "=", sub.user_id)
+      .executeTakeFirst();
+    if (!user?.email || !user.email_verified_at) return;
+
+    // Paid features follow supporter_until and its grace window, which may
+    // still be running when the retries are spent.
+    const entitlement = await getUserEntitlement(sub.user_id);
+    await sendSubscriptionPastDueEmail({
+      email: user.email,
+      loginName: user.login_name,
+      amount: sub.amount,
+      reason,
+      accessEndsAt: entitlement.comp
+        ? undefined
+        : entitlement.isSupporter
+          ? entitlement.graceEndsAt
+          : null,
+    });
+    console.log(
+      `[charge-subscriptions] user ${sub.user_id}: past due notice sent`,
+    );
+  } catch (error) {
+    console.error(
+      `[charge-subscriptions] user ${sub.user_id}: failed to send past due notice:`,
+      error,
+    );
+  }
+}
+
 // A subscription whose charges keep ending ambiguously (Toss 5xx, timeouts)
 // never gets a definitive failure to count, and its pending order must keep
 // its number — a new one could charge the card twice. Once the grace period is
@@ -348,6 +393,7 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
       summary:
         "유예 기간이 끝났는데 갱신 결제 결과가 아직 불분명해 연체(past_due)로 전환",
     });
+    await sendPastDueNotice(sub, "unresolved");
   }
   console.error(
     `[charge-subscriptions] user ${sub.user_id}: grace period over with the charge still unresolved -> past_due`,
@@ -545,7 +591,7 @@ async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
       failures >= MAX_PAYMENT_RETRY_ATTEMPTS || graceEndsAt <= now
         ? "past_due"
         : sub.status;
-    await markAttemptFailed({
+    const { wentPastDue } = await markAttemptFailed({
       attempt,
       sub,
       failures,
@@ -554,6 +600,7 @@ async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
       keepAttemptStatus: outcome.keepAttemptStatus,
     });
     await sendGraceNoticeIfNeeded(sub, now);
+    if (wentPastDue) await sendPastDueNotice(sub, "declined");
     console.error(
       `[charge-subscriptions] user ${sub.user_id}: charge failed (${failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}) -> ${nextStatus}: ${describeTossError(outcome.error)}`,
     );
