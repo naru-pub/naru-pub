@@ -66,7 +66,7 @@ const SIGNUP_CHANGED_MESSAGE =
 // must not start while one of them might yet turn out charged: the pending
 // order's id and idempotency key belong to the old card and amount, and a late
 // success has to land on the subscription first.
-async function settlePendingCharges(subscriptionId: number): Promise<boolean> {
+async function settlePendingCharges(subscriptionId: string): Promise<boolean> {
   const pending = await db
     .selectFrom("payments")
     .select("id")
@@ -202,7 +202,7 @@ export async function prepareSubscription(opts: {
 }
 
 async function getOrCreateInitialChargeAttempt(opts: {
-  subscriptionId: number;
+  subscriptionId: string;
   userId: number;
   amount: number;
 }) {
@@ -258,7 +258,7 @@ async function getOrCreateInitialChargeAttempt(opts: {
 // A cancel does not wait for the confirm's lease, so it may have landed while
 // Toss was issuing; the key then belongs to nothing and is deleted at Toss.
 async function storeIssuedBillingKey(
-  subscriptionId: number,
+  subscriptionId: string,
   billingKey: string,
 ): Promise<boolean> {
   const { stored, discarded } = await db.transaction().execute(async (trx) => {
@@ -283,7 +283,7 @@ async function storeIssuedBillingKey(
 
 // The last look before the card is charged: the signup is still waiting and
 // still holds the key this confirm is about to use.
-async function stillConfirmable(subscriptionId: number, billingKey: string) {
+async function stillConfirmable(subscriptionId: string, billingKey: string) {
   const current = await db
     .selectFrom("subscriptions")
     .select(["status", "toss_billing_key"])
@@ -297,8 +297,8 @@ async function stillConfirmable(subscriptionId: number, billingKey: string) {
 // A first charge that failed for good ends this signup's use of its key.
 async function failFirstCharge(opts: {
   userId: number;
-  subscriptionId: number;
-  paymentId: number;
+  subscriptionId: string;
+  paymentId: string;
   amount: number;
   reason: string;
   set: Updateable<DB["payments"]>;
@@ -423,7 +423,7 @@ export async function confirmSubscription(opts: {
 // Runs with the subscription's charge lease held.
 async function confirmClaimedSubscription(opts: {
   sub: {
-    id: number;
+    id: string;
     billing_interval: string;
     amount: number;
     toss_billing_key: string | null;

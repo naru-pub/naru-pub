@@ -44,7 +44,7 @@ export function addPaymentGrace(until: Date): Date {
 // it was pending ran before Toss was called; by the time the grant's lock is
 // held, another path may have settled it — failed, expired or refunded — and
 // that state must not be overwritten with a fresh period.
-function assertGrantable(paymentId: number, status: string) {
+function assertGrantable(paymentId: string, status: string) {
   if (status !== "pending") {
     throw new Error(`Payment ${paymentId} is ${status}, not pending`);
   }
@@ -59,7 +59,7 @@ export async function applyOneTimePayment(opts: {
   amount: number;
   years: number;
   payment: TossPaymentResult;
-  paymentId?: number;
+  paymentId?: string;
 }): Promise<{ periodStart: Date; periodEnd: Date }> {
   if (!isOneTimeYears(opts.years)) {
     throw new Error("Invalid one-time support years");
@@ -188,13 +188,13 @@ export async function applyOneTimePayment(opts: {
 // stopped — the charge is recorded and its period granted, but it does not
 // revive auto-renewal.
 export async function applySuccessfulCharge(opts: {
-  subscriptionId: number;
+  subscriptionId: string;
   userId: number;
   interval: BillingInterval;
   amount: number;
   from: Date; // base for the new period (now for first charge, current_period_end for renewals)
   payment: TossPaymentResult;
-  paymentId?: number;
+  paymentId?: string;
 }): Promise<{ periodStart: Date; periodEnd: Date }> {
   const now = new Date();
 
@@ -328,7 +328,7 @@ export async function applySuccessfulCharge(opts: {
 // charge the first period twice, and a stale callback cannot charge a
 // subscription that has since moved on (past_due, canceled, scheduled).
 export async function claimSubscriptionForConfirm(
-  subscriptionId: number,
+  subscriptionId: string,
   now = new Date(),
 ): Promise<Date | null> {
   const staleLeaseBefore = new Date(
@@ -352,7 +352,7 @@ export async function claimSubscriptionForConfirm(
 // Releases a lease taken at `leasedAt`. A lease that has since been cleared or
 // re-taken by someone else is left alone.
 export async function releaseSubscriptionLease(
-  subscriptionId: number,
+  subscriptionId: string,
   leasedAt: Date,
 ): Promise<void> {
   await db
@@ -370,7 +370,7 @@ export async function releaseSubscriptionLease(
 // Returns false when the subscription stopped waiting for its first charge
 // (the supporter canceled it) before the schedule could be written.
 export async function scheduleSubscriptionStart(
-  subscriptionId: number,
+  subscriptionId: string,
   startsAt: Date,
   now = new Date(),
 ): Promise<boolean> {
@@ -400,7 +400,7 @@ export async function scheduleSubscriptionStart(
 // still using its key, unless the caller is that signup (ownsLease).
 export async function retireUnusedSignupKey(
   trx: Executor,
-  subscriptionId: number,
+  subscriptionId: string,
   opts: { ownsLease?: boolean; now?: Date } = {},
 ): Promise<string | null> {
   const now = opts.now ?? new Date();

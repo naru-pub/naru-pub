@@ -10,7 +10,11 @@ import {
   PLAN_ORDER_NAMES,
   TossApiError,
 } from "@/lib/toss";
-import { notePaymentEvent, recordPaymentEvent, won } from "@/lib/payment-events";
+import {
+  notePaymentEvent,
+  recordPaymentEvent,
+  won,
+} from "@/lib/payment-events";
 import {
   addPaymentGrace,
   applySuccessfulCharge,
@@ -25,7 +29,7 @@ import {
 const BATCH_SIZE = 10;
 
 type DueSubscription = {
-  id: number;
+  id: string;
   user_id: number;
   status: string;
   charging_started_at: Date;
@@ -39,7 +43,7 @@ type DueSubscription = {
 };
 
 type PaymentAttempt = {
-  id: number;
+  id: string;
   order_id: string;
   status: string;
 };
@@ -66,16 +70,16 @@ function renewalAttemptKey(sub: DueSubscription) {
 // batch, so a later batch in a long run does not start with an aged lease.
 async function claimDueSubscriptions(
   now: Date,
-  seen: number[],
-  only: number[] | null,
+  seen: string[],
+  only: string[] | null,
 ) {
   const leasedAt = new Date();
   const staleLeaseBefore = new Date(
     leasedAt.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000,
   );
   const notSeen =
-    seen.length > 0 ? sql`AND NOT (id = ANY(${seen}::int[]))` : sql``;
-  const onlyThese = only ? sql`AND id = ANY(${only}::int[])` : sql``;
+    seen.length > 0 ? sql`AND NOT (id = ANY(${seen}::uuid[]))` : sql``;
+  const onlyThese = only ? sql`AND id = ANY(${only}::uuid[])` : sql``;
 
   const result = await sql<DueSubscription>`
     UPDATE subscriptions
@@ -336,7 +340,8 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
       kind: "past_due",
       userId: sub.user_id,
       subscriptionId: sub.id,
-      summary: "유예 기간이 끝났는데 갱신 결제 결과가 아직 불분명해 연체(past_due)로 전환",
+      summary:
+        "유예 기간이 끝났는데 갱신 결제 결과가 아직 불분명해 연체(past_due)로 전환",
     });
   }
   console.error(
@@ -348,9 +353,9 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
 // charges one at a time); the cron charges everything due.
 export async function chargeDueSubscriptions(
   now = new Date(),
-  opts: { subscriptionIds?: number[] } = {},
+  opts: { subscriptionIds?: string[] } = {},
 ) {
-  const seen: number[] = [];
+  const seen: string[] = [];
   for (;;) {
     const due = await claimDueSubscriptions(
       now,

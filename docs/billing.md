@@ -78,6 +78,8 @@
 
 ## 데이터 모델
 
+결제 표(`subscriptions`, `payments`, `payment_events`, `toss_webhook_deliveries`, `retired_billing_keys`)의 기본키는 UUIDv7입니다(`uuid_v7()`, 마이그레이션에서 정의). 주소나 화면에 드러나도 결제가 몇 건인지 알려 주거나 차례로 넘겨 볼 수 없고, 만든 순서대로 정렬됩니다 — 같은 밀리초 안에서도(밀리초 아래 12비트에 시각을 넣는 RFC 9562 방식 3). 청구 코드는 이 순서에 기댑니다(가장 최근 시도, 가장 오래된 이벤트). 정기 결제의 시도 키(`subscription:<구독 id>:…`, `subscription_initial:<구독 id>:…`)에도 구독 id가 들어갑니다. `user_id`는 정수 그대로입니다.
+
 - `users.supporter_comp` / `users.supporter_until` / `users.toss_customer_key`
 - `subscriptions`: 사용자당 한 행. `plan`, `billing_interval`, `amount`, `status`(`incomplete`/`active`/`past_due`/`canceled`), `toss_billing_key`(서버 전용), 기간 필드.
 - `retired_billing_keys`: Toss에서 아직 지우지 못한 옛 빌링키 대기열. 삭제가 확인되면 행이 사라집니다.

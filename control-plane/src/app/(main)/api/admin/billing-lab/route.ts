@@ -4,6 +4,7 @@ import { LabAction, LabError, runLabAction } from "@/lib/billing-lab";
 import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
 import { isTossTestMode } from "@/lib/toss";
 import { assertJsonContentType } from "@/lib/utils";
+import { parseUuid } from "@/lib/uuid";
 
 function positiveInt(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0
@@ -18,8 +19,8 @@ function testCode(value: unknown): string | undefined {
 }
 
 function parseAction(body: Record<string, unknown>): LabAction | null {
-  const subscriptionId = positiveInt(body.subscriptionId);
-  const paymentId = positiveInt(body.paymentId);
+  const subscriptionId = parseUuid(body.subscriptionId);
+  const paymentId = parseUuid(body.paymentId);
   const userId = positiveInt(body.userId);
   switch (body.action) {
     case "inspect":

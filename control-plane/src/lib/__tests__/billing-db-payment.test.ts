@@ -142,7 +142,7 @@ async function makeSubscription(
 
 async function makePendingPayment(opts: {
   userId: number;
-  subscriptionId: number | null;
+  subscriptionId: string | null;
   attemptKey: string;
   orderId: string;
   amount: number;
@@ -162,7 +162,7 @@ async function makePendingPayment(opts: {
   return row.id;
 }
 
-function subscription(id: number) {
+function subscription(id: string) {
   return db
     .selectFrom("subscriptions")
     .selectAll()
@@ -867,7 +867,7 @@ integration("payments against the database", () => {
       return { userId, subId, periodEnd };
     }
 
-    function attempts(subId: number) {
+    function attempts(subId: string) {
       return db
         .selectFrom("payments")
         .select(["attempt_key", "order_id", "status"])
@@ -1275,7 +1275,7 @@ integration("payments against the database", () => {
   describe("renewal runs", () => {
     test("every due subscription is charged, however many there are", async () => {
       const periodEnd = new Date(Date.now() - 60 * 1000);
-      const subIds: number[] = [];
+      const subIds: string[] = [];
       for (let i = 0; i < 23; i++) {
         const userId = await makeUser(periodEnd);
         subIds.push(
@@ -1974,6 +1974,54 @@ integration("payments against the database", () => {
         expect(counted.has(userId)).toBe(isSupporter);
       }
       expect(counted.size).toBe(3);
+    });
+  });
+
+  // Payment ids are UUIDv7: not guessable from one another, but in the order
+  // they were made, which the billing code relies on (latest attempt first,
+  // oldest event first).
+  describe("payment ids", () => {
+    const V7 =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+    test("are UUIDv7, in the order rows are written", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, { status: "active" });
+      const ids: string[] = [];
+      for (let i = 0; i < 20; i++) {
+        ids.push(
+          await makePendingPayment({
+            userId,
+            subscriptionId: subId,
+            attemptKey: `subscription:${subId}:order:${i}`,
+            orderId: `ordered-${i}`,
+            amount: 1000,
+          }),
+        );
+      }
+
+      expect(subId).toMatch(V7);
+      for (const id of ids) expect(id).toMatch(V7);
+      expect([...ids].sort()).toEqual(ids);
+    });
+
+    test("events written in one transaction keep their order", async () => {
+      await db.transaction().execute(async (trx) => {
+        for (let i = 0; i < 10; i++) {
+          await trx
+            .insertInto("payment_events")
+            .values({ kind: "charge_failed", summary: `event-${i}` })
+            .execute();
+        }
+      });
+      const rows = await db
+        .selectFrom("payment_events")
+        .select("summary")
+        .orderBy("id")
+        .execute();
+      expect(rows.map((row) => row.summary)).toEqual(
+        Array.from({ length: 10 }, (_, i) => `event-${i}`),
+      );
     });
   });
 });

@@ -38,7 +38,7 @@ type Run = { id: number; label: string; at: string; result: LabResult };
 export type LabAccount = {
   userId: number;
   loginName: string;
-  subscriptionId: number | null;
+  subscriptionId: string | null;
   subscriptionStatus: string | null;
 };
 
@@ -295,7 +295,7 @@ export function BillingLab({
   }
 
   const subscriptionId =
-    typeof snapshot?.subscription?.id === "number"
+    typeof snapshot?.subscription?.id === "string"
       ? snapshot.subscription.id
       : null;
   const codeLabel = testCodes.find((code) => code.code === testCode)?.label;
@@ -453,7 +453,7 @@ export function BillingLab({
                   size="sm"
                   disabled={pending}
                   onClick={() =>
-                    run(withCode(`결제 ${payment.id} 대사`), {
+                    run(withCode(`결제 ${payment.order_id} 대사`), {
                       action: "reconcile",
                       paymentId: payment.id,
                       testCode,
@@ -467,7 +467,7 @@ export function BillingLab({
                   size="sm"
                   disabled={pending}
                   onClick={() =>
-                    run(`결제 ${payment.id} 웹훅`, {
+                    run(`결제 ${payment.order_id} 웹훅`, {
                       action: "payment-webhook",
                       paymentId: payment.id,
                     })
@@ -481,7 +481,7 @@ export function BillingLab({
                     size="sm"
                     disabled={pending}
                     onClick={() =>
-                      run(withCode(`결제 ${payment.id} 환불`), {
+                      run(withCode(`결제 ${payment.order_id} 환불`), {
                         action: "refund",
                         paymentId: payment.id,
                         testCode,

@@ -365,3 +365,26 @@ describe("order ids", () => {
     expect(ids.size).toBe(1000);
   });
 });
+
+describe("record ids from requests", () => {
+  const { parseUuid } =
+    jest.requireActual<typeof import("@/lib/uuid")>("@/lib/uuid");
+
+  test("accepts a UUID, lower-cased", () => {
+    expect(parseUuid("019C175B-89E8-7000-85FF-5F03F7B0ABD4")).toBe(
+      "019c175b-89e8-7000-85ff-5f03f7b0abd4",
+    );
+  });
+
+  test.each([
+    undefined,
+    null,
+    42,
+    "42",
+    "",
+    "not-a-uuid",
+    "019c175b89e8700085ff5f03f7b0abd4",
+  ])("refuses %p", (value) => {
+    expect(parseUuid(value)).toBeNull();
+  });
+});

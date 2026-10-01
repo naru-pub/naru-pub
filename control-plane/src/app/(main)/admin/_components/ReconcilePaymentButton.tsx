@@ -6,7 +6,7 @@ import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
-export function ReconcilePaymentButton({ paymentId }: { paymentId: number }) {
+export function ReconcilePaymentButton({ paymentId }: { paymentId: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
 

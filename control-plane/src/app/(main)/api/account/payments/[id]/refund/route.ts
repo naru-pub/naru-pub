@@ -5,6 +5,7 @@ import { refundPayment, RefundError } from "@/lib/refunds";
 import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
 import { TossApiError } from "@/lib/toss";
 import { assertJsonContentType } from "@/lib/utils";
+import { parseUuid } from "@/lib/uuid";
 
 // 환불은 결제 내역에서 직접 신청합니다. 유료 이용자는 판매 정책의 조건(7일 이내,
 // 유료 기능 미사용)을 만족할 때 스스로 환불할 수 있고, 결제 운영자는
@@ -33,8 +34,8 @@ export async function POST(
     }
 
     const { id } = await context.params;
-    const paymentId = Number(id);
-    if (!Number.isSafeInteger(paymentId) || paymentId <= 0) {
+    const paymentId = parseUuid(id);
+    if (!paymentId) {
       return NextResponse.json(
         { success: false, message: "잘못된 결제 번호입니다." },
         { status: 400 },

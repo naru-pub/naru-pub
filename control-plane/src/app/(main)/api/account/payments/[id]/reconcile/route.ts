@@ -3,6 +3,7 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { assertJsonContentType } from "@/lib/utils";
+import { parseUuid } from "@/lib/uuid";
 import { PAYMENT_OPERATOR_USERS } from "@/lib/support";
 
 export async function POST(
@@ -20,8 +21,8 @@ export async function POST(
     }
 
     const { id } = await context.params;
-    const paymentId = Number(id);
-    if (!Number.isSafeInteger(paymentId) || paymentId <= 0) {
+    const paymentId = parseUuid(id);
+    if (!paymentId) {
       return NextResponse.json(
         { success: false, message: "잘못된 결제 번호입니다." },
         { status: 400 },

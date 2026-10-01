@@ -127,7 +127,7 @@ async function stopRecurringBilling(userId: number): Promise<boolean> {
 }
 
 export type RefundOutcome = {
-  paymentId: number;
+  paymentId: string;
   amount: number;
   subscriptionCanceled: boolean;
 };
@@ -137,7 +137,7 @@ export type RefundOutcome = {
 // reconciliation path that every other refund (webhook, daily sync) goes
 // through.
 export async function refundPayment(opts: {
-  paymentId: number;
+  paymentId: string;
   /** Operators may refund outside the policy window; owners may not. */
   overridePolicy: boolean;
   reason: string;

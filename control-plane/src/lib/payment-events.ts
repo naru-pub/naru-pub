@@ -44,8 +44,8 @@ export async function recordPaymentEvent(
     kind: PaymentEventKind;
     summary: string;
     userId?: number | null;
-    paymentId?: number | null;
-    subscriptionId?: number | null;
+    paymentId?: string | null;
+    subscriptionId?: string | null;
   },
 ): Promise<void> {
   await executor
@@ -150,8 +150,7 @@ export async function sendPaymentEventDigest(
     const events = pending.map((event) => ({
       createdAt: new Date(event.created_at),
       loginName: event.user_id ? (loginNames.get(event.user_id) ?? null) : null,
-      kind:
-        PAYMENT_EVENT_LABELS[event.kind as PaymentEventKind] ?? event.kind,
+      kind: PAYMENT_EVENT_LABELS[event.kind as PaymentEventKind] ?? event.kind,
       rawKind: event.kind,
       summary: event.summary,
     }));

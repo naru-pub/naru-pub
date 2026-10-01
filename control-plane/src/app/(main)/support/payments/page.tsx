@@ -64,7 +64,7 @@ function statusVariant(status: string) {
 }
 
 function paymentKind(row: {
-  subscription_id: number | null;
+  subscription_id: string | null;
   attempt_key: string | null;
 }) {
   if (row.attempt_key?.startsWith("one_time:")) return "한 번만 결제";

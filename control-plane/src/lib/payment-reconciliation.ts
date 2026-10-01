@@ -98,7 +98,7 @@ export type ReconciliationResult =
   | { state: "expired" };
 
 async function reconcilePaymentCore(
-  paymentId: number,
+  paymentId: string,
 ): Promise<ReconciliationResult> {
   const payment = await db
     .selectFrom("payments")
@@ -353,7 +353,7 @@ async function reconcilePaymentCore(
 }
 
 export async function reconcilePayment(
-  paymentId: number,
+  paymentId: string,
 ): Promise<ReconciliationResult> {
   try {
     const result = await reconcilePaymentCore(paymentId);

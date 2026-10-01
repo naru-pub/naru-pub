@@ -37,16 +37,16 @@ export const LAB_TEST_CODES = [
 
 export type LabAction =
   | { action: "inspect"; userId: number }
-  | { action: "charge"; subscriptionId: number; testCode?: string }
+  | { action: "charge"; subscriptionId: string; testCode?: string }
   | {
       action: "advance";
-      subscriptionId: number;
+      subscriptionId: string;
       to: "period_end" | "past_grace";
     }
-  | { action: "reconcile"; paymentId: number; testCode?: string }
-  | { action: "refund"; paymentId: number; testCode?: string }
-  | { action: "payment-webhook"; paymentId: number }
-  | { action: "billing-deleted"; subscriptionId: number }
+  | { action: "reconcile"; paymentId: string; testCode?: string }
+  | { action: "refund"; paymentId: string; testCode?: string }
+  | { action: "payment-webhook"; paymentId: string }
+  | { action: "billing-deleted"; subscriptionId: string }
   | { action: "process-key-queue"; userId?: number };
 
 type Row = Record<string, string | number | boolean | null>;
@@ -168,7 +168,7 @@ export async function labSnapshot(userId: number): Promise<LabSnapshot> {
   };
 }
 
-async function subscriptionOwner(subscriptionId: number) {
+async function subscriptionOwner(subscriptionId: string) {
   const row = await db
     .selectFrom("subscriptions")
     .select(["user_id", "status", "toss_billing_key", "current_period_end"])
@@ -178,7 +178,7 @@ async function subscriptionOwner(subscriptionId: number) {
   return row;
 }
 
-async function paymentOwner(paymentId: number) {
+async function paymentOwner(paymentId: string) {
   const row = await db
     .selectFrom("payments")
     .select(["user_id", "order_id"])

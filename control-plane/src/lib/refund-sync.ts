@@ -52,7 +52,7 @@ function dueCondition(now: Date) {
   return sql<boolean>`(${sql.join(tiers, sql` OR `)})`;
 }
 
-type Cursor = { lastChecked: Date; id: number };
+type Cursor = { lastChecked: Date; id: string };
 
 const lastChecked = sql<Date>`coalesce(last_reconciled_at, 'epoch'::timestamptz)`;
 
@@ -63,7 +63,7 @@ const lastChecked = sql<Date>`coalesce(last_reconciled_at, 'epoch'::timestamptz)
 async function duePage(
   now: Date,
   after: Cursor | null,
-): Promise<Array<{ id: number; lastChecked: Date }>> {
+): Promise<Array<{ id: string; lastChecked: Date }>> {
   const rows = await db
     .selectFrom("payments")
     .select(["id", lastChecked.as("last_checked")])
@@ -71,7 +71,7 @@ async function duePage(
     .where(dueCondition(now))
     .$if(after !== null, (qb) =>
       qb.where(
-        sql<boolean>`(${lastChecked}, id) > (${after!.lastChecked}::timestamptz, ${after!.id})`,
+        sql<boolean>`(${lastChecked}, id) > (${after!.lastChecked}::timestamptz, ${after!.id}::uuid)`,
       ),
     )
     .orderBy(lastChecked, "asc")

@@ -14,7 +14,7 @@ export function RefundPaymentButton({
   confirmMessage,
   label = "환불",
 }: {
-  paymentId: number;
+  paymentId: string;
   confirmMessage: string;
   label?: string;
 }) {

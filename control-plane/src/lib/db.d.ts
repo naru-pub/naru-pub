@@ -161,7 +161,7 @@ export interface Users {
 }
 
 export interface Subscriptions {
-  id: Generated<number>;
+  id: Generated<string>;
   user_id: number;
   plan: Generated<string>;
   billing_interval: string;
@@ -182,18 +182,18 @@ export interface Subscriptions {
 }
 
 export interface PaymentEvents {
-  id: Generated<number>;
+  id: Generated<string>;
   created_at: Generated<Timestamp>;
   kind: string;
   user_id: number | null;
-  payment_id: number | null;
-  subscription_id: number | null;
+  payment_id: string | null;
+  subscription_id: string | null;
   summary: string;
   emailed_at: Timestamp | null;
 }
 
 export interface TossWebhookDeliveries {
-  id: Generated<number>;
+  id: Generated<string>;
   received_at: Generated<Timestamp>;
   event_type: string;
   transmission_id: string | null;
@@ -207,7 +207,7 @@ export interface TossWebhookDeliveries {
 }
 
 export interface RetiredBillingKeys {
-  id: Generated<number>;
+  id: Generated<string>;
   billing_key: string;
   retired_at: Generated<Timestamp>;
   attempts: Generated<number>;
@@ -216,10 +216,10 @@ export interface RetiredBillingKeys {
 }
 
 export interface Payments {
-  id: Generated<number>;
+  id: Generated<string>;
   attempt_key: string | null;
   user_id: number;
-  subscription_id: number | null;
+  subscription_id: string | null;
   toss_payment_key: string | null;
   toss_flow: string | null;
   toss_mid: string | null;
