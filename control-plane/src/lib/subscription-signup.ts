@@ -785,7 +785,10 @@ async function confirmCardChange(opts: {
     .executeTakeFirst();
   if (due) {
     try {
-      await chargeDueSubscriptions(new Date(), { subscriptionIds: [sub.id] });
+      await chargeDueSubscriptions(new Date(), {
+        subscriptionIds: [sub.id],
+        newCard: true,
+      });
     } catch (error) {
       // The daily run retries it; the card itself is already changed.
       console.error(

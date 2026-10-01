@@ -27,6 +27,8 @@ async function main() {
     .where("subscriptions.next_billing_at", "<=", noticeUntil)
     .where("users.email", "is not", null)
     .where("users.email_verified_at", "is not", null)
+    // A lifetime comp is not charged, so there is nothing to announce.
+    .where("users.supporter_comp", "=", false)
     .execute();
 
   const candidates = dueSoon.filter((sub) => {

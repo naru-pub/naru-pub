@@ -265,6 +265,10 @@ export async function applySuccessfulCharge(opts: {
   from: Date; // base for the new period (now for first charge, current_period_end for renewals)
   payment: TossPaymentResult;
   paymentId?: string;
+  // The charge lease the caller holds, released with the grant. A grant made
+  // by someone not holding it — the reconciler, or a card change settling a
+  // renewal — leaves the lease to its holder, whose own checks read it.
+  leaseHeldAt?: Date;
 }): Promise<{ periodStart: Date; periodEnd: Date; granted: boolean }> {
   const now = new Date();
   const paidAt = approvedAt(opts.payment, now);
@@ -367,13 +371,20 @@ export async function applySuccessfulCharge(opts: {
           current_period_end: periodEnd,
           next_billing_at: renewable ? periodEnd : null,
           failed_charge_count: 0,
-          charging_started_at: null,
           renewal_notice_sent_at: null,
           payment_grace_notice_sent_at: null,
           updated_at: now,
         })
         .where("id", "=", opts.subscriptionId)
         .execute();
+      if (opts.leaseHeldAt) {
+        await trx
+          .updateTable("subscriptions")
+          .set({ charging_started_at: null })
+          .where("id", "=", opts.subscriptionId)
+          .where("charging_started_at", "=", opts.leaseHeldAt)
+          .execute();
+      }
 
       await trx
         .updateTable("users")

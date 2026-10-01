@@ -100,6 +100,11 @@ async function claimDueSubscriptions(
       WHERE status IN ('active', 'scheduled')
         AND toss_billing_key IS NOT NULL
         AND next_billing_at <= ${now}
+        -- A lifetime comp is never charged, whatever plan it still has.
+        AND NOT EXISTS (
+          SELECT 1 FROM users
+          WHERE users.id = subscriptions.user_id AND users.supporter_comp
+        )
         AND (
           charging_started_at IS NULL
           OR charging_started_at < ${staleLeaseBefore}
@@ -139,8 +144,13 @@ const LIVE_ATTEMPT_STATUSES = new Set(["pending", "done"]);
 // order and key rather than replaying the same failure until the key expires.
 // An order Toss reports as ABORTED was declined; that is counted as a failed
 // try instead of being charged again.
+//
+// After a card change (newCard), an order the old card declined is not
+// counted again: it is replaced by a new order on the new card, as an order
+// Toss never saw would be.
 async function getOrCreatePaymentAttempt(
   sub: DueSubscription,
+  newCard = false,
 ): Promise<{ attempt: PaymentAttempt; declined: boolean }> {
   const baseKey = renewalAttemptKey(sub);
   const attemptsForTry = () =>
@@ -161,7 +171,7 @@ async function getOrCreatePaymentAttempt(
     LIVE_ATTEMPT_STATUSES.has(attempt.status),
   );
   if (live) return { attempt: live, declined: false };
-  if (attempts[0]?.status === "aborted") {
+  if (attempts[0]?.status === "aborted" && !newCard) {
     return { attempt: attempts[0], declined: true };
   }
 
@@ -356,6 +366,7 @@ async function sendGraceNoticeIfNeeded(sub: DueSubscription, now: Date) {
 async function sendPastDueNotice(
   sub: DueSubscription,
   reason: SubscriptionPastDueReason,
+  declinedAttempts?: number,
 ) {
   try {
     const user = await db
@@ -373,6 +384,7 @@ async function sendPastDueNotice(
       loginName: user.login_name,
       amount: sub.amount,
       reason,
+      declinedAttempts,
       accessEndsAt: entitlement.comp
         ? undefined
         : entitlement.isSupporter
@@ -420,10 +432,11 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
 }
 
 // `subscriptionIds` limits the run to those subscriptions (the billing lab
-// charges one at a time); the cron charges everything due.
+// charges one at a time); the cron charges everything due. `newCard` is set
+// by a card change charging right after the swap.
 export async function chargeDueSubscriptions(
   now = new Date(),
-  opts: { subscriptionIds?: string[] } = {},
+  opts: { subscriptionIds?: string[]; newCard?: boolean } = {},
 ) {
   const seen: string[] = [];
   for (;;) {
@@ -434,7 +447,7 @@ export async function chargeDueSubscriptions(
     );
     if (due.length === 0) break;
     seen.push(...due.map((sub) => sub.id));
-    await chargeClaimedSubscriptions(due, now);
+    await chargeClaimedSubscriptions(due, now, opts.newCard ?? false);
   }
   console.log(`[charge-subscriptions] ${seen.length} subscription(s) due`);
 }
@@ -550,10 +563,14 @@ async function leaveUnresolved(
 // One subscription's failure — a database error, a bug — is logged and its
 // lease released, and the rest of the run goes on: due renewals behind it
 // must not wait for the next day's run.
-async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
+async function chargeClaimedSubscriptions(
+  due: DueSubscription[],
+  now: Date,
+  newCard: boolean,
+) {
   for (const sub of due) {
     try {
-      await chargeClaimedSubscription(sub, now);
+      await chargeClaimedSubscription(sub, now, newCard);
     } catch (error) {
       console.error(
         `[charge-subscriptions] user ${sub.user_id}: renewal failed with an error; lease released`,
@@ -564,7 +581,11 @@ async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
   }
 }
 
-async function chargeClaimedSubscription(sub: DueSubscription, now: Date) {
+async function chargeClaimedSubscription(
+  sub: DueSubscription,
+  now: Date,
+  newCard: boolean,
+) {
   if (!(await renewLease(sub))) {
     console.log(
       `[charge-subscriptions] user ${sub.user_id}: lease lost before charging; skipped`,
@@ -572,7 +593,7 @@ async function chargeClaimedSubscription(sub: DueSubscription, now: Date) {
     return;
   }
   const interval = sub.billing_interval as BillingInterval;
-  const { attempt, declined } = await getOrCreatePaymentAttempt(sub);
+  const { attempt, declined } = await getOrCreatePaymentAttempt(sub, newCard);
 
   if (attempt.status === "done") {
     await releaseLease(sub);
@@ -607,6 +628,7 @@ async function chargeClaimedSubscription(sub: DueSubscription, now: Date) {
         from: base,
         payment: outcome.payment,
         paymentId: attempt.id,
+        leaseHeldAt: sub.charging_started_at,
       });
       if (granted) await sendChargeReceipt(attempt.id);
     } catch (error) {
@@ -641,7 +663,7 @@ async function chargeClaimedSubscription(sub: DueSubscription, now: Date) {
     keepAttemptStatus: outcome.keepAttemptStatus,
   });
   await sendGraceNoticeIfNeeded(sub, now);
-  if (wentPastDue) await sendPastDueNotice(sub, "declined");
+  if (wentPastDue) await sendPastDueNotice(sub, "declined", failures);
   console.error(
     `[charge-subscriptions] user ${sub.user_id}: charge failed (${failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}) -> ${nextStatus}: ${describeTossError(outcome.error)}`,
   );

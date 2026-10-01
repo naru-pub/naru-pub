@@ -73,6 +73,9 @@ export default function SupportCard({
     : null;
   const isActive = subscription?.status === "active";
   const isScheduled = subscription?.status === "scheduled";
+  const isPastDue = subscription?.status === "past_due";
+  // A plan that still holds a card and could charge (or be revived to).
+  const planCanCharge = isActive || isScheduled || isPastDue;
   const showRecurringOptions = !isActive && !isScheduled;
   const showOneTimeOptions =
     !isScheduled &&
@@ -278,9 +281,24 @@ export default function SupportCard({
         </div>
 
         {comp ? (
-          <div className="bg-green-500/5 border-2 border-green-500 p-3 text-sm text-green-700 dark:text-green-500">
-            평생 이용 권한으로 등록되어 있습니다. 나루를 아껴 주셔서 감사합니다.
-            🙏
+          <div className="space-y-3">
+            <div className="bg-green-500/5 border-2 border-green-500 p-3 text-sm text-green-700 dark:text-green-500">
+              평생 이용 권한으로 등록되어 있습니다. 나루를 아껴 주셔서
+              감사합니다. 🙏
+            </div>
+            {/* A plan from before the comp is no longer charged, but its card
+                is still registered: let the supporter remove it. */}
+            {planCanCharge && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <p className="text-sm text-muted-foreground">
+                  평생 이용 중에는 정기 결제가 청구되지 않습니다. 등록된 카드를
+                  지우려면 정기 결제를 해지하세요.
+                </p>
+                <Button variant="outline" onClick={cancel} disabled={pending}>
+                  정기 결제 해지
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
@@ -330,6 +348,28 @@ export default function SupportCard({
                   </Button>
                   <Button variant="outline" onClick={cancel} disabled={pending}>
                     정기 결제 예약 취소
+                  </Button>
+                </div>
+              </div>
+            ) : isPastDue ? (
+              // Stopped after its charges failed. The card stays registered
+              // in case a late payment turns up; registering a new card below
+              // restarts it, and cancelling removes the old one.
+              <div className="space-y-3">
+                <div className="bg-muted border border-border p-3 text-sm text-muted-foreground">
+                  {intervalLabel} 정기 결제가 결제 실패로 멈췄습니다. 아래에서
+                  카드를 다시 등록하면 곧바로 결제되어 다시 이어집니다.
+                  {untilLabel && supportActive && (
+                    <>
+                      {" "}
+                      <strong className="text-foreground">{untilLabel}</strong>
+                      까지는 유료 기능을 이용하실 수 있습니다.
+                    </>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button variant="outline" onClick={cancel} disabled={pending}>
+                    정기 결제 해지
                   </Button>
                 </div>
               </div>

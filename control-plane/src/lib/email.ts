@@ -642,6 +642,9 @@ export async function sendSubscriptionPastDueEmail(opts: {
   loginName: string;
   amount: number;
   reason: SubscriptionPastDueReason;
+  // How many tries the card declined. One when the grace period had already
+  // ended at the first decline, so "tried several times" would be untrue.
+  declinedAttempts?: number;
   // When paid features end; null when they already have. Omitted (undefined)
   // when no date applies, as for a comp.
   accessEndsAt: Date | null | undefined;
@@ -650,7 +653,9 @@ export async function sendSubscriptionPastDueEmail(opts: {
   const amountLabel = formatKrw(opts.amount);
   const intro =
     opts.reason === "declined"
-      ? `나루 정기 결제(${amountLabel})를 여러 번 시도했지만 등록된 카드로 결제하지 못해 정기 결제를 멈췄습니다. 더 이상 자동으로 결제를 시도하지 않습니다.`
+      ? (opts.declinedAttempts ?? 2) > 1
+        ? `나루 정기 결제(${amountLabel})를 여러 번 시도했지만 등록된 카드로 결제하지 못해 정기 결제를 멈췄습니다. 더 이상 자동으로 결제를 시도하지 않습니다.`
+        : `나루 정기 결제(${amountLabel})를 등록된 카드로 결제하지 못했고 결제 유예 기간도 이미 끝나 정기 결제를 멈췄습니다. 더 이상 자동으로 결제를 시도하지 않습니다.`
       : `나루 정기 결제(${amountLabel})의 결과를 결제사에서 확인하지 못한 채 유예 기간이 끝나 정기 결제를 멈췄습니다. 결제가 된 것으로 확인되면 자동으로 다시 이어지고 영수증을 보내드립니다.`;
   const accessLine =
     opts.accessEndsAt === undefined

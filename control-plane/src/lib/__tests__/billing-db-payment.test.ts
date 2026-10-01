@@ -154,8 +154,7 @@ async function makeSubscription(
       payment_grace_notice_sent_at: values.graceNoticeSentAt ?? null,
       // A plan running long before anything a test does to it, unless the
       // test says when it began (a refund ends only a plan older than it).
-      plan_started_at:
-        values.planStartedAt ?? new Date(Date.now() - 365 * DAY),
+      plan_started_at: values.planStartedAt ?? new Date(Date.now() - 365 * DAY),
     })
     .returning("id")
     .executeTakeFirstOrThrow();
@@ -2152,6 +2151,86 @@ integration("payments against the database", () => {
       expect((await supporterUntil(userId))! > new Date()).toBe(true);
     });
 
+    test("an order the old card declined is retried on the new card, not counted", async () => {
+      const periodEnd = new Date(Date.now() - DAY);
+      const { subId, confirm } = await running({
+        status: "active",
+        billingKey: "old-key",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+        failedChargeCount: 1,
+      });
+      // The reconciler learned Toss declined this try's order on the old card.
+      const baseKey = `subscription:${subId}:${periodEnd.toISOString()}:2`;
+      const sub0 = await subscription(subId);
+      await db
+        .insertInto("payments")
+        .values({
+          user_id: sub0.user_id,
+          subscription_id: subId,
+          attempt_key: baseKey,
+          order_id: "declined-on-old-card",
+          amount: 1000,
+          status: "aborted",
+        })
+        .execute();
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+
+      expect(await confirm()).toMatchObject({ ok: true, cardChanged: true });
+
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+      expect(toss.chargeBillingKey.mock.calls[0][0]).toMatchObject({
+        billingKey: "new-key",
+      });
+      const retried = await db
+        .selectFrom("payments")
+        .select(["attempt_key", "status"])
+        .where("subscription_id", "=", subId)
+        .where("attempt_key", "=", `${baseKey}:r1`)
+        .executeTakeFirstOrThrow();
+      expect(retried.status).toBe("done");
+      const sub = await subscription(subId);
+      expect(sub.status).toBe("active");
+      expect(sub.failed_charge_count).toBe(0);
+    });
+
+    test("a card change that settles a paid renewal still swaps the card", async () => {
+      const periodEnd = new Date(Date.now() - DAY);
+      const { subId, confirm } = await running({
+        status: "active",
+        billingKey: "old-key",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      // A renewal left unresolved while the supporter was in the card window,
+      // which Toss in fact approved.
+      const sub0 = await subscription(subId);
+      await makePendingPayment({
+        userId: sub0.user_id,
+        subscriptionId: subId,
+        attemptKey: `subscription:${subId}:${periodEnd.toISOString()}:1`,
+        orderId: "paid-meanwhile",
+        amount: 1000,
+      });
+      toss.getPaymentByOrderId.mockImplementation(async (orderId) => {
+        if (orderId === "paid-meanwhile") {
+          return tossPayment("paid-meanwhile", 1000);
+        }
+        throw new toss.TossApiError("not found", 404);
+      });
+
+      expect(await confirm()).toMatchObject({ ok: true, cardChanged: true });
+
+      const sub = await subscription(subId);
+      expect(sub.toss_billing_key).toBe("new-key");
+      expect(sub.charging_started_at).toBeNull();
+      expect(new Date(sub.current_period_end!) > new Date()).toBe(true);
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("old-key");
+      expect(toss.deleteBillingKey).not.toHaveBeenCalledWith("new-key");
+    });
+
     test("a card change waits for a renewal charge in flight", async () => {
       const { subId, confirm } = await running({
         status: "active",
@@ -2406,7 +2485,13 @@ integration("payments against the database", () => {
       await chargeDueSubscriptions();
 
       expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledWith(
-        expect.objectContaining({ reason: "declined", accessEndsAt: null }),
+        // One decline, not "several tries": the grace period had already
+        // ended.
+        expect.objectContaining({
+          reason: "declined",
+          declinedAttempts: 1,
+          accessEndsAt: null,
+        }),
       );
     });
 
@@ -3453,6 +3538,25 @@ integration("payments against the database", () => {
           40,
         );
       });
+    });
+
+    test("a lifetime comp is never charged for a plan it still has", async () => {
+      const periodEnd = new Date(Date.now() - 60_000);
+      const userId = await makeUser(periodEnd);
+      await db
+        .updateTable("users")
+        .set({ supporter_comp: true })
+        .where("id", "=", userId)
+        .execute();
+      await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+
+      await chargeDueSubscriptions();
+
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
     });
 
     test("one subscription's error does not stop the renewal run", async () => {
