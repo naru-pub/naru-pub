@@ -17,14 +17,15 @@ import {
 import { canStartOneTimePurchase } from "@/lib/payments/support-purchases";
 import { ONE_TIME_BLOCKING_STATUSES } from "@/lib/payments/payment-states";
 import {
+  openOneTimeOrders,
   settleOneTimeOrders,
+  settlePendingCharges,
   UNCONFIRMED_EXPIRY_MS,
 } from "@/lib/payments/payment-reconciliation";
 import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 
 // Unconfirmed one-time orders an account may have open at once.
 const MAX_PENDING_ONE_TIME_ORDERS = 10;
-import { settlePendingCharges } from "@/lib/payments/subscription-signup";
 
 // One-time donation step 1: returns a server-generated orderId + the
 // authoritative amount for requestPayment.
@@ -74,12 +75,8 @@ export async function POST(request: NextRequest) {
     // bury the operators in expired-order events. A person retrying after
     // closing the payment window stays far below this; an order Toss never
     // saw expires 45 minutes after it was made.
-    const recentOrders = await db
-      .selectFrom("payments")
+    const recentOrders = await openOneTimeOrders(db, user.id)
       .select(({ fn }) => fn.countAll().as("count"))
-      .where("user_id", "=", user.id)
-      .where("attempt_key", "like", "one_time:%")
-      .where("status", "=", "pending")
       .where("created_at", ">", new Date(Date.now() - UNCONFIRMED_EXPIRY_MS))
       .executeTakeFirst();
     if (Number(recentOrders?.count ?? 0) >= MAX_PENDING_ONE_TIME_ORDERS) {

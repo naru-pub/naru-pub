@@ -1,6 +1,10 @@
 import { db } from "@/lib/database";
 import { addPaymentGrace } from "@/lib/payments/subscriptions";
 import {
+  mailRecipient,
+  type MailRecipient,
+} from "@/lib/payments/payment-mails";
+import {
   sendPaymentCanceledEmail,
   sendSubscriptionCanceledEmail,
   type SubscriptionCancelReason,
@@ -15,12 +19,9 @@ import {
 // already have (or a comp, whose access no date describes): the paid time
 // left, and past it the payment grace window entitlements grant, which a
 // refund does not take away.
-function remainingAccess(user: {
-  supporter_until: Date | string | null;
-  supporter_comp: boolean;
-}): Date | null {
-  if (user.supporter_comp || !user.supporter_until) return null;
-  const until = new Date(user.supporter_until);
+function remainingAccess(user: MailRecipient): Date | null {
+  if (user.supporterComp || !user.supporterUntil) return null;
+  const until = user.supporterUntil;
   if (until.getTime() > Date.now()) return until;
   const graceEndsAt = addPaymentGrace(until);
   return graceEndsAt.getTime() > Date.now() ? graceEndsAt : null;
@@ -35,32 +36,27 @@ export async function sendPaymentCanceledNotice(
   {
     const row = await db
       .selectFrom("payments")
-      .innerJoin("users", "users.id", "payments.user_id")
       .select([
-        "payments.user_id",
-        "payments.amount",
-        "payments.refunded_amount",
-        "payments.refunded_at",
-        "payments.order_id",
-        "users.email",
-        "users.email_verified_at",
-        "users.login_name",
-        "users.supporter_until",
-        "users.supporter_comp",
+        "user_id",
+        "amount",
+        "refunded_amount",
+        "refunded_at",
+        "order_id",
       ])
-      .where("payments.id", "=", paymentId)
+      .where("id", "=", paymentId)
       .executeTakeFirst();
-    if (!row || !row.email || !row.email_verified_at) return;
-    if (row.refunded_amount <= 0) return;
+    if (!row || row.refunded_amount <= 0) return;
+    const to = await mailRecipient(row.user_id);
+    if (!to) return;
 
     await sendPaymentCanceledEmail({
-      email: row.email,
-      loginName: row.login_name,
+      email: to.email,
+      loginName: to.loginName,
       amount: row.amount,
       refundedAmount: row.refunded_amount,
       orderId: row.order_id,
       refundedAt: row.refunded_at ? new Date(row.refunded_at) : new Date(),
-      supporterUntil: remainingAccess(row),
+      supporterUntil: remainingAccess(to),
       subscriptionCanceled: opts.subscriptionCanceled,
       ref: { userId: row.user_id, paymentId },
     });
@@ -76,26 +72,19 @@ export async function sendSubscriptionCanceledNotice(
   {
     const row = await db
       .selectFrom("subscriptions")
-      .innerJoin("users", "users.id", "subscriptions.user_id")
-      .select([
-        "subscriptions.user_id",
-        "subscriptions.canceled_at",
-        "users.email",
-        "users.email_verified_at",
-        "users.login_name",
-        "users.supporter_until",
-        "users.supporter_comp",
-      ])
-      .where("subscriptions.id", "=", subscriptionId)
+      .select(["user_id", "canceled_at"])
+      .where("id", "=", subscriptionId)
       .executeTakeFirst();
-    if (!row || !row.email || !row.email_verified_at) return;
+    if (!row) return;
+    const to = await mailRecipient(row.user_id);
+    if (!to) return;
 
     await sendSubscriptionCanceledEmail({
-      email: row.email,
-      loginName: row.login_name,
+      email: to.email,
+      loginName: to.loginName,
       reason,
       canceledAt: row.canceled_at ? new Date(row.canceled_at) : new Date(),
-      supporterUntil: remainingAccess(row),
+      supporterUntil: remainingAccess(to),
       ref: { userId: row.user_id, subscriptionId },
     });
   }

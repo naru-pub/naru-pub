@@ -16,8 +16,8 @@ import {
   type StoredKey,
 } from "@/lib/payments/billing-keys";
 import {
-  reconcilePayment,
   settleOneTimeOrders,
+  settlePendingCharges,
 } from "@/lib/payments/payment-reconciliation";
 import { chargeDueSubscriptions } from "@/lib/payments/subscription-renewals";
 import {
@@ -109,32 +109,6 @@ const SIGNUP_CHANGED_MESSAGE =
   "결제 준비 정보가 바뀌었습니다. 결제를 처음부터 다시 시작해 주세요.";
 const STALE_REGISTRATION_MESSAGE =
   "더 이상 유효하지 않은 카드 등록입니다. 처음부터 다시 시작해 주세요.";
-
-// Settles the account's recurring orders whose outcome is still unknown. A
-// new card must not start while one of them might yet turn out charged: the
-// pending order's id and idempotency key belong to the old card and amount,
-// and a late success has to land on its plan first. Callers hold the account
-// lock, which reconciliation takes too.
-export async function settlePendingCharges(userId: string): Promise<boolean> {
-  const pendingCharges = () =>
-    db
-      .selectFrom("payments")
-      .select("id")
-      .where("user_id", "=", userId)
-      .where("subscription_id", "is not", null)
-      .where("status", "=", "pending");
-  for (const payment of await pendingCharges().execute()) {
-    try {
-      await reconcilePayment(payment.id);
-    } catch (error) {
-      console.error(
-        `Subscription prepare: reconciling payment ${payment.id} failed`,
-        error,
-      );
-    }
-  }
-  return (await pendingCharges().executeTakeFirst()) == null;
-}
 
 // A stable per-user customerKey. Toss asks for one nobody can guess; a UUID
 // also meets its character rules.

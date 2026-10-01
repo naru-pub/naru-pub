@@ -16,7 +16,7 @@ import {
 import type { Executor } from "@/lib/entitlements";
 import { notePaymentEvent } from "@/lib/payments/payment-events";
 // Keeps each mail sent from here in payment_mails.
-import "@/lib/payments/payment-mails";
+import { mailRecipient } from "@/lib/payments/payment-mails";
 
 // Work the payment code owes after a change, kept in payment_jobs (see the
 // migration that adds it): the mail a supporter is owed, a webhook's
@@ -245,23 +245,16 @@ async function handle(job: PaymentJob): Promise<void> {
 async function sendThankYou(paymentId: string): Promise<void> {
   const row = await db
     .selectFrom("payments")
-    .innerJoin("users", "users.id", "payments.user_id")
-    .select([
-      "payments.user_id",
-      "payments.amount",
-      "payments.attempt_key",
-      "payments.period_end",
-      "users.email",
-      "users.email_verified_at",
-      "users.login_name",
-    ])
-    .where("payments.id", "=", paymentId)
-    .where("payments.status", "=", "done")
+    .select(["user_id", "amount", "attempt_key", "period_end"])
+    .where("id", "=", paymentId)
+    .where("status", "=", "done")
     .executeTakeFirst();
-  if (!row || !row.email || !row.email_verified_at || !row.period_end) return;
+  if (!row || !row.period_end) return;
+  const to = await mailRecipient(row.user_id);
+  if (!to) return;
   await sendSupportThankYouEmail({
-    email: row.email,
-    loginName: row.login_name,
+    email: to.email,
+    loginName: to.loginName,
     kind: row.attempt_key?.startsWith("one_time:") ? "one_time" : "recurring",
     amount: row.amount,
     supporterUntil: new Date(row.period_end),
@@ -275,18 +268,14 @@ async function sendGraceNotice(subscriptionId: string): Promise<void> {
   const { addPaymentGrace } = await import("@/lib/payments/subscriptions");
   const row = await db
     .selectFrom("subscriptions")
-    .innerJoin("users", "users.id", "subscriptions.user_id")
     .select([
-      "subscriptions.user_id",
-      "subscriptions.amount",
-      "subscriptions.status",
-      "subscriptions.current_period_end",
-      "subscriptions.payment_grace_notice_sent_at",
-      "users.email",
-      "users.email_verified_at",
-      "users.login_name",
+      "user_id",
+      "amount",
+      "status",
+      "current_period_end",
+      "payment_grace_notice_sent_at",
     ])
-    .where("subscriptions.id", "=", subscriptionId)
+    .where("id", "=", subscriptionId)
     .executeTakeFirst();
   if (!row || !row.current_period_end || row.payment_grace_notice_sent_at) {
     return;
@@ -297,10 +286,11 @@ async function sendGraceNotice(subscriptionId: string): Promise<void> {
   // A grace notice whose grace period has already ended would tell the user
   // they still have time they do not have.
   if (graceEndsAt <= new Date()) return;
-  if (!row.email || !row.email_verified_at) return;
+  const to = await mailRecipient(row.user_id);
+  if (!to) return;
   await sendSubscriptionPaymentGraceEmail({
-    email: row.email,
-    loginName: row.login_name,
+    email: to.email,
+    loginName: to.loginName,
     amount: row.amount,
     graceEndsAt,
     ref: { userId: row.user_id, subscriptionId },
@@ -318,23 +308,18 @@ async function sendPastDueNotice(
   const { getUserEntitlement } = await import("@/lib/entitlements");
   const row = await db
     .selectFrom("subscriptions")
-    .innerJoin("users", "users.id", "subscriptions.user_id")
-    .select([
-      "subscriptions.amount",
-      "subscriptions.user_id",
-      "users.email",
-      "users.email_verified_at",
-      "users.login_name",
-    ])
-    .where("subscriptions.id", "=", job.subscriptionId)
+    .select(["amount", "user_id"])
+    .where("id", "=", job.subscriptionId)
     .executeTakeFirst();
-  if (!row || !row.email || !row.email_verified_at) return;
+  if (!row) return;
+  const to = await mailRecipient(row.user_id);
+  if (!to) return;
   // Paid features follow supporter_until and its grace window, which may
   // still be running when the retries are spent.
   const entitlement = await getUserEntitlement(row.user_id);
   await sendSubscriptionPastDueEmail({
-    email: row.email,
-    loginName: row.login_name,
+    email: to.email,
+    loginName: to.loginName,
     amount: row.amount,
     reason: job.reason,
     declinedAttempts: job.declinedAttempts,

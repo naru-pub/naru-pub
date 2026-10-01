@@ -1,5 +1,6 @@
 import { db } from "@/lib/database";
 import { sendRecurringChargeReceiptEmail } from "@/lib/email";
+import { mailRecipient } from "@/lib/payments/payment-mails";
 
 // Mails the supporter a receipt for a recurring charge that just landed: a
 // renewal, a scheduled first charge, or either one settled late by the
@@ -11,7 +12,6 @@ export async function sendChargeReceipt(paymentId: string): Promise<void> {
   {
     const row = await db
       .selectFrom("payments")
-      .innerJoin("users", "users.id", "payments.user_id")
       .leftJoin("subscriptions", "subscriptions.id", "payments.subscription_id")
       .select([
         "payments.user_id",
@@ -22,21 +22,19 @@ export async function sendChargeReceipt(paymentId: string): Promise<void> {
         "payments.period_start",
         "payments.period_end",
         "payments.toss_receipt_url",
-        "users.email",
-        "users.email_verified_at",
-        "users.login_name",
         "subscriptions.status as subscription_status",
         "subscriptions.next_billing_at",
       ])
       .where("payments.id", "=", paymentId)
       .where("payments.status", "=", "done")
       .executeTakeFirst();
-    if (!row || !row.email || !row.email_verified_at) return;
-    if (!row.paid_at || !row.period_start || !row.period_end) return;
+    if (!row || !row.paid_at || !row.period_start || !row.period_end) return;
+    const to = await mailRecipient(row.user_id);
+    if (!to) return;
 
     await sendRecurringChargeReceiptEmail({
-      email: row.email,
-      loginName: row.login_name,
+      email: to.email,
+      loginName: to.loginName,
       amount: row.amount,
       orderId: row.order_id,
       paidAt: new Date(row.paid_at),

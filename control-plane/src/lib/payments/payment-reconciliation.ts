@@ -6,6 +6,7 @@ import {
   type PaymentStatus,
 } from "@/lib/payments/payment-states";
 import { db } from "@/lib/database";
+import type { Executor } from "@/lib/entitlements";
 import {
   BillingInterval,
   describeTossError,
@@ -457,6 +458,41 @@ function storedTossStatus(raw: unknown): unknown {
     : null;
 }
 
+// The account's orders whose outcome is still unknown (pending): its plans'
+// charges, and its one-time orders. What "open" means is decided here once;
+// every check that waits for open orders goes through these.
+export function openRecurringOrders(executor: Executor, userId: string) {
+  return executor
+    .selectFrom("payments")
+    .where("user_id", "=", userId)
+    .where("subscription_id", "is not", null)
+    .where("status", "=", "pending");
+}
+
+export function openOneTimeOrders(executor: Executor, userId: string) {
+  return executor
+    .selectFrom("payments")
+    .where("user_id", "=", userId)
+    .where("attempt_key", "like", "one_time:%")
+    .where("status", "=", "pending");
+}
+
+// Settles the account's recurring orders whose outcome is still unknown.
+// False while one remains: a new card, a one-time purchase or an account
+// deletion must not go ahead while one of them might yet turn out charged —
+// the pending order's id and idempotency key belong to the old card and
+// amount, and a late success has to land on its plan first. Callers hold the
+// account lock, which reconciliation takes too.
+export async function settlePendingCharges(userId: string): Promise<boolean> {
+  const open = () => openRecurringOrders(db, userId).select("id");
+  for (const payment of await open().execute()) {
+    await reconcilePayment(payment.id).catch((error) =>
+      console.error(`Settling recurring order ${payment.id} failed`, error),
+    );
+  }
+  return (await open().executeTakeFirst()) == null;
+}
+
 // Settles the account's pending one-time orders before a new purchase is
 // decided: one the buyer authenticated is confirmed (or not, if superseded),
 // one Toss approved is granted. False when one may still be approved — its
@@ -466,12 +502,8 @@ function storedTossStatus(raw: unknown): unknown {
 // window in which Toss could still approve it. Callers hold the account lock.
 export async function settleOneTimeOrders(userId: string): Promise<boolean> {
   const pending = () =>
-    db
-      .selectFrom("payments")
+    openOneTimeOrders(db, userId)
       .select(["id", "user_id", "created_at", "charge_attempted_at", "raw"])
-      .where("user_id", "=", userId)
-      .where("attempt_key", "like", "one_time:%")
-      .where("status", "=", "pending")
       .execute();
   for (const payment of await pending()) {
     await reconcilePayment(payment.id).catch((error) =>

@@ -7,8 +7,8 @@ import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import { endPlan, plansOf } from "@/lib/payments/subscriptions";
 import {
-  reconcilePayment,
   settleOneTimeOrders,
+  settlePendingCharges,
 } from "@/lib/payments/payment-reconciliation";
 
 export const CHARGE_IN_FLIGHT_MESSAGE =
@@ -32,29 +32,7 @@ export async function settleChargesBeforeDeletion(
     userId,
     { waitMs: DELETION_LOCK_WAIT_MS },
     async () => {
-      const pending = await db
-        .selectFrom("payments")
-        .select("id")
-        .where("user_id", "=", userId)
-        .where("subscription_id", "is not", null)
-        .where("status", "=", "pending")
-        .execute();
-      for (const payment of pending) {
-        await reconcilePayment(payment.id).catch((error) =>
-          console.error(
-            `Account deletion: reconciling payment ${payment.id} failed`,
-            error,
-          ),
-        );
-      }
-      const left = await db
-        .selectFrom("payments")
-        .select("id")
-        .where("user_id", "=", userId)
-        .where("subscription_id", "is not", null)
-        .where("status", "=", "pending")
-        .executeTakeFirst();
-      if (left) return false;
+      if (!(await settlePendingCharges(userId))) return false;
       // A one-time payment the buyer authenticated and Toss is still
       // approving would charge an account about to be gone.
       if (!(await settleOneTimeOrders(userId))) return false;

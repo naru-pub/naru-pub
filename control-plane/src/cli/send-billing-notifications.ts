@@ -1,6 +1,6 @@
 import { renewalChargeAt } from "@/lib/payments/renewal-time";
-// Keeps each renewal notice in payment_mails.
-import "@/lib/payments/payment-mails";
+// Also keeps each renewal notice in payment_mails.
+import { mailRecipient } from "@/lib/payments/payment-mails";
 import { db } from "@/lib/database";
 import { sendSubscriptionRenewalNoticeEmail } from "@/lib/email";
 
@@ -22,15 +22,11 @@ async function main() {
       "subscriptions.current_period_start",
       "subscriptions.next_billing_at",
       "subscriptions.renewal_notice_sent_at",
-      "users.email",
-      "users.login_name",
     ])
     .where("subscriptions.status", "in", ["active", "scheduled"])
     .where("subscriptions.billing_key_id", "is not", null)
     .where("subscriptions.next_billing_at", ">", now)
     .where("subscriptions.next_billing_at", "<=", noticeUntil)
-    .where("users.email", "is not", null)
-    .where("users.email_verified_at", "is not", null)
     // A lifetime comp is not charged, so there is nothing to announce.
     .where("users.supporter_comp", "=", false)
     .execute();
@@ -50,9 +46,11 @@ async function main() {
 
   for (const sub of candidates) {
     try {
+      const to = await mailRecipient(sub.user_id);
+      if (!to) continue;
       await sendSubscriptionRenewalNoticeEmail({
-        email: sub.email!,
-        loginName: sub.login_name,
+        email: to.email,
+        loginName: to.loginName,
         amount: sub.amount,
         // When the renewal is actually charged: 09:00 KST on or after it
         // falls due.
@@ -70,11 +68,11 @@ async function main() {
         .execute();
 
       console.log(
-        `[send-billing-notifications] user ${sub.login_name}: renewal notice sent`,
+        `[send-billing-notifications] subscription ${sub.id}: renewal notice sent`,
       );
     } catch (error) {
       console.error(
-        `[send-billing-notifications] user ${sub.login_name}: failed to send renewal notice:`,
+        `[send-billing-notifications] subscription ${sub.id}: failed to send renewal notice:`,
         error,
       );
     }

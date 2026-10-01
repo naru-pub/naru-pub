@@ -26,3 +26,40 @@ async function keepPaymentMail(record: PaymentMailRecord): Promise<void> {
 }
 
 if (process.env.DATABASE_URL) setPaymentMailRecorder(keepPaymentMail);
+
+export type MailRecipient = {
+  userId: string;
+  email: string;
+  loginName: string;
+  supporterUntil: Date | null;
+  supporterComp: boolean;
+};
+
+// Who a payment mail goes to: the account, if it has a verified address.
+// Null otherwise — the mail is skipped, which is not a failure to retry. The
+// one rule every payment mail follows.
+export async function mailRecipient(
+  userId: string,
+): Promise<MailRecipient | null> {
+  const user = await db
+    .selectFrom("users")
+    .select([
+      "email",
+      "email_verified_at",
+      "login_name",
+      "supporter_until",
+      "supporter_comp",
+    ])
+    .where("id", "=", userId)
+    .executeTakeFirst();
+  if (!user?.email || !user.email_verified_at) return null;
+  return {
+    userId,
+    email: user.email,
+    loginName: user.login_name,
+    supporterUntil: user.supporter_until
+      ? new Date(user.supporter_until)
+      : null,
+    supporterComp: user.supporter_comp,
+  };
+}
