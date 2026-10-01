@@ -265,8 +265,13 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
     // recurring billing like any other.
     const result = await reconcilePayment(payment.id).catch(() => null);
     if (result?.state !== "refunded") {
-      // Toss answered and did not cancel: the supporter can try again.
-      if (canceled.kind === "refused") {
+      // Toss answered and did not cancel: the supporter can try again. Not
+      // when it said the payment is already canceled — the money is back,
+      // and only the lookup to confirm it failed.
+      if (
+        canceled.kind === "refused" &&
+        canceled.error.code !== "ALREADY_CANCELED_PAYMENT"
+      ) {
         // Not canceled, so the choice made for this attempt must not carry
         // over to a refund made later another way — the Toss dashboard, say.
         if (keepPlan) {
