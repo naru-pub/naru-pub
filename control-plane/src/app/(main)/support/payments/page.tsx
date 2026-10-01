@@ -45,9 +45,7 @@ function statusLabel(status: string, refundedAmount = 0) {
     case "pending":
       return "대기 중";
     case "canceled":
-      return refundedAmount > 0 ? "전액 환불" : "결제 취소";
-    case "partial_canceled":
-      return "부분 환불";
+      return refundedAmount > 0 ? "환불" : "결제 취소";
     case "expired":
       return "만료됨";
     default:

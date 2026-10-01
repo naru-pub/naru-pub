@@ -329,7 +329,6 @@ export interface Payments {
   period_start: Timestamp | null;
   raw: unknown | null;
   reconciliation_error: string | null;
-  refund_keeps_plan: Generated<boolean>;
   refunded_amount: Generated<number>;
   refunded_at: Timestamp | null;
   status: import("./payment-states").PaymentStatus;

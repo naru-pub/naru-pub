@@ -27,23 +27,19 @@ describe("support payment-mode switches", () => {
     ).toBe(true);
   });
 
-  test("allows switching an active recurring subscription to one-time", () => {
-    expect(
-      canStartOneTimePurchase({
-        supporterComp: false,
-        supporterUntil: "2027-09-01T00:00:00Z",
-        subscriptionStatus: "active",
-        now,
-      }),
-    ).toBe(true);
-    expect(
-      canStartRecurringPurchase({
-        supporterComp: false,
-        supporterUntil: "2027-09-01T00:00:00Z",
-        subscriptionStatus: "active",
-        now,
-      }),
-    ).toBe(false);
+  // One-time purchases are not offered beside a plan that charges or may.
+  test("refuses a one-time purchase beside a running plan", () => {
+    for (const subscriptionStatus of ["active", "scheduled", "past_due"]) {
+      expect(
+        canStartOneTimePurchase({
+          supporterComp: false,
+          supporterUntil: "2027-09-01T00:00:00Z",
+          subscriptionStatus,
+          now,
+        }),
+      ).toBe(false);
+    }
+    // Time left from a canceled plan can be extended.
     expect(
       canStartOneTimePurchase({
         supporterComp: false,

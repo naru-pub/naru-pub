@@ -78,6 +78,16 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ).toEqual([]);
   });
 
+  // Ending a plan has one way (endPlan): its key, event and mail go with it.
+  test("only endPlan ends a plan", () => {
+    expect(offenders(/status:\s*"canceled"/, ["lib/subscriptions.ts"])).toEqual(
+      [],
+    );
+    expect(offenders(/status:\s*"canceled"/, [])).toEqual([
+      "lib/subscriptions.ts",
+    ]);
+  });
+
   test("users rows are only deleted through deleteUserRow", () => {
     expect(
       offenders(/deleteFrom\(\s*["']users["']\s*\)|delete\s+from\s+users\b/i, [

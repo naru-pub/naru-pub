@@ -1,12 +1,13 @@
 import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 import { db } from "@/lib/database";
-import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import { deleteRetiredBillingKey } from "@/lib/billing-keys";
 import {
   reconcilePayment,
   type ReconciliationResult,
 } from "@/lib/payment-reconciliation";
-import { recordPaymentEvent } from "@/lib/payment-events";
-import { enqueueJob, runJobs } from "@/lib/payment-jobs";
+import { runJobs } from "@/lib/payment-jobs";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payment-states";
+import { endPlan, plansOf } from "@/lib/subscriptions";
 import { paymentFlowForRecord } from "@/lib/toss";
 import { cancelOrder } from "@/lib/toss-gateway";
 
@@ -93,52 +94,24 @@ export class RefundError extends Error {
 // Reconciliation stops the account's recurring plan when it first sees the
 // refund; this is for a cancel Toss accepted but the lookup does not show yet.
 async function stopRecurringBilling(userId: string): Promise<boolean> {
-  const { stoppedId, billingKey, noticeJob } = await db
-    .transaction()
-    .execute(async (trx) => {
-      const stopped = await trx
-        .updateTable("subscriptions")
-        .set({
-          status: "canceled",
-          next_billing_at: null,
-          canceled_at: new Date(),
-          updated_at: new Date(),
+  const ended = await db.transaction().execute(async (trx) => {
+    const live = await plansOf(trx, userId)
+      .select("id")
+      .where("status", "in", LIVE_SUBSCRIPTION_STATUSES)
+      .executeTakeFirst();
+    // The refund's own cancel mail went out before this stop, or goes out
+    // later without it, so it cannot say so: this one does.
+    return live
+      ? endPlan(trx, live.id, {
+          summary: () => "환불에 따라 정기 결제도 취소",
+          notice: "refund",
         })
-        .where("user_id", "=", userId)
-        .where("status", "not in", ["canceled", "switched_to_one_time"])
-        .returning("id")
-        .executeTakeFirst();
-      if (stopped) {
-        await recordPaymentEvent(trx, {
-          kind: "subscription_canceled",
-          userId,
-          subscriptionId: stopped.id,
-          summary: "환불에 따라 정기 결제도 취소",
-        });
-      }
-      return {
-        stoppedId: stopped?.id ?? null,
-        billingKey: stopped
-          ? await retireBillingKey(trx, { subscriptionId: stopped.id })
-          : null,
-        // The refund's own cancel mail went out before this stop, or goes out
-        // later without it, so it cannot say so: this one does.
-        noticeJob: stopped
-          ? await enqueueJob(
-              trx,
-              {
-                kind: "subscription_canceled",
-                subscriptionId: stopped.id,
-                reason: "refund",
-              },
-              { dedupeKey: `subscription_canceled:${stopped.id}` },
-            )
-          : null,
-      };
-    });
-  await deleteRetiredBillingKey(billingKey);
-  await runJobs([noticeJob]);
-  return stoppedId != null;
+      : null;
+  });
+  if (!ended) return false;
+  await deleteRetiredBillingKey(ended.retiredKey);
+  await runJobs([ended.noticeJob]);
+  return true;
 }
 
 // The account's subscription while it can still charge, or null.
@@ -147,7 +120,7 @@ async function runningPlanId(userId: string): Promise<string | null> {
     .selectFrom("subscriptions")
     .select("id")
     .where("user_id", "=", userId)
-    .where("status", "not in", ["canceled", "switched_to_one_time"])
+    .where("status", "in", LIVE_SUBSCRIPTION_STATUSES)
     .executeTakeFirst();
   return row?.id ?? null;
 }
@@ -167,12 +140,6 @@ type RefundRequest = {
   /** Operators may refund outside the policy window; owners may not. */
   overridePolicy: boolean;
   reason: string;
-  /**
-   * Operators only: give the money back without ending the recurring plan —
-   * a duplicate charge, say. Recorded on the payment before Toss is asked, so
-   * the webhook reconciling the same cancel honours it too.
-   */
-  keepPlan?: boolean;
 };
 
 // Runs under the account lock (lib/account-lock): a second click, the
@@ -241,12 +208,6 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
     }
   }
 
-  const keepPlan = opts.keepPlan === true;
-  await db
-    .updateTable("payments")
-    .set({ refund_keeps_plan: keepPlan })
-    .where("id", "=", payment.id)
-    .execute();
   const planRunningBefore = await runningPlanId(payment.user_id);
 
   let refunded: ReconciliationResult | null = null;
@@ -272,15 +233,6 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
         canceled.kind === "refused" &&
         canceled.error.code !== "ALREADY_CANCELED_PAYMENT"
       ) {
-        // Not canceled, so the choice made for this attempt must not carry
-        // over to a refund made later another way — the Toss dashboard, say.
-        if (keepPlan) {
-          await db
-            .updateTable("payments")
-            .set({ refund_keeps_plan: false })
-            .where("id", "=", payment.id)
-            .execute();
-        }
         throw canceled.error;
       }
       // No answer either way. The webhook and the refund sweep will see the
@@ -306,7 +258,7 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
       return null;
     });
   }
-  if (!keepPlan) await stopRecurringBilling(payment.user_id);
+  await stopRecurringBilling(payment.user_id);
   // Whichever of this refund, its own reconciliation or the webhook it set
   // off got there first, the plan that was running is what the supporter
   // asked about.

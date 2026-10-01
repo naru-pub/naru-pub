@@ -436,7 +436,6 @@ function operations(userId: string, pick: () => number): Op[] {
           paymentId: payment.id,
           overridePolicy: true,
           reason: "fuzz",
-          keepPlan: pick() < 0.3,
         });
       },
     },
@@ -624,10 +623,7 @@ async function findProblems(): Promise<string[]> {
   for (const order of fake.orders.values()) {
     if (order.status === "ABORTED") continue;
     const row = byOrder.get(order.orderId);
-    if (
-      !row ||
-      !["done", "canceled", "partial_canceled"].includes(row.status)
-    ) {
+    if (!row || !["done", "canceled"].includes(row.status)) {
       problems.push(
         `Toss approved ${order.orderId} but the ledger has it ${row?.status ?? "missing"}`,
       );
@@ -641,12 +637,11 @@ async function findProblems(): Promise<string[]> {
       problems.push(`${row.order_id} is done but Toss did not approve it`);
     }
   }
-  // At most one charge per plan and period that was kept. A refunded one
-  // does not count: a refund that keeps the plan (refund_keeps_plan) pulls
-  // its next charge back to the period it gave back, to be paid again.
+  // At most one charge per plan and period that was kept (a refunded one
+  // does not count).
   const perPeriod = new Map<string, number>();
   for (const row of payments) {
-    if (!["done", "partial_canceled"].includes(row.status)) continue;
+    if (row.status !== "done") continue;
     // subscription:<plan>:<period end>:<try>[:r<n>] and
     // subscription_initial:<plan>:<try>: one paid charge per plan and period.
     const key =

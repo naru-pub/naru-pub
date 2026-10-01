@@ -7,7 +7,7 @@ import {
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import { recordPaymentEvent } from "@/lib/payment-events";
-import { plansOf } from "@/lib/subscriptions";
+import { endPlan, plansOf } from "@/lib/subscriptions";
 import {
   reconcilePayment,
   settleOneTimeOrders,
@@ -61,37 +61,20 @@ export async function settleChargesBeforeDeletion(
       // approving would charge an account about to be gone.
       if (!(await settleOneTimeOrders(userId))) return false;
 
-      const retiredKey = await db.transaction().execute(async (trx) => {
+      // Recorded, so a deletion that fails after this (an S3 error) still
+      // explains the canceled plan.
+      const ended = await db.transaction().execute(async (trx) => {
         const subscription = await plansOf(trx, userId)
-          .select(["id", "status"])
-          .forUpdate()
+          .select("id")
           .executeTakeFirst();
-        if (!subscription) return null;
-        if (
-          !["canceled", "switched_to_one_time"].includes(subscription.status)
-        ) {
-          await trx
-            .updateTable("subscriptions")
-            .set({
-              status: "canceled",
-              next_billing_at: null,
-              canceled_at: new Date(),
-              updated_at: new Date(),
+        return subscription
+          ? endPlan(trx, subscription.id, {
+              summary: (from) =>
+                `계정 삭제를 시작해 정기 결제를 취소 (${from}에서)`,
             })
-            .where("id", "=", subscription.id)
-            .execute();
-          // Recorded, so a deletion that fails after this (an S3 error)
-          // still explains the canceled plan.
-          await recordPaymentEvent(trx, {
-            kind: "subscription_canceled",
-            userId,
-            subscriptionId: subscription.id,
-            summary: `계정 삭제를 시작해 정기 결제를 취소 (${subscription.status}에서)`,
-          });
-        }
-        return retireBillingKey(trx, { subscriptionId: subscription.id });
+          : null;
       });
-      await deleteRetiredBillingKey(retiredKey);
+      await deleteRetiredBillingKey(ended?.retiredKey ?? null);
       return true;
     },
   );

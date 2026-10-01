@@ -14,25 +14,21 @@ export const SUBSCRIPTION_STATUSES = [
   // Renewals stopped: retries spent, or the grace period over.
   "past_due",
   "canceled",
-  // Ended by a one-time purchase.
-  "switched_to_one_time",
 ] as const;
 export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 
-// Where each plan state may go. Staying put is always allowed. The ended
-// states are final but for one: a one-time purchase records that it replaced
-// a plan already canceled.
+// Where each plan state may go. Staying put is always allowed; canceled is
+// final.
 export const SUBSCRIPTION_TRANSITIONS: Record<
   SubscriptionStatus,
   readonly SubscriptionStatus[]
 > = {
-  incomplete: ["active", "scheduled", "canceled", "switched_to_one_time"],
-  scheduled: ["active", "past_due", "canceled", "switched_to_one_time"],
-  active: ["past_due", "canceled", "switched_to_one_time"],
+  incomplete: ["active", "scheduled", "canceled"],
+  scheduled: ["active", "past_due", "canceled"],
+  active: ["past_due", "canceled"],
   // A charge left unresolved turns out paid after all.
-  past_due: ["active", "canceled", "switched_to_one_time"],
-  canceled: ["switched_to_one_time"],
-  switched_to_one_time: [],
+  past_due: ["active", "canceled"],
+  canceled: [],
 };
 
 // The plans still live: at most one per account (a unique index).
@@ -42,9 +38,16 @@ export const LIVE_SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
   "scheduled",
   "past_due",
 ];
+// A one-time purchase is not offered beside a plan in these: one that charges,
+// or may again (past due, revived if a charge it left unresolved turns out
+// paid). The supporter cancels it first.
+export const ONE_TIME_BLOCKING_STATUSES: readonly SubscriptionStatus[] = [
+  "active",
+  "scheduled",
+  "past_due",
+];
 export const ENDED_SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
   "canceled",
-  "switched_to_one_time",
 ];
 
 export const PAYMENT_STATUSES = [
@@ -56,8 +59,9 @@ export const PAYMENT_STATUSES = [
   // Toss ended the order without approving it.
   "aborted",
   "expired",
+  // Refunded, in full or — from the Toss dashboard — in part: 나루 sells no
+  // partial refunds, so either undoes the purchase.
   "canceled",
-  "partial_canceled",
 ] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
@@ -65,21 +69,13 @@ export const PAYMENT_TRANSITIONS: Record<
   PaymentStatus,
   readonly PaymentStatus[]
 > = {
-  pending: [
-    "done",
-    "failed",
-    "aborted",
-    "expired",
-    "canceled",
-    "partial_canceled",
-  ],
-  done: ["canceled", "partial_canceled"],
+  pending: ["done", "failed", "aborted", "expired", "canceled"],
+  done: ["canceled"],
   // An order settled as not charged that Toss in fact approved goes back to
   // pending, to be granted like any other (recoverOrphanedCharge).
   failed: ["pending"],
   aborted: ["pending"],
   expired: ["pending"],
-  partial_canceled: ["canceled"],
   canceled: [],
 };
 

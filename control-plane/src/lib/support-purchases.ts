@@ -22,15 +22,19 @@ export function canStartRecurringPurchase(
   );
 }
 
+// Not beside a recurring plan that charges or may again (active, scheduled,
+// past due): the supporter cancels it first. Paid time left over from a
+// canceled plan can be extended.
 export function canStartOneTimePurchase(input: SupportPurchaseState): boolean {
-  if (input.supporterComp || input.subscriptionStatus === "scheduled") {
+  if (
+    input.supporterComp ||
+    input.subscriptionStatus === "active" ||
+    input.subscriptionStatus === "scheduled" ||
+    input.subscriptionStatus === "past_due"
+  ) {
     return false;
   }
-  return (
-    input.subscriptionStatus === "active" ||
-    input.subscriptionStatus === "canceled" ||
-    !hasPaidTime(input)
-  );
+  return input.subscriptionStatus === "canceled" || !hasPaidTime(input);
 }
 
 export function scheduledRecurringStart(

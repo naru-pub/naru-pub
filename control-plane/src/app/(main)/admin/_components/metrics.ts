@@ -81,7 +81,6 @@ export const SUBSCRIPTION_STATUS_LABELS: Record<string, string> = {
   incomplete: "가입 중",
   past_due: "연체",
   canceled: "취소",
-  switched_to_one_time: "한 번만 결제로 전환",
 };
 
 export const WEBHOOK_WINDOWS = {

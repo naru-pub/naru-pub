@@ -8,7 +8,8 @@ import {
   TossApiError,
   tossSecretKeys,
 } from "@/lib/toss";
-import { markDeletedAtToss, retireBillingKey } from "@/lib/billing-keys";
+import { markDeletedAtToss } from "@/lib/billing-keys";
+import { endPlan } from "@/lib/subscriptions";
 import { withAccountLock } from "@/lib/account-lock";
 import { lookupOrder } from "@/lib/toss-gateway";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
@@ -115,59 +116,26 @@ export async function POST(request: NextRequest) {
       const cancelPlan = () =>
         db.transaction().execute(async (trx) => {
           if (!key) return null;
-          const subscription = await trx
+          const holder = await trx
             .selectFrom("subscriptions")
-            .select(["id", "status", "canceled_at", "user_id"])
+            .select("id")
             .where("billing_key_id", "=", key.id)
-            .forUpdate()
             .executeTakeFirst();
-
-          if (subscription) {
-            const now = new Date();
-            await trx
-              .updateTable("subscriptions")
-              .set({
-                status: "canceled",
-                next_billing_at: null,
-                canceled_at: subscription.canceled_at ?? now,
-                updated_at: now,
+          const ended = holder
+            ? await endPlan(trx, holder.id, {
+                summary: () =>
+                  "Toss에서 빌링키가 삭제됨 (BILLING_DELETED) → 정기 결제 취소",
+                eventKind: "billing_key_deleted",
+                notice: "billing_key_deleted",
+                keyDeletedAtToss: true,
               })
-              .where("id", "=", subscription.id)
-              .execute();
-            await retireBillingKey(
-              trx,
-              { subscriptionId: subscription.id },
-              { deletedAtToss: true },
-            );
-            await recordPaymentEvent(trx, {
-              kind: "billing_key_deleted",
-              userId: subscription.user_id,
-              subscriptionId: subscription.id,
-              summary: `Toss에서 빌링키가 삭제됨 (BILLING_DELETED) → 정기 결제 취소`,
-            });
-          }
+            : null;
           // Toss already deleted this key, so it has nothing left to retire,
           // including a key retired before this event arrived.
           await markDeletedAtToss(trx, key.id);
-          // A plan already stopped had its cancel mailed then.
-          const newlyStopped =
-            subscription &&
-            !["canceled", "switched_to_one_time"].includes(subscription.status);
-          if (!subscription) return null;
-          return {
-            id: subscription.id,
-            noticeJob: newlyStopped
-              ? await enqueueJob(
-                  trx,
-                  {
-                    kind: "subscription_canceled",
-                    subscriptionId: subscription.id,
-                    reason: "billing_key_deleted",
-                  },
-                  { dedupeKey: `subscription_canceled:${subscription.id}` },
-                )
-              : null,
-          };
+          return holder && ended
+            ? { id: holder.id, noticeJob: ended.noticeJob }
+            : null;
         });
       const canceled = key?.user_id
         ? await withAccountLock(key.user_id, { waitMs: 5000 }, cancelPlan)

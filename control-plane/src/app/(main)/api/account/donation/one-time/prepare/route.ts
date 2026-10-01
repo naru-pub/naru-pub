@@ -15,6 +15,7 @@ import {
   oneTimeOrderName,
 } from "@/lib/toss";
 import { canStartOneTimePurchase } from "@/lib/support-purchases";
+import { ONE_TIME_BLOCKING_STATUSES } from "@/lib/payment-states";
 import {
   settleOneTimeOrders,
   UNCONFIRMED_EXPIRY_MS,
@@ -139,11 +140,15 @@ export async function POST(request: NextRequest) {
             subscriptionStatus: subscription?.status ?? null,
           })
         ) {
+          const planRunning =
+            subscription != null &&
+            ONE_TIME_BLOCKING_STATUSES.includes(subscription.status);
           return NextResponse.json(
             {
               success: false,
-              message:
-                "일회성 결제 기간 중에는 정기 결제로만 전환할 수 있습니다.",
+              message: planRunning
+                ? "정기 결제 중에는 한 번만 결제를 할 수 없습니다. 정기 결제를 해지한 뒤 결제해 주세요."
+                : "일회성 결제 기간 중에는 정기 결제로만 전환할 수 있습니다.",
             },
             { status: 409 },
           );

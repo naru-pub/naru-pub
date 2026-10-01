@@ -130,7 +130,7 @@ export async function checkPaymentInvariants(
       db
         .selectFrom("payments as p")
         .select("p.id")
-        .where("p.status", "in", ["done", "canceled", "partial_canceled"])
+        .where("p.status", "in", ["done", "canceled"])
         .where("p.paid_at", "is not", null)
         .where(({ not, exists, selectFrom }) =>
           not(

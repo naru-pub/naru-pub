@@ -76,7 +76,7 @@ const { PAYMENT_FILTERS, supporterCondition } =
   require("@/app/(main)/admin/_components/metrics") as typeof import("@/app/(main)/admin/_components/metrics");
 const { getUserEntitlement } =
   require("@/lib/entitlements") as typeof import("@/lib/entitlements");
-const { deleteRetiredBillingKeys, retireBillingKey } =
+const { deleteRetiredBillingKey, deleteRetiredBillingKeys, retireBillingKey } =
   require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
 const { deleteUserRow, settleChargesBeforeDeletion } =
   require("@/lib/account-deletion") as typeof import("@/lib/account-deletion");
@@ -456,7 +456,9 @@ integration("payments against the database", () => {
       expect((await supporterUntil(userId))! > new Date()).toBe(true);
     });
 
-    test("a one-time purchase stops a scheduled subscription", async () => {
+    // One-time purchases are not offered beside a plan; one approved all the
+    // same (a confirm whose answer was lost) moves the plan's charge past it.
+    test("a one-time year approved beside a scheduled plan defers its first charge", async () => {
       const paidThrough = new Date(Date.now() + 10 * DAY);
       const userId = await makeUser(paidThrough);
       const subId = await makeSubscription(userId, {
@@ -474,11 +476,11 @@ integration("payments against the database", () => {
 
       expect(periodStart).toEqual(paidThrough);
       const sub = await subscription(subId);
-      expect(sub.status).toBe("switched_to_one_time");
-      expect(sub.billing_key).toBeNull();
-      expect(sub.next_billing_at).toBeNull();
+      expect(sub.status).toBe("scheduled");
+      expect(sub.billing_key).not.toBeNull();
+      expect(sub.next_billing_at).toEqual(await supporterUntil(userId));
 
-      // And the renewal cron has nothing left to charge.
+      // The days the year paid for are not charged again.
       await chargeDueSubscriptions(new Date(paidThrough.getTime() + DAY));
       expect(toss.chargeBillingKey).not.toHaveBeenCalled();
     });
@@ -704,10 +706,9 @@ integration("payments against the database", () => {
   });
 
   describe("reconciliation", () => {
-    // An ambiguous renewal resolved after the user switched to a one-time
-    // year: the renewal is granted after that year, and the subscription stays
-    // switched.
-    test("a late renewal neither shortens a one-time year nor revives billing", async () => {
+    // An ambiguous renewal resolved after a one-time year was approved beside
+    // the plan: the renewal is granted after that year, not over it.
+    test("a late renewal does not shorten a one-time year", async () => {
       const periodEnd = new Date(Date.now() + 2 * DAY);
       const userId = await makeUser(periodEnd);
       const subId = await makeSubscription(userId, {
@@ -737,8 +738,8 @@ integration("payments against the database", () => {
       const until = await supporterUntil(userId);
       expect(until! > prepaidUntil).toBe(true);
       const sub = await subscription(subId);
-      expect(sub.status).toBe("switched_to_one_time");
-      expect(sub.next_billing_at).toBeNull();
+      expect(sub.status).toBe("active");
+      expect(sub.next_billing_at).toEqual(until);
     });
 
     // Periods keep the dates they were granted with: a year queued behind a
@@ -918,35 +919,21 @@ integration("payments against the database", () => {
       expect(key).toMatchObject({ status: "deleted", billing_key: null });
     });
 
-    test("a one-time purchase deletes the recurring key at Toss right away", async () => {
-      const userId = await makeUser();
-      await makeSubscription(userId, { status: "active", billingKey: "key-d" });
-
-      await applyOneTimePayment({
-        userId,
-        amount: 12000,
-        years: 1,
-        payment: tossPayment("one-time-retire", 12000),
-      });
-
-      expect(toss.deleteBillingKey).toHaveBeenCalledWith("key-d");
-      expect(await queued()).toEqual([]);
-    });
-
     test("a key Toss would not delete stays queued for the cron", async () => {
       const userId = await makeUser();
-      await makeSubscription(userId, { status: "active", billingKey: "key-e" });
+      const subId = await makeSubscription(userId, {
+        status: "past_due",
+        billingKey: "key-e",
+      });
       toss.deleteBillingKey.mockRejectedValue(
         new toss.TossApiError("server error", 500),
       );
 
-      // The purchase itself still succeeds.
-      await applyOneTimePayment({
-        userId,
-        amount: 12000,
-        years: 1,
-        payment: tossPayment("one-time-retire-2", 12000),
-      });
+      const retired = await db
+        .transaction()
+        .execute((trx) => retireBillingKey(trx, { subscriptionId: subId }));
+      // Never throws: the key stays retired for the cron.
+      await deleteRetiredBillingKey(retired);
 
       const [row] = await retiredKeys();
       expect(row).toMatchObject({ billing_key: "key-e", attempts: 1 });
@@ -1263,7 +1250,6 @@ integration("payments against the database", () => {
       expect(await reconcilePayment(paymentId)).toMatchObject({
         state: "refunded",
         amount: 5000,
-        full: false,
       });
 
       expect(await transactions(paymentId)).toEqual([
@@ -1271,12 +1257,14 @@ integration("payments against the database", () => {
         { kind: "cancel", amount: 2000 },
         { kind: "cancel", amount: 3000 },
       ]);
+      // A partial cancel from the dashboard undoes the purchase: canceled,
+      // with what Toss gave back.
       const payment = await db
         .selectFrom("payments")
-        .select("refunded_amount")
+        .select(["status", "refunded_amount"])
         .where("id", "=", paymentId)
         .executeTakeFirstOrThrow();
-      expect(payment.refunded_amount).toBe(5000);
+      expect(payment).toEqual({ status: "canceled", refunded_amount: 5000 });
       expect(await checkPaymentInvariants()).toEqual({});
     });
 
@@ -1745,7 +1733,6 @@ integration("payments against the database", () => {
 
       await cancelRequest(userId);
 
-      // Canceled, not switched_to_one_time: nothing was bought one-time.
       expect((await subscription(subId)).status).toBe("canceled");
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -4064,42 +4051,6 @@ integration("payments against the database", () => {
         expect((await subscription(subId)).status).toBe("canceled");
       });
 
-      test("an operator refund can keep the plan, even when the webhook gets there first", async () => {
-        const userId = await makeUser();
-        const paymentId = await oneTimeOrder(userId, {
-          orderId: "keep-plan",
-          status: "done",
-          paidMinutesAgo: 60,
-        });
-        await db
-          .updateTable("payments")
-          .set({ toss_payment_key: "pk-keep-plan" })
-          .where("id", "=", paymentId)
-          .execute();
-        const subId = await makeSubscription(userId, { status: "active" });
-        toss.getPaymentByOrderId.mockResolvedValue(
-          canceledAt("keep-plan", 12000, new Date()),
-        );
-        // Toss's webhook reconciles the cancel before the refund's own call
-        // returns.
-        toss.cancelPayment.mockImplementation(async () => {
-          await reconcilePayment(paymentId);
-          return canceledAt("keep-plan", 12000, new Date());
-        });
-
-        await expect(
-          refundPayment({
-            paymentId,
-            overridePolicy: true,
-            reason: "duplicate",
-            keepPlan: true,
-          }),
-        ).resolves.toMatchObject({ subscriptionCanceled: false });
-        const sub = await subscription(subId);
-        expect(sub.status).toBe("active");
-        expect(sub.billing_key).not.toBeNull();
-      });
-
       test("the plan's end is reported however the refund was first seen", async () => {
         const userId = await makeUser();
         const paymentId = await oneTimeOrder(userId, {
@@ -4453,26 +4404,31 @@ integration("payments against the database", () => {
         expect(response.status).toBe(409);
       });
 
-      test("a one-time purchase ends a signup still waiting on its card", async () => {
+      // A one-time purchase is not offered beside a running plan: not
+      // prepared, and an order prepared before the plan started is not
+      // approved, so the card is not charged.
+      test("a one-time purchase is refused while a plan runs", async () => {
         const userId = await makeUser();
-        const subId = await makeSubscription(userId, {
-          status: "incomplete",
-          billingKey: "signup-key",
-        });
-        const paymentId = await oneTimeOrder(userId, { orderId: "switch" });
+        await makeSubscription(userId, { status: "active" });
+        expect((await prepare(userId)).status).toBe(409);
 
-        await applyOneTimePayment({
-          userId,
-          amount: 12000,
-          years: 1,
-          payment: tossPayment("switch", 12000),
-          paymentId,
-        });
-
-        const sub = await subscription(subId);
-        expect(sub.status).toBe("switched_to_one_time");
-        expect(sub.billing_key).toBeNull();
-        expect(toss.deleteBillingKey).toHaveBeenCalledWith("signup-key");
+        await oneTimeOrder(userId, { orderId: "beside-plan" });
+        const response = await oneTimeConfirmRoute(
+          new NextRequest(
+            "http://localhost/api/account/donation/one-time/confirm",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                paymentKey: "pk-beside-plan",
+                orderId: "beside-plan",
+                amount: 12000,
+              }),
+            },
+          ),
+        );
+        expect(response.status).toBe(409);
+        expect(toss.confirmPayment).not.toHaveBeenCalled();
       });
     });
 

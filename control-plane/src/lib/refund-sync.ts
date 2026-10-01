@@ -68,7 +68,17 @@ async function duePage(
   const rows = await db
     .selectFrom("payments")
     .select(["id", lastChecked.as("last_checked")])
-    .where("status", "in", ["done", "partial_canceled"])
+    // Done, or refunded in part from the Toss dashboard: more of it may be
+    // refunded yet.
+    .where((eb) =>
+      eb.or([
+        eb("status", "=", "done"),
+        eb.and([
+          eb("status", "=", "canceled"),
+          eb("refunded_amount", "<", eb.ref("amount")),
+        ]),
+      ]),
+    )
     .where(dueCondition(now))
     .$if(after !== null, (qb) =>
       qb.where(
@@ -128,7 +138,7 @@ export async function syncPaymentRefunds(
         if (outcome.state === "refunded") {
           result.refunded += 1;
           console.log(
-            `[sync-payment-refunds] payment ${payment.id}: ${outcome.full ? "full" : "partial"} refund ${outcome.amount}`,
+            `[sync-payment-refunds] payment ${payment.id}: refund ${outcome.amount}`,
           );
         }
       } catch (error) {

@@ -13,13 +13,10 @@ export function RefundPaymentButton({
   paymentId,
   confirmMessage,
   label = "환불",
-  keepPlan = false,
 }: {
   paymentId: string;
   confirmMessage: string;
   label?: string;
-  /** Operators only: refund without ending the recurring plan. */
-  keepPlan?: boolean;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -33,7 +30,7 @@ export function RefundPaymentButton({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(keepPlan ? { keepPlan: true } : {}),
+          body: "{}",
         },
       );
       const body = await response.json();

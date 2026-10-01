@@ -92,14 +92,15 @@ export async function POST(request: NextRequest) {
         }
 
         // Another one-time payment already bought this period — a second tab, or
-        // a retry after this one's confirm looked stuck. Not approving it lets
-        // Toss expire the authentication without charging the card.
+        // a retry after this one's confirm looked stuck — or a recurring plan
+        // started meanwhile. Not approving it lets Toss expire the
+        // authentication without charging the card.
         if (await oneTimeOrderSuperseded(pendingPayment)) {
           return NextResponse.json(
             {
               success: false,
               message:
-                "다른 결제로 이미 이용 기간이 늘어나 이 결제는 승인하지 않았습니다. 카드에는 청구되지 않습니다.",
+                "다른 결제로 이미 이용 기간이 늘어났거나 정기 결제가 진행 중이라 이 결제는 승인하지 않았습니다. 카드에는 청구되지 않습니다.",
             },
             { status: 409 },
           );

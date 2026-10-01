@@ -3,6 +3,7 @@ import {
   ENDED_SUBSCRIPTION_STATUSES,
   type SubscriptionStatus,
 } from "@/lib/payment-states";
+import type { SubscriptionCancelReason } from "@/lib/email";
 import { extendPaidTime, lockPaidTime } from "@/lib/paid-time";
 import { recordApproval } from "@/lib/payment-ledger";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
@@ -31,20 +32,8 @@ export const PAYMENT_GRACE_DAYS = 4;
 export const MAX_PAYMENT_RETRY_ATTEMPTS = 4;
 
 // Subscriptions that must not be revived by a charge that was already in flight
-// when the user (or a refund, or a one-time purchase) stopped them.
+// when the user (or a refund) stopped them.
 const STOPPED_SUBSCRIPTION_STATUSES = ENDED_SUBSCRIPTION_STATUSES;
-
-// Recurring billing that a one-time purchase replaces. Anything that still
-// holds a billing key and could charge again belongs here — a signup still
-// waiting on its first charge (incomplete) too, or a late success there would
-// start auto-renewal after the supporter chose to pay once.
-const SWITCHABLE_SUBSCRIPTION_STATUSES: SubscriptionStatus[] = [
-  "incomplete",
-  "active",
-  "canceled",
-  "scheduled",
-  "past_due",
-];
 
 // An account's plans, newest first. The newest is its current plan: a new
 // one is only started after the live one (at most one, by a unique index)
@@ -63,6 +52,76 @@ export const isCurrentPlan = sql<boolean>`subscriptions.id = (
   where current_plan.user_id = users.id
   order by current_plan.id desc limit 1
 )`;
+
+export type EndedPlan = {
+  // The status it ended from.
+  from: SubscriptionStatus;
+  // The key it held, retired: pass to deleteRetiredBillingKey after commit.
+  retiredKey: string | null;
+  // The cancel mail queued for it: pass to runJobs after commit.
+  noticeJob: string | null;
+};
+
+// Ends a live plan, the one way every path does it — a cancel, a refund, a
+// card deleted at Toss, an account deletion, a new signup replacing it: no
+// next charge, its key retired (or recorded deleted, when Toss deleted it),
+// an event, and the cancel mail when there is one to send. In the caller's
+// transaction, under the account lock. Null when the plan had already ended.
+export async function endPlan(
+  trx: Executor,
+  planId: string,
+  opts: {
+    summary: (from: SubscriptionStatus) => string;
+    // When it ended; now unless the refund that ended it happened earlier.
+    at?: Date;
+    // The mail to send, if any, by the status it ended from.
+    notice?:
+      | SubscriptionCancelReason
+      | ((from: SubscriptionStatus) => SubscriptionCancelReason);
+    keyDeletedAtToss?: boolean;
+    eventKind?: "subscription_canceled" | "billing_key_deleted";
+  },
+): Promise<EndedPlan | null> {
+  const plan = await trx
+    .selectFrom("subscriptions")
+    .select(["user_id", "status"])
+    .where("id", "=", planId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!plan || ENDED_SUBSCRIPTION_STATUSES.includes(plan.status)) return null;
+  const now = new Date();
+  await trx
+    .updateTable("subscriptions")
+    .set({
+      status: "canceled",
+      next_billing_at: null,
+      canceled_at: opts.at ?? now,
+      updated_at: now,
+    })
+    .where("id", "=", planId)
+    .execute();
+  const retiredKey = await retireBillingKey(
+    trx,
+    { subscriptionId: planId },
+    { deletedAtToss: opts.keyDeletedAtToss },
+  );
+  await recordPaymentEvent(trx, {
+    kind: opts.eventKind ?? "subscription_canceled",
+    userId: plan.user_id,
+    subscriptionId: planId,
+    summary: opts.summary(plan.status),
+  });
+  const reason =
+    typeof opts.notice === "function" ? opts.notice(plan.status) : opts.notice;
+  const noticeJob = reason
+    ? await enqueueJob(
+        trx,
+        { kind: "subscription_canceled", subscriptionId: planId, reason },
+        { dedupeKey: `subscription_canceled:${planId}` },
+      )
+    : null;
+  return { from: plan.status, retiredKey, noticeJob };
+}
 
 export function addPaymentGrace(until: Date): Date {
   const graceEndsAt = new Date(until);
@@ -135,10 +194,15 @@ async function grantOrNote<T>(
 }
 
 // Applies a one-time payment: records the ledger row and extends supporter_until,
-// stacking on top of any remaining time rather than resetting. If recurring
-// billing exists, the same transaction disables it so only prepaid access
-// remains. `granted` is false when the payment had already been applied, so
-// the caller's thank-you goes out once.
+// stacking on top of any remaining time rather than resetting. `granted` is
+// false when the payment had already been applied, so the caller's thank-you
+// goes out once.
+//
+// A one-time purchase is not offered while a plan is live (the prepare and
+// confirm routes and the reconciler refuse to start one), so it does not end
+// or switch plans. If one is approved all the same — a confirm whose answer
+// was lost, granted once a plan had started — the plan's next charge waits
+// for the paid time it bought, so the same days are never charged twice.
 export async function applyOneTimePayment(opts: {
   userId: string;
   amount: number;
@@ -151,7 +215,7 @@ export async function applyOneTimePayment(opts: {
   }
   const now = new Date();
   const paidAt = approvedAt(opts.payment, now);
-  const { retiredKey, ...period } = await grantOrNote(opts, () =>
+  const period = await grantOrNote(opts, () =>
     db.transaction().execute(async (trx) => {
       if (opts.paymentId) {
         const ledger = await trx
@@ -169,7 +233,6 @@ export async function applyOneTimePayment(opts: {
             periodStart: new Date(ledger.period_start),
             periodEnd: new Date(ledger.period_end),
             granted: false,
-            retiredKey: null,
             notice: null,
           };
         }
@@ -222,38 +285,24 @@ export async function applyOneTimePayment(opts: {
       await recordApproval(trx, { paymentId, amount: opts.amount, at: paidAt });
       await extendPaidTime(trx, opts.userId, periodEnd);
 
-      // A confirmed one-time purchase switches an active recurring supporter to
-      // prepaid access atomically, so the old billing key can never renew at the
-      // boundary that now belongs to the prepaid period. Only a plan that
-      // existed when the payment was approved: an old one-time order granted
-      // late (recoverOrphanedCharge) must not end a plan started since.
-      const currentPlan = await plansOf(trx, opts.userId)
-        .select("id")
+      const deferred = await trx
+        .updateTable("subscriptions")
+        .set({
+          current_period_end: periodEnd,
+          next_billing_at: periodEnd,
+          updated_at: now,
+        })
+        .where("user_id", "=", opts.userId)
+        .where("status", "in", ["active", "scheduled"])
+        .where("next_billing_at", "<", periodEnd)
+        .returning("id")
         .executeTakeFirst();
-      const switched = currentPlan
-        ? await trx
-            .updateTable("subscriptions")
-            .set({
-              status: "switched_to_one_time",
-              next_billing_at: null,
-              canceled_at: now,
-              updated_at: now,
-            })
-            .where("id", "=", currentPlan.id)
-            .where("status", "in", SWITCHABLE_SUBSCRIPTION_STATUSES)
-            .where("created_at", "<=", paidAt)
-            .returning("id")
-            .executeTakeFirst()
-        : undefined;
-      const retiredKey = switched
-        ? await retireBillingKey(trx, { subscriptionId: switched.id })
-        : null;
       await recordPaymentEvent(trx, {
         kind: "charge_succeeded",
         userId: opts.userId,
         paymentId: opts.paymentId,
-        subscriptionId: switched?.id,
-        summary: `한 번만 결제 ${won(opts.amount)} (${opts.years}년) · ${kstDate(periodEnd)}까지${switched ? " · 정기 결제는 한 번만 결제로 전환" : ""}`,
+        subscriptionId: deferred?.id,
+        summary: `한 번만 결제 ${won(opts.amount)} (${opts.years}년) · ${kstDate(periodEnd)}까지${deferred ? " · 진행 중인 정기 결제의 다음 결제를 그 뒤로 미룸" : ""}`,
       });
       // The thank-you owed for it, in this transaction (lib/payment-jobs):
       // sent once, and only if the grant commits.
@@ -264,10 +313,9 @@ export async function applyOneTimePayment(opts: {
             { dedupeKey: `thank_you:${opts.paymentId}` },
           )
         : null;
-      return { periodStart, periodEnd, granted: true, retiredKey, notice };
+      return { periodStart, periodEnd, granted: true, notice };
     }),
   );
-  await deleteRetiredBillingKey(retiredKey);
   const { notice, ...result } = period;
   await runJobs([notice]);
   return result;

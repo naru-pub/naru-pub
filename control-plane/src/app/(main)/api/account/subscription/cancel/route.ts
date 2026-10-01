@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { assertJsonContentType } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
-import { enqueueJob, runJobs } from "@/lib/payment-jobs";
-import { plansOf } from "@/lib/subscriptions";
-import { recordPaymentEvent } from "@/lib/payment-events";
+import { deleteRetiredBillingKey } from "@/lib/billing-keys";
+import { runJobs } from "@/lib/payment-jobs";
+import { endPlan, plansOf } from "@/lib/subscriptions";
 import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 
 // Cancels auto-renewal. Access (supporter_until) is left intact so the user
@@ -44,54 +43,19 @@ export async function POST(request: NextRequest) {
       result = await withAccountLock(user.id, { waitMs: 10_000 }, () =>
         db.transaction().execute(async (trx) => {
           const current = await plansOf(trx, user.id)
-            .select(["id", "status"])
-            .forUpdate()
+            .select("id")
             .executeTakeFirst();
           if (!current) return { found: false as const };
-          // Not again: a second click, or a refund that stopped the plan
-          // meanwhile, already did this and mailed about it.
-          if (["canceled", "switched_to_one_time"].includes(current.status)) {
-            return { found: true as const, stopped: null };
-          }
-          const sub = current;
-          const cancelingSchedule = current.status === "scheduled";
-          await trx
-            .updateTable("subscriptions")
-            .set({
-              status: "canceled",
-              canceled_at: new Date(),
-              next_billing_at: null,
-              updated_at: new Date(),
-            })
-            .where("id", "=", sub.id)
-            .execute();
-          await recordPaymentEvent(trx, {
-            kind: "subscription_canceled",
-            userId: user.id,
-            subscriptionId: sub.id,
-            summary: cancelingSchedule
-              ? "사용자가 예약된 정기 결제를 취소"
-              : `사용자가 정기 결제를 취소 (${current.status}에서), 결제한 기간은 유지`,
+          // Null when already ended: a second click, or a refund that
+          // stopped the plan meanwhile, already did this and mailed about it.
+          const stopped = await endPlan(trx, current.id, {
+            summary: (from) =>
+              from === "scheduled"
+                ? "사용자가 예약된 정기 결제를 취소"
+                : `사용자가 정기 결제를 취소 (${from}에서), 결제한 기간은 유지`,
+            notice: (from) => (from === "scheduled" ? "user_schedule" : "user"),
           });
-          return {
-            found: true as const,
-            stopped: {
-              cancelingSchedule,
-              wasPastDue: current.status === "past_due",
-              billingKey: await retireBillingKey(trx, {
-                subscriptionId: sub.id,
-              }),
-              noticeJob: await enqueueJob(
-                trx,
-                {
-                  kind: "subscription_canceled",
-                  subscriptionId: sub.id,
-                  reason: cancelingSchedule ? "user_schedule" : "user",
-                },
-                { dedupeKey: `subscription_canceled:${sub.id}` },
-              ),
-            },
-          };
+          return { found: true as const, stopped };
         }),
       );
     } catch (error) {
@@ -119,8 +83,9 @@ export async function POST(request: NextRequest) {
         message: "활성화된 정기 결제가 없습니다.",
       });
     }
-    const { wasPastDue, cancelingSchedule } = stopped;
-    await deleteRetiredBillingKey(stopped.billingKey);
+    const cancelingSchedule = stopped.from === "scheduled";
+    const wasPastDue = stopped.from === "past_due";
+    await deleteRetiredBillingKey(stopped.retiredKey);
     await runJobs([stopped.noticeJob]);
 
     return NextResponse.json({

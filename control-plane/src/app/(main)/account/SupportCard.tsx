@@ -131,9 +131,11 @@ export default function SupportCard({
     subscription?.nextBillingAt != null &&
     renewalChargeAt(subscription.nextBillingAt).getTime() <= Date.now();
   const showRecurringOptions = !isActive && !isScheduled;
+  // Not beside a plan that charges or may (lib/support-purchases): the
+  // supporter cancels it first.
   const showOneTimeOptions =
-    !isScheduled &&
-    (!supportActive || isActive || subscription?.status === "canceled");
+    !planCanCharge &&
+    (!supportActive || subscription?.status === "canceled");
   const intervalLabel =
     subscription?.billingInterval === "year" ? "연간" : "월간";
 
@@ -526,7 +528,7 @@ export default function SupportCard({
                 {showOneTimeOptions && (
                   <>
                     <p className="text-xs text-muted-foreground pt-1">
-                      {supportActive ? "일회성 결제로 전환" : "한 번만 결제"}
+                      {supportActive ? "남은 기간 뒤에 1년 더" : "한 번만 결제"}
                     </p>
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <Button

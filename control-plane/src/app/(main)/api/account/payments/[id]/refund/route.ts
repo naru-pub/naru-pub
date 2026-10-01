@@ -56,16 +56,12 @@ export async function POST(
     }
 
     // An operator refunding their own payment is still an operator decision;
-    // the policy check only binds a supporter refunding for themselves.
-    // Operators may give the money back without ending the plan — a
-    // duplicate charge, say. A supporter's own refund always ends it.
-    const body = await request.json().catch(() => ({}));
-    const keepPlan = isOperator && body?.keepPlan === true;
+    // the policy check only binds a supporter refunding for themselves. A
+    // refund always ends the account's recurring plan.
     const result = await refundPayment({
       paymentId,
       overridePolicy: isOperator,
       reason: isOperator ? "나루 운영자 환불" : "유료 이용자 환불 신청",
-      keepPlan,
     });
 
     return NextResponse.json({

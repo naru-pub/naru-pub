@@ -32,6 +32,7 @@ import {
 } from "@/lib/support-purchases";
 import {
   applySuccessfulCharge,
+  endPlan,
   plansOf,
   retireUnusedSignupKey,
   scheduleSubscriptionStart,
@@ -85,13 +86,11 @@ function fail(status: number, message: string) {
 }
 
 // A signup confirm may start from these: a first signup or one interrupted
-// (incomplete), or a plan that ended (canceled, past_due,
-// switched_to_one_time) being started again.
+// (incomplete), or a plan that ended (canceled, past_due) being started again.
 const SIGNUP_FROM_STATUSES: SubscriptionStatus[] = [
   "incomplete",
   "canceled",
   "past_due",
-  "switched_to_one_time",
 ];
 // The plans still live — at most one per account. A new signup ends one of
 // these first (an incomplete or past due one; an active or scheduled one
@@ -395,23 +394,10 @@ async function adoptSignupKey(opts: {
     const now = new Date();
     const retired: Array<string | null> = [];
     if (current && LIVE_STATUSES.includes(current.status)) {
-      await trx
-        .updateTable("subscriptions")
-        .set({
-          status: "canceled",
-          next_billing_at: null,
-          canceled_at: now,
-          updated_at: now,
-        })
-        .where("id", "=", current.id)
-        .execute();
-      retired.push(await retireBillingKey(trx, { subscriptionId: current.id }));
-      await recordPaymentEvent(trx, {
-        kind: "subscription_canceled",
-        userId: opts.userId,
-        subscriptionId: current.id,
-        summary: `새 정기 결제로 대체 (${current.status}에서)`,
+      const ended = await endPlan(trx, current.id, {
+        summary: (from) => `새 정기 결제로 대체 (${from}에서)`,
       });
+      retired.push(ended?.retiredKey ?? null);
     }
     const interval = registration.billing_interval as BillingInterval;
     const plan = await trx

@@ -1,5 +1,10 @@
 import { randomUUID } from "crypto";
-import { isOneOf, type PaymentStatus } from "@/lib/payment-states";
+import {
+  isOneOf,
+  LIVE_SUBSCRIPTION_STATUSES,
+  ONE_TIME_BLOCKING_STATUSES,
+  type PaymentStatus,
+} from "@/lib/payment-states";
 import { db } from "@/lib/database";
 import {
   BillingInterval,
@@ -16,6 +21,7 @@ import type { Executor } from "@/lib/entitlements";
 import {
   applyOneTimePayment,
   applySuccessfulCharge,
+  endPlan,
   retireUnusedSignupKey,
 } from "@/lib/subscriptions";
 import { withAccountLock } from "@/lib/account-lock";
@@ -32,23 +38,6 @@ import { lockPaidTime, recomputePaidTime } from "@/lib/paid-time";
 // more to be confirmed: an order counted from its prepare must outlast both.
 export const UNCONFIRMED_EXPIRY_MS = 45 * 60 * 1000;
 
-export function refundDetails(payment: TossPaymentResult, amount: number) {
-  const cancels = payment.cancels ?? [];
-  const refundedAmount = cancels.reduce(
-    (total, cancel) => total + cancel.cancelAmount,
-    0,
-  );
-  const refundedAt = cancels
-    .map((cancel) => cancel.canceledAt)
-    .filter((value): value is string => Boolean(value))
-    .sort()
-    .at(-1);
-  return {
-    refundedAmount,
-    refundedAt: refundedAt ? new Date(refundedAt) : null,
-    full: refundedAmount >= amount,
-  };
-}
 
 export type ReconciliationResult =
   | { state: "done" }
@@ -57,7 +46,6 @@ export type ReconciliationResult =
   | {
       state: "refunded";
       amount: number;
-      full: boolean;
       // This reconciliation found the refund and stopped the account's
       // recurring billing because of it.
       subscriptionCanceled: boolean;
@@ -99,8 +87,14 @@ async function reconcilePaymentCore(
     .where("id", "=", paymentId)
     .executeTakeFirstOrThrow();
 
-  const refreshable = new Set(["pending", "done", "partial_canceled"]);
-  if (!refreshable.has(payment.status)) {
+  // A canceled payment is looked at again only while Toss may still give
+  // more of it back (a partial cancel from the dashboard).
+  const refreshable =
+    payment.status === "pending" ||
+    payment.status === "done" ||
+    (payment.status === "canceled" &&
+      payment.refunded_amount < payment.amount);
+  if (!refreshable) {
     return { state: "failed", status: payment.status };
   }
 
@@ -167,7 +161,11 @@ async function reconcilePaymentCore(
   ) {
     tossPayment = await confirmAuthenticatedPayment(payment, tossPayment);
   }
-  const status = tossPayment.status.toLowerCase();
+  // 나루 sells no partial refunds; a partial cancel made in the Toss
+  // dashboard undoes the purchase like a full one (supporterUntilFromLedger),
+  // so it is recorded as canceled, with the amount Toss gave back.
+  const tossStatus = tossPayment.status.toLowerCase();
+  const status = tossStatus === "partial_canceled" ? "canceled" : tossStatus;
 
   // Persist the provider's current transaction identity even when the ledger
   // was already marked done; this backfills MID data for historic rows during
@@ -188,17 +186,14 @@ async function reconcilePaymentCore(
   if (status !== "done") {
     const finalStatuses: PaymentStatus[] = [
       "canceled",
-      "partial_canceled",
       "aborted",
       "expired",
       "failed",
     ];
     if (isOneOf(finalStatuses, status)) {
-      // What Toss reports; the ledger, which keeps each cancel once, is
-      // what is written.
-      const reported = refundDetails(tossPayment, payment.amount);
-      let refundedAmount = reported.refundedAmount;
-      let refundedAt = reported.refundedAt;
+      // Read from the ledger, which keeps each cancel Toss reports once.
+      let refundedAmount = 0;
+      let refundedAt: Date | null = null;
 
       const { retiredKey, subscriptionCanceled, noticeJob } = await db
         .transaction()
@@ -208,7 +203,7 @@ async function reconcilePaymentCore(
           // one finds it new.
           const before = await trx
             .selectFrom("payments")
-            .select(["refunded_amount", "refund_keeps_plan"])
+            .select("refunded_amount")
             .where("id", "=", payment.id)
             .forUpdate()
             .executeTakeFirstOrThrow();
@@ -256,37 +251,38 @@ async function reconcilePaymentCore(
           // one running beside a refunded one-time payment. Done here, the
           // first time the refund is seen, so a refund made in the Toss
           // dashboard or one whose cancel call got no answer stops it as well
-          // as one made through refundPayment.
+          // as one made through refundPayment. Its cancel is told in the
+          // refund's own mail.
           //
           // Only a plan that already existed when the refund happened: one the
           // supporter started since — before a late webhook or the refund sweep
-          // brought the refund in — is theirs to keep. And not when an operator
-          // gave the money back on purpose without ending the plan
-          // (refund_keeps_plan), a duplicate charge say.
-          let stopped: { id: string } | undefined;
-          if (newlyRefunded && !before.refund_keeps_plan) {
+          // brought the refund in — is theirs to keep.
+          let stopped: { id: string; retiredKey: string | null } | null = null;
+          if (newlyRefunded) {
             const refundedBy = refundedAt ?? new Date();
-            stopped = await trx
-              .updateTable("subscriptions")
-              .set({
-                status: "canceled",
-                next_billing_at: null,
-                canceled_at: refundedBy,
-                updated_at: new Date(),
-              })
+            const live = await trx
+              .selectFrom("subscriptions")
+              .select("id")
               .where("user_id", "=", payment.user_id)
-              .where("status", "not in", ["canceled", "switched_to_one_time"])
+              .where("status", "in", LIVE_SUBSCRIPTION_STATUSES)
               .where("created_at", "<=", refundedBy)
-              .returning("id")
               .executeTakeFirst();
+            const ended = live
+              ? await endPlan(trx, live.id, {
+                  summary: () => "환불에 따라 정기 결제도 취소",
+                  at: refundedBy,
+                })
+              : null;
+            if (live && ended) {
+              stopped = { id: live.id, retiredKey: ended.retiredKey };
+            }
           }
-          // A plan the refund leaves running — kept on purpose, or started
-          // after the refund — must charge when the paid time it now has
-          // ends. Its own dates may still point past that (a refunded period
-          // it had stacked, prepaid time a scheduled start waited for), and
-          // left there it shows as running while access is gone. Pulled back,
-          // never pushed out; with no paid time left it is charged on the next
-          // run.
+          // A plan the refund leaves running — one started after the refund —
+          // must charge when the paid time it now has ends. Its own dates may
+          // still point past that (prepaid time a scheduled start waited for),
+          // and left there it shows as running while access is gone. Pulled
+          // back, never pushed out; with no paid time left it is charged on
+          // the next run.
           if (newlyRefunded && !stopped) {
             const due =
               recomputed && recomputed > new Date() ? recomputed : new Date();
@@ -339,9 +335,7 @@ async function reconcilePaymentCore(
             return {
               noticeJob,
               subscriptionCanceled: true,
-              retiredKey: await retireBillingKey(trx, {
-                subscriptionId: stopped.id,
-              }),
+              retiredKey: stopped.retiredKey,
             };
           }
           if (initialAttempt && refundedAmount === 0) {
@@ -362,11 +356,10 @@ async function reconcilePaymentCore(
         });
       if (!opts.deferKeyDeletion) await deleteRetiredBillingKey(retiredKey);
       await runJobs([noticeJob]);
-      if (status === "canceled" || status === "partial_canceled") {
+      if (status === "canceled") {
         return {
           state: "refunded",
           amount: refundedAmount,
-          full: refundedAmount >= payment.amount,
           subscriptionCanceled,
         };
       }
@@ -424,17 +417,25 @@ async function reconcilePaymentCore(
   return { state: "done" };
 }
 
-// True when another one-time payment of the same account was paid after this
-// order was prepared: the period this order would buy has just been bought,
-// by a second tab or by paying again after a confirm that looked stuck. Such
-// an order is not approved — Toss lets the authentication lapse, so the card
-// is not charged twice for one decision to pay. A one-time purchase made
-// deliberately after another completes is prepared after it, and goes ahead.
+// True when this one-time order should not be approved: another one-time
+// payment of the same account was paid after it was prepared — by a second
+// tab, or by paying again after a confirm that looked stuck — or a recurring
+// plan is running (one-time purchases are not offered beside one). Such an
+// order is not approved; Toss lets the authentication lapse, so the card is
+// not charged. A one-time purchase made deliberately after another completes
+// is prepared after it, and goes ahead.
 export async function oneTimeOrderSuperseded(payment: {
   id: string;
   user_id: string;
   created_at: Date | string;
 }): Promise<boolean> {
+  const runningPlan = await db
+    .selectFrom("subscriptions")
+    .select("id")
+    .where("user_id", "=", payment.user_id)
+    .where("status", "in", ONE_TIME_BLOCKING_STATUSES)
+    .executeTakeFirst();
+  if (runningPlan) return true;
   const other = await db
     .selectFrom("payments")
     .select("id")
