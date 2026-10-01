@@ -27,6 +27,7 @@ const BILLING_KEY_DELETION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 // Every minute, so a digest goes out soon after events stop arriving.
 const PAYMENT_EVENT_DIGEST_INTERVAL = 60 * 1000; // 1 minute
 const PAYMENT_EVENT_DIGEST_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+const TOSS_TRANSACTION_CHECK_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 const PAYMENT_JOB_QUEUE_INTERVAL = 60 * 1000; // 1 minute
 const PAYMENT_JOB_QUEUE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 // One Toss lookup per paid payment in the lookback window.
@@ -254,6 +255,13 @@ async function runBillingKeyDeletion() {
   );
 }
 
+async function runTossTransactionCheck() {
+  await runPaymentJob(
+    "check-toss-transactions.ts",
+    TOSS_TRANSACTION_CHECK_TIMEOUT,
+  );
+}
+
 async function runPaymentInvariantCheck() {
   await runPaymentJob(
     "check-payment-invariants.ts",
@@ -410,6 +418,9 @@ async function main() {
     "[cron] Scheduling expired custom-domain cleanup daily at 04:30 KST",
   );
   scheduleDaily(4, 30, runExpiredCustomDomainCleanup);
+
+  console.log("[cron] Scheduling Toss transaction check daily at 04:45 KST");
+  scheduleDaily(4, 45, runTossTransactionCheck);
 
   console.log("[cron] Scheduling payment invariant check daily at 05:00 KST");
   scheduleDaily(5, 0, runPaymentInvariantCheck);

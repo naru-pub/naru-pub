@@ -472,6 +472,39 @@ export async function deleteBillingKey(billingKey: string): Promise<void> {
   );
 }
 
+// One movement of money Toss recorded: an approval, or one cancel of it.
+export type TossTransaction = {
+  mId?: string;
+  transactionKey: string;
+  paymentKey: string;
+  orderId: string;
+  status: string;
+  transactionAt: string;
+  amount: number;
+};
+
+// One page of the transactions Toss recorded between two KST times
+// (yyyy-MM-ddTHH:mm:ss), after `startingAfter` (a transactionKey).
+export function listTransactions(
+  flow: TossPaymentFlow,
+  params: {
+    startDate: string;
+    endDate: string;
+    startingAfter?: string;
+    limit?: number;
+  },
+) {
+  const query = new URLSearchParams({
+    startDate: params.startDate,
+    endDate: params.endDate,
+    limit: String(params.limit ?? 5000),
+  });
+  if (params.startingAfter) query.set("startingAfter", params.startingAfter);
+  return tossRequest<TossTransaction[]>(flow, `/v1/transactions?${query}`, {
+    method: "GET",
+  });
+}
+
 export function getPaymentByOrderId(orderId: string, flow: TossPaymentFlow) {
   return tossRequest<TossPaymentResult>(
     flow,

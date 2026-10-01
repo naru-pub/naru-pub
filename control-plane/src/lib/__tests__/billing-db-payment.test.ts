@@ -22,6 +22,7 @@ jest.mock("@/lib/toss", () => {
     deleteBillingKey: jest.fn(),
     getPaymentByOrderId: jest.fn(),
     issueBillingKey: jest.fn(),
+    listTransactions: jest.fn(),
   };
 });
 jest.mock("@/lib/email", () => ({
@@ -99,6 +100,8 @@ const { checkPaymentInvariants } =
 const { NextRequest } = require("next/server") as typeof import("next/server");
 const { POST: paymentWindowRoute } =
   require("@/app/(main)/api/account/payment-window/route") as typeof import("@/app/(main)/api/account/payment-window/route");
+const { checkTossTransactions, previousKstDay } =
+  require("@/lib/toss-transaction-check") as typeof import("@/lib/toss-transaction-check");
 const { recordPaymentCronRun } =
   require("@/lib/payment-events") as typeof import("@/lib/payment-events");
 // lib/payment-mails registered its recorder with the (mocked) mail module
@@ -1097,6 +1100,144 @@ integration("payments against the database", () => {
           ]);
         }
       }
+    });
+  });
+
+  describe("the Toss transaction check", () => {
+    const withKeys = async <T>(run: () => Promise<T>) => {
+      const saved = [
+        process.env.TOSS_BILLING_SECRET_KEY,
+        process.env.TOSS_PAYMENT_SECRET_KEY,
+      ];
+      process.env.TOSS_BILLING_SECRET_KEY = "test_sk_billing";
+      process.env.TOSS_PAYMENT_SECRET_KEY = "test_sk_payment";
+      try {
+        return await run();
+      } finally {
+        [
+          process.env.TOSS_BILLING_SECRET_KEY,
+          process.env.TOSS_PAYMENT_SECRET_KEY,
+        ] = saved;
+      }
+    };
+
+    // A one-time order paid yesterday (KST).
+    async function paidYesterday(orderId: string) {
+      const { start } = previousKstDay();
+      const paidAt = new Date(start.getTime() + 60 * 60 * 1000);
+      const userId = await makeUser();
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: `one_time:1:${orderId}`,
+        orderId,
+        amount: 12000,
+      });
+      await applyOneTimePayment({
+        userId,
+        amount: 12000,
+        years: 1,
+        payment: tossPayment(orderId, 12000, {
+          approvedAt: paidAt.toISOString(),
+        }),
+        paymentId,
+      });
+      // Granted as if yesterday.
+      await db
+        .updateTable("payments")
+        .set({ paid_at: paidAt })
+        .where("id", "=", paymentId)
+        .execute();
+      return { userId, paymentId, paidAt };
+    }
+
+    function transaction(
+      orderId: string,
+      status: string,
+      at: Date,
+      key = `tx-${orderId}-${status}`,
+    ) {
+      return {
+        transactionKey: key,
+        paymentKey: `pk-${orderId}`,
+        orderId,
+        status,
+        transactionAt: at.toISOString(),
+        amount: 12000,
+      };
+    }
+
+    test("a day whose books agree reports nothing", async () => {
+      const { paidAt } = await paidYesterday("agrees");
+      toss.listTransactions.mockImplementation(async (flow) =>
+        flow === "one-time" ? [transaction("agrees", "DONE", paidAt)] : [],
+      );
+
+      const result = await withKeys(() => checkTossTransactions());
+
+      expect(result.problems).toEqual([]);
+      expect(result.transactions).toBe(1);
+    });
+
+    test("a cancel only Toss has is reconciled into the ledger", async () => {
+      const { paymentId, paidAt } = await paidYesterday("missed-cancel");
+      const canceledAt = new Date(paidAt.getTime() + 60 * 60 * 1000);
+      toss.listTransactions.mockImplementation(async (flow) =>
+        flow === "one-time"
+          ? [
+              transaction("missed-cancel", "DONE", paidAt),
+              transaction("missed-cancel", "CANCELED", canceledAt, "tx-cancel"),
+            ]
+          : [],
+      );
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("missed-cancel", 12000, {
+          status: "CANCELED",
+          cancels: [
+            {
+              cancelAmount: 12000,
+              canceledAt: canceledAt.toISOString(),
+              transactionKey: "tx-cancel",
+            },
+          ],
+        }),
+      );
+
+      const result = await withKeys(() => checkTossTransactions());
+
+      expect(result.problems).toEqual([]);
+      const payment = await db
+        .selectFrom("payments")
+        .select("status")
+        .where("id", "=", paymentId)
+        .executeTakeFirstOrThrow();
+      expect(payment.status).toBe("canceled");
+    });
+
+    test("an order only Toss has is reported", async () => {
+      const { start } = previousKstDay();
+      toss.listTransactions.mockImplementation(async (flow) =>
+        flow === "billing"
+          ? [
+              transaction(
+                "unknown-order",
+                "DONE",
+                new Date(start.getTime() + 1000),
+              ),
+            ]
+          : [],
+      );
+
+      const result = await withKeys(() => checkTossTransactions());
+
+      expect(result.problems).toHaveLength(1);
+      expect(result.problems[0]).toContain("unknown-order");
+      const events = await db
+        .selectFrom("payment_events")
+        .select("kind")
+        .where("kind", "=", "toss_mismatch")
+        .execute();
+      expect(events).toHaveLength(1);
     });
   });
 
