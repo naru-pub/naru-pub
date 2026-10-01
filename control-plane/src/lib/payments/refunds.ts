@@ -228,10 +228,12 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
     if (result?.state !== "refunded") {
       // Toss answered and did not cancel: the supporter can try again. Not
       // when it said the payment is already canceled — the money is back,
-      // and only the lookup to confirm it failed.
+      // and only the lookup to confirm it failed — or already being refunded
+      // (ALREADY_REFUNDING_PAYMENT), which is a refund under way.
       if (
         canceled.kind === "refused" &&
-        canceled.error.code !== "ALREADY_CANCELED_PAYMENT"
+        canceled.error.code !== "ALREADY_CANCELED_PAYMENT" &&
+        canceled.error.code !== "ALREADY_REFUNDING_PAYMENT"
       ) {
         throw canceled.error;
       }

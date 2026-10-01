@@ -382,7 +382,7 @@ integration("payments against the database", () => {
     toss.deleteBillingKey.mockResolvedValue(undefined);
     toss.issueBillingKey.mockReset();
     toss.getPaymentByOrderId.mockRejectedValue(
-      new toss.TossApiError("not found", 404),
+      new toss.TossApiError("not found", 404, "NOT_FOUND_PAYMENT"),
     );
   });
 
@@ -1729,6 +1729,21 @@ integration("payments against the database", () => {
         refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
       ).rejects.toMatchObject({ name: "RefundError", status: 503 });
     });
+
+    test("a refund Toss is already making is not reported as failed", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      toss.cancelPayment.mockRejectedValue(
+        new toss.TossApiError("이미 환불 중", 400, "ALREADY_REFUNDING_PAYMENT"),
+      );
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000),
+      );
+
+      await expect(
+        refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
+      ).rejects.toMatchObject({ name: "RefundError", status: 503 });
+    });
   });
 
   describe("cancellation mail", () => {
@@ -2920,7 +2935,7 @@ integration("payments against the database", () => {
         if (orderId === "paid-meanwhile") {
           return tossPayment("paid-meanwhile", 1000);
         }
-        throw new toss.TossApiError("not found", 404);
+        throw new toss.TossApiError("not found", 404, "NOT_FOUND_PAYMENT");
       });
 
       expect(await confirm()).toMatchObject({ ok: true, cardChanged: true });
@@ -4530,7 +4545,7 @@ integration("payments against the database", () => {
         const userId = await makeUser();
         await oneTimeOrder(userId, { orderId: "window-closed" });
         toss.getPaymentByOrderId.mockRejectedValue(
-          new toss.TossApiError("not found", 404),
+          new toss.TossApiError("not found", 404, "NOT_FOUND_PAYMENT"),
         );
 
         const response = await prepare(userId);

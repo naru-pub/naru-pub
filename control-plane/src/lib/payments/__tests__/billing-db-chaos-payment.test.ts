@@ -307,7 +307,8 @@ function expected(error: unknown): boolean {
     error instanceof RefundError ||
     (error instanceof TossApiError &&
       error.status < 500 &&
-      error.code !== "ALREADY_CANCELED_PAYMENT")
+      error.code !== "ALREADY_CANCELED_PAYMENT" &&
+      error.code !== "ALREADY_REFUNDING_PAYMENT")
   );
 }
 

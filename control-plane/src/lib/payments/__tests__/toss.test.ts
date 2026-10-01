@@ -25,7 +25,7 @@ import {
   TossApiError,
   withNewOrderId,
 } from "@/lib/payments/toss";
-import { settleOrder } from "@/lib/payments/toss-gateway";
+import { deleteKey, settleOrder } from "@/lib/payments/toss-gateway";
 
 describe("Toss payment requests", () => {
   const originalBillingSecret = process.env.TOSS_BILLING_SECRET_KEY;
@@ -238,6 +238,10 @@ describe("Toss payment requests", () => {
     [400, "INVALID_REQUEST", false],
     [400, "NOT_MATCHES_CUSTOMER_KEY", false],
     [429, "TOO_MANY_REQUESTS", false],
+    // 나루's merchant setup at Toss, not the card.
+    [400, "NOT_FOUND_TERMINAL_ID", false],
+    [404, "NOT_FOUND_MERCHANT", false],
+    [400, "API_VERSION_UPDATE_NEEDED", false],
   ])("classifies HTTP %i %s", (status, code, definitive) => {
     expect(
       isDefinitiveTossFailure(new TossApiError("failure", status, code)),
@@ -502,6 +506,11 @@ describe("settling a failed charge", () => {
     });
   });
 
+  test("a 404 that is not about the order says nothing about it", async () => {
+    lookUpReturns(404, { code: "NOT_FOUND_MERCHANT", message: "없음" });
+    expect(await settle(declined)).toMatchObject({ kind: "unknown" });
+  });
+
   test("a temporary fault for an order Toss never recorded stays unknown", async () => {
     lookUpReturns(404, { code: "NOT_FOUND_PAYMENT", message: "없음" });
     expect(await settle(temporary)).toMatchObject({
@@ -548,5 +557,40 @@ describe("settling a failed charge", () => {
       .fn<typeof fetch>()
       .mockRejectedValue(new TypeError("fetch failed"));
     expect(await settle(declined)).toMatchObject({ kind: "unknown" });
+  });
+});
+
+describe("deleting a billing key", () => {
+  const originalBillingSecret = process.env.TOSS_BILLING_SECRET_KEY;
+
+  function deleteReturns(status: number, body: unknown) {
+    global.fetch = jest.fn<typeof fetch>().mockResolvedValue({
+      ok: status < 400,
+      status,
+      text: async () => JSON.stringify(body),
+    } as Response);
+  }
+
+  beforeEach(() => {
+    process.env.TOSS_BILLING_SECRET_KEY = "test_billing_secret";
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (originalBillingSecret === undefined) {
+      delete process.env.TOSS_BILLING_SECRET_KEY;
+    } else {
+      process.env.TOSS_BILLING_SECRET_KEY = originalBillingSecret;
+    }
+  });
+
+  test("a key Toss no longer has is deleted", async () => {
+    deleteReturns(404, { code: "NOT_FOUND_BILLING", message: "없음" });
+    expect(await deleteKey("key")).toEqual({ kind: "deleted" });
+  });
+
+  test("a MID Toss does not know leaves the key in place", async () => {
+    deleteReturns(404, { code: "NOT_FOUND_MERCHANT", message: "없음" });
+    expect(await deleteKey("key")).toMatchObject({ kind: "failed" });
   });
 });

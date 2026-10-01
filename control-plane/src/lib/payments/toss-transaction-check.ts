@@ -23,7 +23,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MONEY_MOVED = new Set(["DONE", "CANCELED", "PARTIAL_CANCELED"]);
 const MAX_PAGES = 100;
 
-// The KST day before `now`, as Toss's local times and as instants.
+// The KST day before `now`, as Toss's local times and as instants. Toss's
+// endDate is inclusive and to the second (its examples end a day at
+// 23:59:59), so the day's last second is asked for, not the next midnight,
+// which would count a transaction at 00:00:00 in two days.
 export function previousKstDay(now = new Date()) {
   const kstMidnight =
     Math.floor((now.getTime() + KST_OFFSET_MS) / DAY_MS) * DAY_MS;
@@ -31,7 +34,12 @@ export function previousKstDay(now = new Date()) {
   const end = new Date(kstMidnight - KST_OFFSET_MS);
   const local = (at: Date) =>
     new Date(at.getTime() + KST_OFFSET_MS).toISOString().slice(0, 19);
-  return { start, end, startLocal: local(start), endLocal: local(end) };
+  return {
+    start,
+    end,
+    startLocal: local(start),
+    endLocal: local(new Date(end.getTime() - 1000)),
+  };
 }
 
 // Both MIDs' transactions, each once: with test keys both secret keys can

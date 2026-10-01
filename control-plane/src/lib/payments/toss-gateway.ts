@@ -45,11 +45,20 @@ export type LookupOutcome =
 export async function lookupOrder(
   orderId: string,
   flow: TossPaymentFlow,
+  opts: { timeoutMs?: number } = {},
 ): Promise<LookupOutcome> {
   try {
-    return { kind: "found", payment: await getPaymentByOrderId(orderId, flow) };
+    return {
+      kind: "found",
+      payment: await (opts.timeoutMs
+        ? getPaymentByOrderId(orderId, flow, opts)
+        : getPaymentByOrderId(orderId, flow)),
+    };
   } catch (error) {
-    if (error instanceof TossApiError && error.status === 404) {
+    // Only Toss saying it has no such payment. Other 404s — NOT_FOUND_MERCHANT
+    // when the secret key is not the MID's, say — tell nothing about the
+    // order, and reading them as "never paid" would expire an approved one.
+    if (error instanceof TossApiError && error.code === "NOT_FOUND_PAYMENT") {
       return { kind: "not_found" };
     }
     return { kind: "unknown", error };
@@ -247,8 +256,8 @@ export async function issueKey(
     return {
       kind: "issued",
       billingKey: issued.billingKey,
-      cardCompany: issued.cardCompany ?? null,
-      cardNumber: issued.cardNumber ?? null,
+      cardCompany: issued.card?.issuerCode ?? issued.cardCompany ?? null,
+      cardNumber: issued.card?.number ?? issued.cardNumber ?? null,
     };
   } catch (error) {
     return isDefinitiveTossFailure(error)
@@ -283,17 +292,15 @@ export type DeleteKeyOutcome =
   | { kind: "deleted" }
   | { kind: "failed"; error: unknown };
 
-// Deletes a billing key at Toss. A key Toss no longer has is as deleted as it
-// will ever be.
+// Deletes a billing key at Toss. A key Toss no longer has (NOT_FOUND_BILLING)
+// is as deleted as it will ever be; any other 404 — a MID Toss does not know —
+// says nothing about the key, which may still be chargeable.
 export async function deleteKey(billingKey: string): Promise<DeleteKeyOutcome> {
   try {
     await deleteBillingKey(billingKey);
     return { kind: "deleted" };
   } catch (error) {
-    if (
-      error instanceof TossApiError &&
-      (error.status === 404 || (error.code ?? "").startsWith("NOT_FOUND"))
-    ) {
+    if (error instanceof TossApiError && error.code === "NOT_FOUND_BILLING") {
       return { kind: "deleted" };
     }
     return { kind: "failed", error };

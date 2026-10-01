@@ -4,7 +4,6 @@ import {
   maskSecret,
   paymentFlowForRecord,
   paymentProviderMetadata,
-  TossApiError,
   tossSecretKeys,
 } from "@/lib/payments/toss";
 import { markDeletedAtToss } from "@/lib/payments/billing-keys";
@@ -25,6 +24,33 @@ import {
 } from "@/lib/payments/toss-webhooks";
 
 type Delivery = Omit<WebhookLogEntry, "httpStatus" | "durationMs">;
+
+// Toss wants a 200 within 10 seconds, or it counts the delivery failed and
+// sends it again (https://docs.tosspayments.com/guides/v2/webhook). The order
+// lookup gets a short timeout, and the follow-up jobs only what is left of the
+// budget: one still running past it goes on in the background, and one that
+// fails stays queued for the run-payment-jobs cron.
+const LOOKUP_TIMEOUT_MS = 5000;
+const ANSWER_WITHIN_MS = 8000;
+
+async function runJobsWithin(
+  ids: Array<string | null>,
+  startedAt: number,
+): Promise<void> {
+  const left = ANSWER_WITHIN_MS - (Date.now() - startedAt);
+  const run = runJobs(ids).catch((error) =>
+    console.error("Toss webhook: follow-up jobs failed", error),
+  );
+  if (left <= 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    run,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, left);
+    }),
+  ]);
+  clearTimeout(timer);
+}
 
 function eventTypeOf(body: unknown): string {
   const eventType =
@@ -135,7 +161,7 @@ export async function POST(request: NextRequest) {
       const canceled = key?.user_id
         ? await withAccountLock(key.user_id, { waitMs: 5000 }, cancelPlan)
         : await cancelPlan();
-      await runJobs([canceled?.noticeJob ?? null]);
+      await runJobsWithin([canceled?.noticeJob ?? null], startedAt);
 
       return respond(
         200,
@@ -170,6 +196,7 @@ export async function POST(request: NextRequest) {
     const found = await lookupOrder(
       orderId,
       paymentFlowForRecord(ledger.toss_flow, ledger.attempt_key),
+      { timeoutMs: LOOKUP_TIMEOUT_MS },
     );
     if (found.kind === "not_found") {
       return respond(200, "ignored: Toss has no such order");
@@ -208,7 +235,7 @@ export async function POST(request: NextRequest) {
         kind: "reconcile_payment",
         paymentId: ledger.id,
       });
-      await runJobs([job]);
+      await runJobsWithin([job], startedAt);
       return respond(200, `reconcile job ${job} for payment ${ledger.id}`);
     }
     const flow = paymentFlowForRecord(ledger.toss_flow, ledger.attempt_key);
@@ -223,13 +250,13 @@ export async function POST(request: NextRequest) {
       .execute();
     return respond(200, `payment ${ledger.id} recorded only`);
   } catch (error) {
-    // Ask Toss to retry transient lookup/database failures.
-    const status =
-      error instanceof TossApiError && error.status === 404 ? 200 : 503;
-    if (status === 503) console.error("Toss webhook error:", error);
+    // Ask Toss to retry: a lookup that failed or timed out, a database
+    // fault, a 404 that is not about the order (lookupOrder answers
+    // not_found for that one).
+    console.error("Toss webhook error:", error);
     return respond(
-      status,
-      `${status === 200 ? "ignored" : "error, Toss will retry"}: ${error instanceof Error ? error.message : String(error)}`,
+      503,
+      `error, Toss will retry: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

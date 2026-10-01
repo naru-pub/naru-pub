@@ -81,6 +81,9 @@ export class TossApiError extends Error {
 // billing charge's customerKey that is not the one the key was issued for, a
 // malformed body. Counting one of these as a decline would fail a payment Toss
 // may have approved, or count a bug of 나루's against every subscriber's card.
+// Also 나루's merchant setup at Toss — a card terminal not yet provisioned, a
+// MID or integration Toss does not know, an API version Toss wants raised: a
+// live MID not fully set up would otherwise fail every renewal as a decline.
 // https://docs.tosspayments.com/reference/error-codes
 const NOT_A_DECLINE_CODES = new Set([
   "INVALID_REQUEST",
@@ -96,6 +99,11 @@ const NOT_A_DECLINE_CODES = new Set([
   "INVALID_API_KEY",
   "INCORRECT_BASIC_AUTH_FORMAT",
   "NOT_SUPPORTED_METHOD",
+  "NOT_FOUND_TERMINAL_ID",
+  "NOT_FOUND_MERCHANT",
+  "NOT_FOUND_MERCHANT_INTEGRATION",
+  "API_VERSION_UPDATE_NEEDED",
+  "INVALID_UNREGISTERED_SUBMALL",
 ]);
 
 // True when Toss refused the request on its merits — a declined card, an
@@ -253,6 +261,7 @@ async function tossRequest<T>(
     method?: "GET" | "POST" | "DELETE";
     body?: unknown;
     idempotencyKey?: string;
+    timeoutMs?: number;
   } = {},
 ): Promise<T> {
   const lab = labContext.getStore();
@@ -307,7 +316,7 @@ function orderIdOf(path: string, body: unknown): string | null {
 async function sendTossRequest<T>(
   flow: TossPaymentFlow,
   path: string,
-  init: { body?: unknown; idempotencyKey?: string },
+  init: { body?: unknown; idempotencyKey?: string; timeoutMs?: number },
   method: string,
   testCode: string | null,
   record: TossCallRecord,
@@ -327,7 +336,7 @@ async function sendTossRequest<T>(
         ...(testCode ? { "TossPayments-Test-Code": testCode } : {}),
       },
       body: init.body == null ? undefined : JSON.stringify(init.body),
-      signal: AbortSignal.timeout(TOSS_REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(init.timeoutMs ?? TOSS_REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
     record.error = error instanceof Error ? error.message : String(error);
@@ -367,7 +376,10 @@ async function sendTossRequest<T>(
 export type TossBillingKeyResult = {
   billingKey: string;
   customerKey: string;
-  // The card, masked by Toss (e.g. "43301234****123*").
+  // The card: its issuer's two-character code (카드사 코드, e.g. "61") and its
+  // number, masked by Toss (e.g. "43301234****123*"). API version 2024-06-01
+  // moved them from cardCompany and cardNumber, which older versions send.
+  card?: { issuerCode?: string | null; number?: string | null } | null;
   cardCompany?: string | null;
   cardNumber?: string | null;
 };
@@ -505,11 +517,17 @@ export function listTransactions(
   });
 }
 
-export function getPaymentByOrderId(orderId: string, flow: TossPaymentFlow) {
+// timeoutMs shortens the wait for a caller on a deadline (a webhook answers
+// Toss within 10 seconds).
+export function getPaymentByOrderId(
+  orderId: string,
+  flow: TossPaymentFlow,
+  opts: { timeoutMs?: number } = {},
+) {
   return tossRequest<TossPaymentResult>(
     flow,
     `/v1/payments/orders/${encodeURIComponent(orderId)}`,
-    { method: "GET" },
+    { method: "GET", ...opts },
   );
 }
 
