@@ -2516,6 +2516,30 @@ integration("payments against the database", () => {
       expect((await supporterUntil(userId))! > new Date()).toBe(true);
     });
 
+    test("a card Toss refuses to register is an operator event", async () => {
+      const { userId, customerKey } = await signingUp();
+      toss.issueBillingKey.mockRejectedValue(
+        new toss.TossApiError("카드 정보 오류", 400, "INVALID_CARD_NUMBER"),
+      );
+
+      expect(await confirm(userId, customerKey)).toMatchObject({
+        ok: false,
+        status: 402,
+      });
+
+      const events = await db
+        .selectFrom("payment_events")
+        .select(["kind", "summary"])
+        .where("user_id", "=", userId)
+        .execute();
+      expect(events).toEqual([
+        {
+          kind: "card_registration_failed",
+          summary: expect.stringContaining("정기 결제 가입 카드 등록 거절"),
+        },
+      ]);
+    });
+
     test("a declined first charge retires the key it was made with", async () => {
       const { userId, customerKey } = await signingUp();
       toss.chargeBillingKey.mockRejectedValue(

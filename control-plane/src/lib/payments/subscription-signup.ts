@@ -457,8 +457,24 @@ async function failFirstCharge(opts: {
 
 // A key Toss would not issue: refused on its merits (expired or used authKey,
 // card refused) — the supporter starts over — or not known, in which case the
-// same authKey's idempotency key hands back any key issued, on a retry.
-function issueFailure(issued: Exclude<IssueOutcome, { kind: "issued" }>) {
+// same authKey's idempotency key hands back any key issued, on a retry. Either
+// is a card_registration_failed event, so the operators hear of it.
+async function issueFailure(
+  issued: Exclude<IssueOutcome, { kind: "issued" }>,
+  context: {
+    userId: string;
+    subscriptionId?: string | null;
+    cardChange: boolean;
+  },
+) {
+  await notePaymentEvent({
+    kind: "card_registration_failed",
+    userId: context.userId,
+    subscriptionId: context.subscriptionId,
+    summary: `${context.cardChange ? "카드 변경" : "정기 결제 가입"} 카드 등록 ${
+      issued.kind === "refused" ? "거절" : "결과 불분명"
+    }: ${describeTossError(issued.error)}`,
+  });
   return issued.kind === "refused"
     ? fail(402, issued.error.message || "카드를 등록하지 못했습니다.")
     : fail(
@@ -555,7 +571,9 @@ export async function confirmSubscription(opts: {
       const settled = current ? alreadySettled(current) : null;
       if (settled) return settled;
       const issued = await issueKey(authKey, customerKey);
-      if (issued.kind !== "issued") return issueFailure(issued);
+      if (issued.kind !== "issued") {
+        return issueFailure(issued, { userId, cardChange: false });
+      }
       planId = await adoptSignupKey({
         userId,
         registrationId: registration.id,
@@ -771,7 +789,9 @@ async function swapCard(opts: {
   }
 
   const issued = await issueKey(authKey, customerKey);
-  if (issued.kind !== "issued") return issueFailure(issued);
+  if (issued.kind !== "issued") {
+    return issueFailure(issued, { userId, subscriptionId, cardChange: true });
+  }
 
   const changed = {
     ok: true as const,
