@@ -3,7 +3,7 @@ import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 import { deleteRetiredBillingKey } from "@/lib/billing-keys";
 import { db } from "@/lib/database";
 import { notePaymentEvent } from "@/lib/payment-events";
-import { supporterUntilFromLedger } from "@/lib/payment-reconciliation";
+import { supporterUntilFromLedger } from "@/lib/paid-time";
 import { retireUnusedSignupKey } from "@/lib/subscriptions";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -158,6 +158,40 @@ export async function checkPaymentInvariants(
               selectFrom("subscriptions as s")
                 .select("s.id")
                 .whereRef("s.billing_key_id", "=", "k.id"),
+            ),
+          ),
+        ),
+    ),
+  );
+  note(
+    "환불 금액이 원장의 취소 합계와 다름",
+    await ids(
+      db
+        .selectFrom("payments as p")
+        .select("p.id")
+        .where(
+          "p.refunded_amount",
+          "!=",
+          sql<number>`(select coalesce(sum(t.amount), 0)::int from payment_transactions t
+            where t.payment_id = p.id and t.kind = 'cancel')`,
+        ),
+    ),
+  );
+  note(
+    "완료된 결제에 원장의 승인 기록이 없음",
+    await ids(
+      db
+        .selectFrom("payments as p")
+        .select("p.id")
+        .where("p.status", "in", ["done", "canceled", "partial_canceled"])
+        .where("p.paid_at", "is not", null)
+        .where(({ not, exists, selectFrom }) =>
+          not(
+            exists(
+              selectFrom("payment_transactions as t")
+                .select("t.id")
+                .whereRef("t.payment_id", "=", "p.id")
+                .where("t.kind", "=", "approval"),
             ),
           ),
         ),

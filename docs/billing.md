@@ -40,6 +40,10 @@
 
 매일 05:00(KST)의 `check-payment-invariants.ts`(`lib/payment-invariants.ts`)가 결제 데이터가 늘 지켜야 할 규칙 — 끝난 정기 결제에 빌링키 없음, 진행 중인 정기 결제에 빌링키 있음, 완료된 결제에 기간 있음, 환불 금액은 취소 상태에만, 하루 넘게 결과를 모르는 주문 없음, 삭제 대기열의 키를 아무도 쓰지 않음, 이용 기한이 결제 원장보다 짧지 않음 — 을 확인하고, 깨진 것이 있으면 `invariant_violation`(결제 데이터 이상) 이벤트 하나로 운영자에게 알립니다. 5분마다 도는 키 삭제 작업은 하루 넘게 버려진 가입(`incomplete`, 대기 중인 주문 없음)의 빌링키도 폐기합니다. 결제 작업(갱신·대사·키 삭제·환불 동기화·안내 메일·데이터 확인)이 실패하거나 제한 시간에 걸리면 `job_failed`(결제 작업 실패) 이벤트가 남고, 같은 작업은 앞 실행이 끝나기 전에는 다시 시작하지 않습니다. 매일 도는 작업의 시각은 모두 한국 시간입니다(서버는 UTC).
 
+## 이용 기한 (`supporter_until`)
+
+`users.supporter_until`은 `lib/paid-time.ts`만 씁니다(`billing-key-writes-payment.test.ts`가 지킵니다). 결제를 부여하면 그 결제가 산 기간의 끝까지 늘리고 줄이지 않습니다(`extendPaidTime`). 환불되면 환불되지 않은 결제들이 산 기간을 원장에서 다시 계산해 줄이기만 합니다(`recomputePaidTime`, `supporterUntilFromLedger`). 결제 실험실의 시간 이동(`movePaidTimeForLab`)만 예외입니다. 부여와 환불은 같은 순서로 잠급니다: 결제, 사용자, 정기 결제.
+
 ## 결제 작업 대기열
 
 결제가 바뀐 뒤 해야 하는 일 — 감사·영수증·유예·연체·해지·결제 취소 메일, 웹훅의 대사 — 은 `payment_jobs`에 작업으로 넣습니다(`lib/payment-jobs.ts`). 작업은 그 변경과 같은 트랜잭션에서 들어가므로, 롤백된 변경의 메일은 나가지 않고 커밋 직후 프로세스가 죽어도 메일은 사라지지 않습니다. 요청은 커밋한 뒤 곧바로 그 작업을 실행하므로(`runJobs`) 메일은 바로 나가고, 실패한 작업은 cron의 `run-payment-jobs.ts`(매분)가 1, 2, 4…분(최대 여섯 시간) 간격으로 다시 시도합니다. `MAX_ATTEMPTS`(8번)를 넘기면 멈추고 `job_failed` 이벤트로 운영자에게 알립니다. 계정이 다른 결제 작업 중이면 실패로 세지 않고 1분 뒤 다시 합니다. `dedupe_key`(예: `subscription_canceled:<구독 id>`, `payment_canceled:<결제 id>:<누적 환불액>`)가 한 일에 한 작업만 남깁니다.
@@ -105,6 +109,7 @@
 - `toss_webhook_deliveries`: 받은 웹훅과 처리 결과.
 - `toss_calls`: 나루가 Toss에 보낸 모든 요청과 응답(빌링키·시크릿은 가림), 걸린 시간.
 - `payment_jobs`: 결제 뒤에 해야 하는 일의 대기열(위 '결제 작업 대기열').
+- `payment_transactions`: 실제로 오간 돈의 기록. 결제마다 승인 한 줄, Toss가 한 취소마다 한 줄(Toss의 `transactionKey`로 한 번만). 추가만 되고 고쳐지지 않습니다(트리거가 `UPDATE`를 거절). `payments.refunded_amount`는 그 결제의 취소 합계이고, 매일의 데이터 확인이 둘을 맞춰 봅니다(`lib/payment-ledger.ts`).
 - `payments`: Toss 청구 시도/성공 원장. `refunded_amount`, `refunded_at`은 Toss에서 확인한 누적 환불 정보이고, `last_reconciled_at`, `reconciliation_error`는 최근 대사 진단입니다.
 
 ## 환경 변수

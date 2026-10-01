@@ -326,6 +326,16 @@ export interface Payments {
   user_id: string;
 }
 
+export interface PaymentTransactions {
+  amount: number;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  kind: "approval" | "cancel";
+  occurred_at: Timestamp;
+  payment_id: string;
+  transaction_key: string;
+}
+
 export interface RemoteActors {
   created_at: Generated<Timestamp>;
   fetched_at: Generated<Timestamp>;
@@ -514,6 +524,7 @@ export interface DB {
   password_reset_tokens: PasswordResetTokens;
   payment_events: PaymentEvents;
   payment_jobs: PaymentJobs;
+  payment_transactions: PaymentTransactions;
   payments: Payments;
   remote_actors: RemoteActors;
   sessions: Sessions;

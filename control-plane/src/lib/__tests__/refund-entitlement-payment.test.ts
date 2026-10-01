@@ -1,5 +1,5 @@
 import { describe, expect, test } from "@jest/globals";
-import { supporterUntilFromLedger } from "@/lib/payment-reconciliation";
+import { supporterUntilFromLedger } from "@/lib/paid-time";
 
 const YEAR_ONE_END = "2027-01-01T00:00:00Z";
 const YEAR_TWO_END = "2028-01-01T00:00:00Z";

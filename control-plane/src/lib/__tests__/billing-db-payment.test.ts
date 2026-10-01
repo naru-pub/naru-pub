@@ -89,6 +89,8 @@ const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
 const { enqueueJob, runDueJobs, MAX_ATTEMPTS } =
   require("@/lib/payment-jobs") as typeof import("@/lib/payment-jobs");
+const { checkPaymentInvariants } =
+  require("@/lib/payment-invariants") as typeof import("@/lib/payment-invariants");
 const crypto =
   require("@/lib/billing-key-crypto") as typeof import("@/lib/billing-key-crypto");
 const { NextRequest } = require("next/server") as typeof import("next/server");
@@ -1009,6 +1011,95 @@ integration("payments against the database", () => {
       await deleteRetiredBillingKeys(new Date(now.getTime() + 61 * 60 * 1000));
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("refused");
       expect(await queued()).toEqual([]);
+    });
+  });
+
+  describe("the payment ledger", () => {
+    async function transactions(paymentId: string) {
+      return db
+        .selectFrom("payment_transactions")
+        .select(["kind", "amount"])
+        .where("payment_id", "=", paymentId)
+        .orderBy("id")
+        .execute();
+    }
+
+    async function paidOneTime(userId: string, orderId: string) {
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: `one_time:1:${orderId}`,
+        orderId,
+        amount: 12000,
+      });
+      await applyOneTimePayment({
+        userId,
+        amount: 12000,
+        years: 1,
+        payment: tossPayment(orderId, 12000),
+        paymentId,
+      });
+      return paymentId;
+    }
+
+    test("an approval and each cancel are recorded once", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidOneTime(userId, "ledger-order");
+      expect(await transactions(paymentId)).toEqual([
+        { kind: "approval", amount: 12000 },
+      ]);
+
+      const cancels = [
+        {
+          cancelAmount: 2000,
+          transactionKey: "tx-1",
+          canceledAt: new Date().toISOString(),
+        },
+      ];
+      toss.getPaymentByOrderId.mockImplementation(async () =>
+        tossPayment("ledger-order", 12000, {
+          status: "PARTIAL_CANCELED",
+          cancels: [...cancels],
+        }),
+      );
+      await reconcilePayment(paymentId);
+      await reconcilePayment(paymentId);
+      cancels.push({
+        cancelAmount: 3000,
+        transactionKey: "tx-2",
+        canceledAt: new Date().toISOString(),
+      });
+      expect(await reconcilePayment(paymentId)).toMatchObject({
+        state: "refunded",
+        amount: 5000,
+        full: false,
+      });
+
+      expect(await transactions(paymentId)).toEqual([
+        { kind: "approval", amount: 12000 },
+        { kind: "cancel", amount: 2000 },
+        { kind: "cancel", amount: 3000 },
+      ]);
+      const payment = await db
+        .selectFrom("payments")
+        .select("refunded_amount")
+        .where("id", "=", paymentId)
+        .executeTakeFirstOrThrow();
+      expect(payment.refunded_amount).toBe(5000);
+      expect(await checkPaymentInvariants()).toEqual({});
+    });
+
+    test("a recorded transaction cannot be changed", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidOneTime(userId, "immutable-order");
+
+      await expect(
+        db
+          .updateTable("payment_transactions")
+          .set({ amount: 1 })
+          .where("payment_id", "=", paymentId)
+          .execute(),
+      ).rejects.toThrow("append-only");
     });
   });
 

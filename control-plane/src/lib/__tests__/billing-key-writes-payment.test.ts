@@ -60,6 +60,24 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ).toEqual([]);
   });
 
+  // Paid time has one owner (lib/paid-time.ts), and the money ledger one
+  // writer (lib/payment-ledger.ts).
+  test("only lib/paid-time.ts writes supporter_until", () => {
+    expect(
+      offenders(/supporter_until\s*:(?!\s*(Date|string)\b)/, [
+        "lib/paid-time.ts",
+      ]),
+    ).toEqual([]);
+  });
+
+  test("only lib/payment-ledger.ts writes payment_transactions", () => {
+    expect(
+      offenders(/insertInto\(\s*["']payment_transactions["']\s*\)/, [
+        "lib/payment-ledger.ts",
+      ]),
+    ).toEqual([]);
+  });
+
   test("users rows are only deleted through deleteUserRow", () => {
     expect(
       offenders(/deleteFrom\(\s*["']users["']\s*\)|delete\s+from\s+users\b/i, [
@@ -77,6 +95,9 @@ describe("billing keys are only dropped through retireBillingKey", () => {
       "lib/billing-keys.ts",
     ]);
     expect(offenders(STORES_KEY, [])).toEqual(["lib/subscription-signup.ts"]);
+    expect(
+      offenders(/supporter_until\s*:(?!\s*(Date|string)\b)/, []).sort(),
+    ).toEqual(["lib/paid-time.ts"]);
     expect(offenders(/deleteFrom\(\s*["']users["']\s*\)/, [])).toEqual([
       "lib/account-deletion.ts",
     ]);

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/database";
+import { movePaidTimeForLab } from "@/lib/paid-time";
 import { chargeableKey, deleteRetiredBillingKeys } from "@/lib/billing-keys";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { refundPayment } from "@/lib/refunds";
@@ -259,11 +260,7 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
             })
             .where("id", "=", input.subscriptionId)
             .execute();
-          await trx
-            .updateTable("users")
-            .set({ supporter_until: periodEnd })
-            .where("id", "=", sub.user_id)
-            .execute();
+          await movePaidTimeForLab(trx, sub.user_id, periodEnd);
         });
         return input.to === "period_end"
           ? "결제 기간이 지금 끝나도록 옮겼습니다."

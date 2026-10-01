@@ -1,4 +1,6 @@
 import { sql } from "kysely";
+import { extendPaidTime, lockPaidTime } from "@/lib/paid-time";
+import { recordApproval } from "@/lib/payment-ledger";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
@@ -172,19 +174,12 @@ export async function applyOneTimePayment(opts: {
 
       // Serialize entitlement extensions for this user. Two distinct donations
       // confirmed together must each add their full period.
-      const current = await trx
-        .selectFrom("users")
-        .select("supporter_until")
-        .where("id", "=", opts.userId)
-        .forNoKeyUpdate()
-        .executeTakeFirstOrThrow();
-      const periodStart =
-        current.supporter_until && new Date(current.supporter_until) > now
-          ? new Date(current.supporter_until)
-          : now;
+      const paidUntil = await lockPaidTime(trx, opts.userId);
+      const periodStart = paidUntil && paidUntil > now ? paidUntil : now;
       const periodEnd = addMonths(periodStart, 12 * opts.years);
 
-      if (opts.paymentId) {
+      let paymentId = opts.paymentId;
+      if (paymentId) {
         await trx
           .updateTable("payments")
           .set({
@@ -198,10 +193,10 @@ export async function applyOneTimePayment(opts: {
             period_end: periodEnd,
             raw: JSON.stringify(opts.payment),
           })
-          .where("id", "=", opts.paymentId)
+          .where("id", "=", paymentId)
           .execute();
       } else {
-        await trx
+        const inserted = await trx
           .insertInto("payments")
           .values({
             ...paymentProviderMetadata(opts.payment, "one-time"),
@@ -216,14 +211,12 @@ export async function applyOneTimePayment(opts: {
             period_end: periodEnd,
             raw: JSON.stringify(opts.payment),
           })
-          .execute();
+          .returning("id")
+          .executeTakeFirstOrThrow();
+        paymentId = inserted.id;
       }
-
-      await trx
-        .updateTable("users")
-        .set({ supporter_until: periodEnd })
-        .where("id", "=", opts.userId)
-        .execute();
+      await recordApproval(trx, { paymentId, amount: opts.amount, at: paidAt });
+      await extendPaidTime(trx, opts.userId, periodEnd);
 
       // A confirmed one-time purchase switches an active recurring supporter to
       // prepaid access atomically, so the old billing key can never renew at the
@@ -282,7 +275,7 @@ export async function applyOneTimePayment(opts: {
 // confirm flow and the recurring-charge cron. `granted` is false when the
 // payment had already been applied, so the caller's receipt goes out once.
 //
-// The new period never starts before the user's current supporter_until: a
+// The new period never starts before the user's current supporter_until, as a
 // one-time purchase may have stacked prepaid time past current_period_end, and
 // overwriting supporter_until with an earlier date would take that time away.
 // A subscription that was stopped while this charge was in flight stays
@@ -328,15 +321,7 @@ export async function applySuccessfulCharge(opts: {
       }
 
       // Same lock order as applyOneTimePayment: payments, users, subscriptions.
-      // FOR NO KEY UPDATE on the user serializes grants without blocking the
-      // key-share lock a payment_events insert takes on it, which a transaction
-      // holding the subscription may need.
-      const current = await trx
-        .selectFrom("users")
-        .select("supporter_until")
-        .where("id", "=", opts.userId)
-        .forNoKeyUpdate()
-        .executeTakeFirstOrThrow();
+      const paidUntil = await lockPaidTime(trx, opts.userId);
       const subscription = await trx
         .selectFrom("subscriptions")
         .select(["status", "billing_key_id"])
@@ -344,16 +329,12 @@ export async function applySuccessfulCharge(opts: {
         .forUpdate()
         .executeTakeFirstOrThrow();
 
-      let periodStart = opts.from;
-      if (
-        current.supporter_until &&
-        new Date(current.supporter_until) > periodStart
-      ) {
-        periodStart = new Date(current.supporter_until);
-      }
+      const periodStart =
+        paidUntil && paidUntil > opts.from ? paidUntil : opts.from;
       const periodEnd = addInterval(periodStart, opts.interval);
 
-      if (opts.paymentId) {
+      let paymentId = opts.paymentId;
+      if (paymentId) {
         await trx
           .updateTable("payments")
           .set({
@@ -367,10 +348,10 @@ export async function applySuccessfulCharge(opts: {
             period_end: periodEnd,
             raw: JSON.stringify(opts.payment),
           })
-          .where("id", "=", opts.paymentId)
+          .where("id", "=", paymentId)
           .execute();
       } else {
-        await trx
+        const inserted = await trx
           .insertInto("payments")
           .values({
             ...paymentProviderMetadata(opts.payment, "billing"),
@@ -385,8 +366,11 @@ export async function applySuccessfulCharge(opts: {
             period_end: periodEnd,
             raw: JSON.stringify(opts.payment),
           })
-          .execute();
+          .returning("id")
+          .executeTakeFirstOrThrow();
+        paymentId = inserted.id;
       }
+      await recordApproval(trx, { paymentId, amount: opts.amount, at: paidAt });
 
       // Without a billing key there is nothing to renew with: a signup whose
       // first charge was declined, then approved after all, has given its key
@@ -410,11 +394,7 @@ export async function applySuccessfulCharge(opts: {
         })
         .where("id", "=", opts.subscriptionId)
         .execute();
-      await trx
-        .updateTable("users")
-        .set({ supporter_until: periodEnd })
-        .where("id", "=", opts.userId)
-        .execute();
+      await extendPaidTime(trx, opts.userId, periodEnd);
       await recordPaymentEvent(trx, {
         kind: "charge_succeeded",
         userId: opts.userId,

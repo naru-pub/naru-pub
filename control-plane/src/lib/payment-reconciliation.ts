@@ -22,6 +22,8 @@ import { confirmOrder, lookupOrder } from "@/lib/toss-gateway";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payment-events";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
+import { recordCancels } from "@/lib/payment-ledger";
+import { lockPaidTime, recomputePaidTime } from "@/lib/paid-time";
 
 // An order Toss has never heard of is given up after this long. A one-time
 // order exists at Toss only once the buyer has opened the payment window,
@@ -45,60 +47,6 @@ export function refundDetails(payment: TossPaymentResult, amount: number) {
     refundedAt: refundedAt ? new Date(refundedAt) : null,
     full: refundedAmount >= amount,
   };
-}
-
-export type EntitlementLedgerRow = {
-  periodStart?: Date | string | null;
-  periodEnd: Date | string | null;
-  paidAt?: Date | string | null;
-  amount: number;
-  refundedAmount: number;
-};
-
-// supporter_until is where the periods the unrefunded payments bought end. A
-// refunded payment stops counting, so the time it granted goes back with the
-// money. 나루 does not offer partial refunds, so any refunded amount undoes the
-// whole purchase rather than a slice of it.
-//
-// Purchases stack: one bought while time remained starts where that time ended.
-// So the ledger is replayed in order, and a period that was queued behind a
-// refunded one moves up — but never earlier than it was paid for, and never
-// later than it was recorded. A period that did not stack keeps its dates.
-export function supporterUntilFromLedger(
-  rows: EntitlementLedgerRow[],
-): Date | null {
-  const periods = rows
-    .filter((row) => row.periodEnd)
-    .map((row) => ({
-      start: row.periodStart ? new Date(row.periodStart) : null,
-      end: new Date(row.periodEnd!),
-      paidAt: row.paidAt ? new Date(row.paidAt) : null,
-      refunded: row.refundedAmount > 0,
-    }))
-    .sort(
-      (a, b) =>
-        (a.start ?? a.end).getTime() - (b.start ?? b.end).getTime() ||
-        a.end.getTime() - b.end.getTime(),
-    );
-
-  let cursor: Date | null = null;
-  let latest: Date | null = null;
-  for (const period of periods) {
-    if (period.refunded) continue;
-    let end = period.end;
-    if (period.start && period.paidAt) {
-      const earliest =
-        cursor && cursor > period.paidAt ? cursor : period.paidAt;
-      if (earliest < period.start) {
-        end = new Date(
-          period.end.getTime() - (period.start.getTime() - earliest.getTime()),
-        );
-      }
-    }
-    if (!cursor || end > cursor) cursor = end;
-    if (!latest || end > latest) latest = end;
-  }
-  return latest;
 }
 
 export type ReconciliationResult =
@@ -245,10 +193,11 @@ async function reconcilePaymentCore(
       "failed",
     ]);
     if (finalStatuses.has(status)) {
-      const { refundedAmount, refundedAt, full } = refundDetails(
-        tossPayment,
-        payment.amount,
-      );
+      // What Toss reports; the ledger, which keeps each cancel once, is
+      // what is written.
+      const reported = refundDetails(tossPayment, payment.amount);
+      let refundedAmount = reported.refundedAmount;
+      let refundedAt = reported.refundedAt;
 
       const { retiredKey, subscriptionCanceled, noticeJob } = await db
         .transaction()
@@ -266,12 +215,12 @@ async function reconcilePaymentCore(
           // this runs holds this lock (payments, users, subscriptions), so its
           // period is in the ledger read below rather than overwritten by a
           // supporter_until recomputed without it.
-          const currentUser = await trx
-            .selectFrom("users")
-            .select("supporter_until")
-            .where("id", "=", payment.user_id)
-            .forNoKeyUpdate()
-            .executeTakeFirst();
+          await lockPaidTime(trx, payment.user_id);
+          ({ refundedAmount, refundedAt } = await recordCancels(trx, {
+            paymentId: payment.id,
+            payment: tossPayment,
+            fallbackAt: new Date(),
+          }));
           await trx
             .updateTable("payments")
             .set({
@@ -293,42 +242,7 @@ async function reconcilePaymentCore(
           // and the entitlement stayed. Recomputed from the ledger rather than
           // subtracted, so a refund cannot disturb periods other payments paid
           // for.
-          const ledger = await trx
-            .selectFrom("payments")
-            .select([
-              "period_start",
-              "period_end",
-              "paid_at",
-              "amount",
-              "refunded_amount",
-            ])
-            .where("user_id", "=", payment.user_id)
-            .where("period_end", "is not", null)
-            .execute();
-          const recomputed = supporterUntilFromLedger(
-            ledger.map((row) => ({
-              periodStart: row.period_start,
-              periodEnd: row.period_end,
-              paidAt: row.paid_at,
-              amount: row.amount,
-              refundedAmount: row.refunded_amount,
-            })),
-          );
-          const currentUntil = currentUser?.supporter_until
-            ? new Date(currentUser.supporter_until)
-            : null;
-          // Only ever shortens. Lifetime comps live on supporter_comp and are
-          // untouched by this.
-          if (
-            currentUntil &&
-            (recomputed === null || recomputed < currentUntil)
-          ) {
-            await trx
-              .updateTable("users")
-              .set({ supporter_until: recomputed })
-              .where("id", "=", payment.user_id)
-              .execute();
-          }
+          const recomputed = await recomputePaidTime(trx, payment.user_id);
 
           // A refund ends the billing relationship, not just this one charge:
           // the recurring plan the account had when the money went back must
@@ -447,7 +361,7 @@ async function reconcilePaymentCore(
         return {
           state: "refunded",
           amount: refundedAmount,
-          full,
+          full: refundedAmount >= payment.amount,
           subscriptionCanceled,
         };
       }
