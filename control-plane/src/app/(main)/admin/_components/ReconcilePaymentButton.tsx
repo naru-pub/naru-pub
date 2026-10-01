@@ -27,6 +27,11 @@ export function ReconcilePaymentButton({ paymentId }: { paymentId: string }) {
       }
       if (body.result.state === "pending") {
         toast("아직 Toss에서 결제 완료를 확인하지 못했습니다.");
+      } else if (body.result.state === "failed") {
+        // Ended rows (expired, failed, declined) are not looked up again.
+        toast(
+          `이미 ${body.result.status} 상태로 끝난 결제라 Toss에 다시 묻지 않았습니다. Toss에서 결제됐는지는 'Toss에서 복구'로 확인하세요.`,
+        );
       } else {
         toast.success("결제 상태를 다시 확인했습니다.");
       }

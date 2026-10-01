@@ -1,3 +1,4 @@
+import { renewalChargeAt } from "@/lib/renewal-time";
 import { db } from "@/lib/database";
 import { sendSubscriptionRenewalNoticeEmail } from "@/lib/email";
 
@@ -50,7 +51,9 @@ async function main() {
         email: sub.email!,
         loginName: sub.login_name,
         amount: sub.amount,
-        nextBillingAt: new Date(sub.next_billing_at!),
+        // When the renewal is actually charged: 09:00 KST on or after it
+        // falls due.
+        nextBillingAt: renewalChargeAt(sub.next_billing_at!),
       });
 
       await db

@@ -25,12 +25,10 @@ import {
 } from "@/lib/support-purchases";
 import {
   applySuccessfulCharge,
-  CHARGE_LEASE_MINUTES,
-  claimSubscriptionForConfirm,
-  releaseSubscriptionLease,
   retireUnusedSignupKey,
   scheduleSubscriptionStart,
 } from "@/lib/subscriptions";
+import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 import {
   BillingInterval,
   chargeBillingKey,
@@ -47,13 +45,20 @@ import {
 } from "@/lib/toss";
 import { settleFailedOrder } from "@/lib/toss-orders";
 
-// The subscribe flow, step by step: prepareSubscription records the chosen
-// plan and hands back the customerKey for requestBillingAuth; Toss redirects
-// to the callback, whose confirmSubscription exchanges the authKey for a
-// billing key and charges (or schedules) the first period. Changing the card
-// of a running subscription (prepareCardChange) goes through the same
+// The subscribe flow, step by step: prepareSubscription records a card
+// registration and the chosen plan and hands back the customerKey for
+// requestBillingAuth; Toss redirects to the callback, whose
+// confirmSubscription exchanges the authKey for a billing key, switches the
+// subscription to it and charges (or schedules) the first period. Changing
+// the card of a running subscription (prepareCardChange) goes through the same
 // callback and confirm. The route handlers only translate these results into
 // HTTP.
+//
+// Prepare changes nothing a supporter can see: a canceled or past_due plan
+// stays as it is until the new card is actually registered, so closing the
+// card window leaves the account where it was. Each step runs under the
+// account lock (lib/account-lock), so no renewal, refund or second callback
+// runs on the account meanwhile.
 //
 // Each prepare starts a new card registration, whose id the callback carries
 // in its path, and confirm acts only on the latest one. The key issue call's
@@ -69,6 +74,16 @@ export type SignupResult<T extends object> =
 function fail(status: number, message: string) {
   return { ok: false as const, status, message };
 }
+
+// A signup confirm may start from these: a first signup or one interrupted
+// (incomplete), or a plan that ended (canceled, past_due,
+// switched_to_one_time) being started again.
+const SIGNUP_FROM_STATUSES = [
+  "incomplete",
+  "canceled",
+  "past_due",
+  "switched_to_one_time",
+];
 
 const PREVIOUS_CHARGE_PENDING_MESSAGE =
   "이전 결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.";
@@ -87,12 +102,10 @@ const STALE_REGISTRATION_MESSAGE =
 // Settles the subscription's orders whose outcome is still unknown. A new card
 // must not start while one of them might yet turn out charged: the pending
 // order's id and idempotency key belong to the old card and amount, and a late
-// success has to land on the subscription first. A caller holding the
-// subscription's charge lease passes it, so its own lease does not keep an
-// order Toss never saw from expiring.
+// success has to land on the subscription first. Callers hold the account
+// lock, which reconciliation takes too.
 export async function settlePendingCharges(
   subscriptionId: string,
-  leaseHeldAt: Date | null = null,
 ): Promise<boolean> {
   const pending = await db
     .selectFrom("payments")
@@ -102,7 +115,7 @@ export async function settlePendingCharges(
     .execute();
   for (const payment of pending) {
     try {
-      await reconcilePayment(payment.id, { leaseHeldAt });
+      await reconcilePayment(payment.id);
     } catch (error) {
       console.error(
         `Subscription prepare: reconciling payment ${payment.id} failed`,
@@ -140,7 +153,37 @@ export type PreparedRegistration = {
   registrationId: string;
 };
 
+// Runs a step of the flow under the account lock. A step that does not get
+// it in time answers busy: 409 for a prepare the supporter can click again,
+// 503 for a confirm, whose callback page retries on 503.
+const LOCK_WAIT_MS = 5000;
+
+async function underAccountLock<T extends object>(
+  userId: string,
+  busyStatus: number,
+  fn: () => Promise<SignupResult<T>>,
+): Promise<SignupResult<T>> {
+  try {
+    return await withAccountLock(userId, { waitMs: LOCK_WAIT_MS }, fn);
+  } catch (error) {
+    if (error instanceof AccountBusyError) {
+      return fail(busyStatus, CHARGE_IN_PROGRESS_MESSAGE);
+    }
+    throw error;
+  }
+}
+
 export async function prepareSubscription(opts: {
+  userId: string;
+  interval: BillingInterval;
+  now?: Date;
+}): Promise<SignupResult<PreparedRegistration>> {
+  return underAccountLock(opts.userId, 409, () =>
+    prepareSubscriptionLocked(opts),
+  );
+}
+
+async function prepareSubscriptionLocked(opts: {
   userId: string;
   interval: BillingInterval;
   now?: Date;
@@ -205,53 +248,29 @@ export async function prepareSubscription(opts: {
         toss_customer_key: customerKey,
         card_registration_id: registrationId,
         card_registration_kind: "signup",
+        card_registration_interval: interval,
         plan_started_at: now,
       })
       .execute();
     return { ok: true, customerKey, registrationId };
   }
 
-  // A new card is registered next, so the old key is done. The reset waits
-  // for any charge in flight: a renewal still charging the old key would
-  // otherwise land on a subscription whose key was just taken away.
-  const staleLeaseBefore = new Date(
-    now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000,
-  );
-  const reset = await db.transaction().execute(async (trx) => {
-    const updated = await trx
-      .updateTable("subscriptions")
-      .set({
-        plan: "supporter",
-        billing_interval: interval,
-        amount,
-        status: "incomplete",
-        toss_customer_key: customerKey,
-        card_registration_id: registrationId,
-        card_registration_kind: "signup",
-        plan_started_at: now,
-        charging_started_at: null,
-        updated_at: now,
-      })
-      .where("id", "=", existing.id)
-      .where("status", "not in", ["active", "scheduled"])
-      .where((eb) =>
-        eb.or([
-          eb("charging_started_at", "is", null),
-          eb("charging_started_at", "<", staleLeaseBefore),
-        ]),
-      )
-      .executeTakeFirst();
-    if (Number(updated.numUpdatedRows ?? 0) === 0) {
-      return { reset: false as const, billingKey: null };
-    }
-    return {
-      reset: true as const,
-      billingKey: await retireBillingKey(trx, { subscriptionId: existing.id }),
-    };
-  });
-  await deleteRetiredBillingKey(reset.billingKey);
-  if (!reset.reset) return fail(409, CHARGE_IN_PROGRESS_MESSAGE);
-
+  // Only the registration: the plan's status, dates and current key stay
+  // until confirm has a new key to put in their place.
+  const started = await db
+    .updateTable("subscriptions")
+    .set({
+      card_registration_id: registrationId,
+      card_registration_kind: "signup",
+      card_registration_interval: interval,
+      updated_at: now,
+    })
+    .where("id", "=", existing.id)
+    .where("status", "in", SIGNUP_FROM_STATUSES)
+    .executeTakeFirst();
+  if (Number(started.numUpdatedRows ?? 0) === 0) {
+    return fail(409, "이미 활성화되었거나 예약된 정기 결제가 있습니다.");
+  }
   return { ok: true, customerKey, registrationId };
 }
 
@@ -263,7 +282,14 @@ export async function prepareSubscription(opts: {
 export async function prepareCardChange(opts: {
   userId: string;
 }): Promise<SignupResult<PreparedRegistration>> {
-  const { userId } = opts;
+  return underAccountLock(opts.userId, 409, () =>
+    prepareCardChangeLocked(opts.userId),
+  );
+}
+
+async function prepareCardChangeLocked(
+  userId: string,
+): Promise<SignupResult<PreparedRegistration>> {
   const existing = await db
     .selectFrom("subscriptions")
     .select(["id", "status", "toss_billing_key"])
@@ -297,6 +323,7 @@ export async function prepareCardChange(opts: {
     .set({
       card_registration_id: registrationId,
       card_registration_kind: "card_change",
+      card_registration_interval: null,
       updated_at: new Date(),
     })
     .where("id", "=", existing.id)
@@ -363,43 +390,71 @@ async function getOrCreateInitialChargeAttempt(opts: {
   }
 }
 
-// Stores the key Toss just issued, but only on a signup still waiting for it.
-// A cancel does not wait for the confirm's lease, so it may have landed while
-// Toss was issuing; the key then belongs to nothing and is deleted at Toss.
-async function storeIssuedBillingKey(
-  subscriptionId: string,
-  billingKey: string,
-): Promise<boolean> {
-  const { stored, discarded } = await db.transaction().execute(async (trx) => {
-    const result = await trx
-      .updateTable("subscriptions")
-      .set({ toss_billing_key: billingKey, updated_at: new Date() })
-      .where("id", "=", subscriptionId)
-      .where("status", "=", "incomplete")
-      .where("toss_billing_key", "is", null)
-      .executeTakeFirst();
-    if (Number(result.numUpdatedRows ?? 0) > 0) {
-      return { stored: true, discarded: null };
-    }
-    // Toss replays the key it issued for an authKey, so a doubled callback
-    // gets back the key the first one already stored. That key is the
-    // subscription's own: it must never be queued for deletion.
+// Switches the subscription to the key Toss just issued for this signup: the
+// plan it was (canceled, past_due, an earlier signup's) gives way to an
+// incomplete one with the new key and the chosen plan, and any old key is
+// retired. Only while the registration is still this one; otherwise the key
+// belongs to nothing and is deleted at Toss. A key the subscription already
+// holds (Toss replays an authKey's key) is its own and is never discarded.
+async function adoptSignupKey(opts: {
+  subscriptionId: string;
+  registrationId: string;
+  billingKey: string;
+  customerKey: string;
+}): Promise<boolean> {
+  const { adopted, retired } = await db.transaction().execute(async (trx) => {
     const current = await trx
       .selectFrom("subscriptions")
-      .select(["status", "toss_billing_key"])
-      .where("id", "=", subscriptionId)
+      .select([
+        "status",
+        "toss_billing_key",
+        "card_registration_id",
+        "card_registration_interval",
+        "billing_interval",
+      ])
+      .where("id", "=", opts.subscriptionId)
       .forUpdate()
-      .executeTakeFirst();
-    if (current?.toss_billing_key === billingKey) {
-      return { stored: current.status === "incomplete", discarded: null };
+      .executeTakeFirstOrThrow();
+    if (current.toss_billing_key === opts.billingKey) {
+      return { adopted: current.status === "incomplete", retired: null };
     }
-    return {
-      stored: false,
-      discarded: await discardIssuedBillingKey(trx, billingKey),
-    };
+    if (
+      current.card_registration_id !== opts.registrationId ||
+      !SIGNUP_FROM_STATUSES.includes(current.status)
+    ) {
+      return {
+        adopted: false,
+        retired: await discardIssuedBillingKey(trx, opts.billingKey),
+      };
+    }
+    const oldKey = await retireBillingKey(trx, {
+      subscriptionId: opts.subscriptionId,
+    });
+    const interval = (current.card_registration_interval ??
+      current.billing_interval) as BillingInterval;
+    const now = new Date();
+    await trx
+      .updateTable("subscriptions")
+      .set({
+        status: "incomplete",
+        plan: "supporter",
+        billing_interval: interval,
+        amount: PLAN_AMOUNTS[interval],
+        toss_billing_key: opts.billingKey,
+        toss_customer_key: opts.customerKey,
+        card_registration_interval: null,
+        plan_started_at: now,
+        next_billing_at: null,
+        failed_charge_count: 0,
+        canceled_at: null,
+        updated_at: now,
+      })
+      .where("id", "=", opts.subscriptionId)
+      .execute();
+    return { adopted: true, retired: oldKey };
   });
-  await deleteRetiredBillingKey(discarded);
-  return stored;
+  await deleteRetiredBillingKey(retired);
+  return adopted;
 }
 
 // The last look before the card is charged: the signup is still waiting and
@@ -438,9 +493,7 @@ async function failFirstCharge(opts: {
       subscriptionId: opts.subscriptionId,
       summary: `정기 결제 첫 결제 실패 ${won(opts.amount)}: ${opts.reason} · 등록한 카드는 폐기`,
     });
-    return retireUnusedSignupKey(trx, opts.subscriptionId, {
-      ownsLease: true,
-    });
+    return retireUnusedSignupKey(trx, opts.subscriptionId);
   });
   await deleteRetiredBillingKey(retired);
 }
@@ -450,6 +503,8 @@ type ConfirmOutcome = SignupResult<{
   scheduled?: boolean;
   startsAt?: string;
   cardChanged?: boolean;
+  // A card change whose overdue renewal is still not paid on the new card.
+  renewalStillDue?: boolean;
 }>;
 
 function alreadySettled(sub: {
@@ -499,81 +554,93 @@ export async function confirmSubscription(opts: {
     return fail(403, "유효하지 않은 요청입니다.");
   }
 
-  const subscriptionFields = [
-    "id",
-    "billing_interval",
-    "amount",
-    "status",
-    "toss_billing_key",
-    "next_billing_at",
-    "card_registration_id",
-    "card_registration_kind",
-  ] as const;
-  const sub = await db
-    .selectFrom("subscriptions")
-    .select(subscriptionFields)
-    .where("user_id", "=", userId)
-    .executeTakeFirst();
-  if (!sub) return fail(400, "결제 정보를 찾을 수 없습니다.");
-  // Only the latest registration may use its authKey: an older one's would
-  // replay the key Toss issued for it back then.
-  if ((opts.registrationId ?? null) !== sub.card_registration_id) {
-    return fail(409, STALE_REGISTRATION_MESSAGE);
-  }
-  if (sub.card_registration_kind === "card_change") {
-    return confirmCardChange({
-      sub,
-      registrationId: sub.card_registration_id!,
-      authKey,
-      customerKey,
-    });
-  }
-  // A doubled or reloaded callback reports what the first one did.
-  const settled = alreadySettled(sub);
-  if (settled) return settled;
-
-  // Only the request holding the lease issues the key and charges.
-  const leasedAt = await claimSubscriptionForConfirm(sub.id);
-  if (!leasedAt) {
-    const latest = await db
+  return underAccountLock(userId, 503, async () => {
+    const sub = await db
       .selectFrom("subscriptions")
-      .select(subscriptionFields)
-      .where("id", "=", sub.id)
+      .select([
+        "id",
+        "status",
+        "toss_billing_key",
+        "next_billing_at",
+        "card_registration_id",
+        "card_registration_kind",
+        "card_registration_interval",
+      ])
+      .where("user_id", "=", userId)
       .executeTakeFirst();
-    const latestSettled = latest && alreadySettled(latest);
-    if (latestSettled) return latestSettled;
-    return latest?.status === "incomplete"
-      ? fail(409, CHARGE_IN_PROGRESS_MESSAGE)
-      : fail(409, SIGNUP_CHANGED_MESSAGE);
-  }
+    if (!sub) return fail(400, "결제 정보를 찾을 수 없습니다.");
+    // Only the latest registration may use its authKey: an older one's would
+    // replay the key Toss issued for it back then.
+    if ((opts.registrationId ?? null) !== sub.card_registration_id) {
+      return fail(409, STALE_REGISTRATION_MESSAGE);
+    }
+    if (sub.card_registration_kind === "card_change") {
+      return confirmCardChange({
+        subscriptionId: sub.id,
+        registrationId: sub.card_registration_id!,
+        authKey,
+        customerKey,
+      });
+    }
+    // A doubled or reloaded callback reports what the first one did.
+    const settled = alreadySettled(sub);
+    if (settled) return settled;
+    if (!SIGNUP_FROM_STATUSES.includes(sub.status)) {
+      return fail(409, SIGNUP_CHANGED_MESSAGE);
+    }
 
-  try {
-    // Read again under the lease: the copy above predates it, and a confirm
-    // that held the lease meanwhile may have stored the key already.
-    const claimed = await db
+    // The key this registration already adopted — a callback retried after
+    // an unresolved first charge — or a new one from the authKey.
+    if (sub.card_registration_interval != null || !sub.toss_billing_key) {
+      let billingKey: string;
+      try {
+        billingKey = (await issueBillingKey(authKey, customerKey)).billingKey;
+      } catch (err) {
+        // A rejected authKey (expired, already used, card refused) is the
+        // supporter's to retry from the start. Anything else may have issued
+        // a key, which the same authKey's idempotency key will hand back.
+        if (isDefinitiveTossFailure(err)) {
+          return fail(402, err.message || "카드를 등록하지 못했습니다.");
+        }
+        return fail(
+          503,
+          "카드 등록 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
+        );
+      }
+      if (
+        !(await adoptSignupKey({
+          subscriptionId: sub.id,
+          registrationId: sub.card_registration_id!,
+          billingKey,
+          customerKey,
+        }))
+      ) {
+        return fail(409, SIGNUP_CHANGED_MESSAGE);
+      }
+    }
+
+    const adopted = await db
       .selectFrom("subscriptions")
-      .select(subscriptionFields)
+      .select(["id", "billing_interval", "amount", "toss_billing_key"])
       .where("id", "=", sub.id)
       .executeTakeFirstOrThrow();
-    return await confirmClaimedSubscription({
-      sub: claimed,
+    return confirmAdoptedSignup({
+      sub: { ...adopted, toss_billing_key: adopted.toss_billing_key! },
       userId,
       userRow,
-      authKey,
       customerKey,
     });
-  } finally {
-    await releaseSubscriptionLease(sub.id, leasedAt);
-  }
+  });
 }
 
-// Runs with the subscription's charge lease held.
-async function confirmClaimedSubscription(opts: {
+// Schedules or charges the first period of a signup that holds its key.
+// Runs under the account lock.
+async function confirmAdoptedSignup(opts: {
   sub: {
     id: string;
     billing_interval: string;
     amount: number;
-    toss_billing_key: string | null;
+    toss_billing_key: string;
   };
   userId: string;
   userRow: {
@@ -582,34 +649,11 @@ async function confirmClaimedSubscription(opts: {
     login_name: string;
     supporter_until: Date | null;
   };
-  authKey: string;
   customerKey: string;
 }): Promise<ConfirmOutcome> {
-  const { sub, userId, userRow, authKey, customerKey } = opts;
+  const { sub, userId, userRow, customerKey } = opts;
   const interval = sub.billing_interval as BillingInterval;
-
-  // Issue a reusable billing key from the one-time authKey.
-  let billingKey = sub.toss_billing_key;
-  if (!billingKey) {
-    try {
-      const issued = await issueBillingKey(authKey, customerKey);
-      billingKey = issued.billingKey;
-    } catch (err) {
-      // A rejected authKey (expired, already used, card refused) is the
-      // supporter's to retry from the start. Anything else may have issued a
-      // key, which the same authKey's idempotency key will hand back.
-      if (isDefinitiveTossFailure(err)) {
-        return fail(402, err.message || "카드를 등록하지 못했습니다.");
-      }
-      return fail(
-        503,
-        "카드 등록 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
-      );
-    }
-    if (!(await storeIssuedBillingKey(sub.id, billingKey))) {
-      return fail(409, SIGNUP_CHANGED_MESSAGE);
-    }
-  }
+  const billingKey = sub.toss_billing_key;
 
   const now = new Date();
   const scheduledStart = scheduledRecurringStart(
@@ -784,82 +828,59 @@ async function confirmClaimedSubscription(opts: {
   return { ok: true, message: "결제가 시작되었습니다. 감사합니다!" };
 }
 
-// Issues the new card's key and swaps it in for the old one, under the charge
-// lease so no renewal is charging the old key meanwhile. A renewal that was
-// failing gets its retry with the new card right away, rather than at the
-// next daily run.
+// Issues the new card's key and swaps it in for the old one, under the
+// account lock so no renewal is charging the old key meanwhile. A renewal that
+// was failing gets its retry with the new card right away, rather than at the
+// next run, and the answer says whether it went through.
 async function confirmCardChange(opts: {
-  sub: { id: string };
+  subscriptionId: string;
   registrationId: string;
   authKey: string;
   customerKey: string;
 }): Promise<ConfirmOutcome> {
-  const { sub, registrationId, authKey, customerKey } = opts;
-  const leasedAt = await claimSubscriptionForConfirm(
-    sub.id,
-    new Date(),
-    CARD_CHANGE_STATUSES,
-  );
-  if (!leasedAt) {
-    const latest = await db
-      .selectFrom("subscriptions")
-      .select("status")
-      .where("id", "=", sub.id)
-      .executeTakeFirst();
-    return latest && CARD_CHANGE_STATUSES.includes(latest.status)
-      ? fail(409, CHARGE_IN_PROGRESS_MESSAGE)
-      : fail(409, NOT_CHANGEABLE_MESSAGE);
-  }
-
-  let swapped: ConfirmOutcome;
-  try {
-    swapped = await swapClaimedCard({
-      subscriptionId: sub.id,
-      leasedAt,
-      registrationId,
-      authKey,
-      customerKey,
-    });
-  } finally {
-    await releaseSubscriptionLease(sub.id, leasedAt);
-  }
+  const swapped = await swapCard(opts);
   if (!swapped.ok) return swapped;
 
-  const due = await db
-    .selectFrom("subscriptions")
-    .select("id")
-    .where("id", "=", sub.id)
-    .where("status", "in", CARD_CHANGE_STATUSES)
-    .where("next_billing_at", "<=", new Date())
-    .executeTakeFirst();
-  if (due) {
-    try {
-      await chargeDueSubscriptions(new Date(), {
-        subscriptionIds: [sub.id],
-        newCard: true,
-      });
-    } catch (error) {
-      // The daily run retries it; the card itself is already changed.
-      console.error(
-        `Card change: charging subscription ${sub.id} failed`,
-        error,
-      );
-    }
+  const isDue = () =>
+    db
+      .selectFrom("subscriptions")
+      .select("id")
+      .where("id", "=", opts.subscriptionId)
+      .where("status", "in", CARD_CHANGE_STATUSES)
+      .where("next_billing_at", "<=", new Date())
+      .executeTakeFirst();
+  if (!(await isDue())) return swapped;
+  try {
+    await chargeDueSubscriptions(new Date(), {
+      subscriptionIds: [opts.subscriptionId],
+      newCard: true,
+    });
+  } catch (error) {
+    // The next run retries it; the card itself is already changed.
+    console.error(
+      `Card change: charging subscription ${opts.subscriptionId} failed`,
+      error,
+    );
+  }
+  if (await isDue()) {
+    return {
+      ...swapped,
+      renewalStillDue: true,
+      message:
+        "결제 카드를 변경했지만 밀린 정기 결제는 아직 완료되지 않았습니다. 결제 결과를 확인해 다시 시도합니다.",
+    };
   }
   return swapped;
 }
 
-// Runs with the subscription's charge lease held.
-async function swapClaimedCard(opts: {
+async function swapCard(opts: {
   subscriptionId: string;
-  leasedAt: Date;
   registrationId: string;
   authKey: string;
   customerKey: string;
 }): Promise<ConfirmOutcome> {
-  const { subscriptionId, leasedAt, registrationId, authKey, customerKey } =
-    opts;
-  if (!(await settlePendingCharges(subscriptionId, leasedAt))) {
+  const { subscriptionId, registrationId, authKey, customerKey } = opts;
+  if (!(await settlePendingCharges(subscriptionId))) {
     return fail(409, PREVIOUS_CHARGE_PENDING_MESSAGE);
   }
 
@@ -884,13 +905,7 @@ async function swapClaimedCard(opts: {
   const { result, retired } = await db.transaction().execute(async (trx) => {
     const current = await trx
       .selectFrom("subscriptions")
-      .select([
-        "user_id",
-        "status",
-        "toss_billing_key",
-        "card_registration_id",
-        "charging_started_at",
-      ])
+      .select(["user_id", "status", "toss_billing_key", "card_registration_id"])
       .where("id", "=", subscriptionId)
       .forUpdate()
       .executeTakeFirstOrThrow();
@@ -901,9 +916,7 @@ async function swapClaimedCard(opts: {
     }
     const stillOurs =
       CARD_CHANGE_STATUSES.includes(current.status) &&
-      current.card_registration_id === registrationId &&
-      current.charging_started_at != null &&
-      new Date(current.charging_started_at).getTime() === leasedAt.getTime();
+      current.card_registration_id === registrationId;
     if (!stillOurs) {
       return {
         result: fail(409, SIGNUP_CHANGED_MESSAGE),

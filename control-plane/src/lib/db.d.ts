@@ -256,6 +256,7 @@ export interface PaymentEvents {
 export interface Payments {
   amount: number;
   attempt_key: string | null;
+  charge_attempted_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   last_reconciled_at: Timestamp | null;
@@ -380,8 +381,8 @@ export interface Subscriptions {
   billing_interval: string;
   canceled_at: Timestamp | null;
   card_registration_id: string | null;
+  card_registration_interval: "month" | "year" | null;
   card_registration_kind: "signup" | "card_change" | null;
-  charging_started_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   current_period_end: Timestamp | null;
   current_period_start: Timestamp | null;

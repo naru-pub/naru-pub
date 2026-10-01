@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { renewalChargeAt } from "@/lib/renewal-time";
 
 // 카드사 심사는 서비스 제공기간이 1년을 넘는 상품을 허용하지 않으므로, 일회성
 // 일회성 결제는 1년치 한 건만 판매한다. 서버(MAX_PURCHASABLE_ONE_TIME_YEARS)가 같은
@@ -21,16 +22,36 @@ const ONE_TIME_AMOUNT = 12000;
 // real failure. These two codes mean the supporter backed out, so they get the
 // neutral notice rather than an error.
 const USER_CANCELED_CODES = new Set(["PAY_PROCESS_CANCELED", "USER_CANCEL"]);
+// Not "결제가 취소되었습니다": that is what a refund is called, and closing a
+// window charges nothing.
+const WINDOW_CLOSED_MESSAGE = "결제창을 닫았습니다. 청구된 금액은 없습니다.";
 
 // Where the window is a popup (desktop), the SDK does not redirect to failUrl
 // but rejects requestPayment/requestBillingAuth with the same { code, message }.
+// The day a renewal is charged (09:00 KST on or after it falls due), as a
+// Korean date.
+function formatChargeDate(nextBillingAt: string | Date) {
+  return renewalChargeAt(nextBillingAt).toLocaleDateString("ko-KR", {
+    timeZone: "Asia/Seoul",
+  });
+}
+
+function RenewalRetryNotice() {
+  return (
+    <div className="border-2 border-yellow-500 bg-yellow-500/5 p-3 text-sm text-yellow-800 dark:text-yellow-300">
+      정기 결제가 아직 완료되지 않아 매일 오전 9시에 다시 시도하고 있습니다.
+      카드에 문제가 있다면 카드를 변경해 주세요.
+    </div>
+  );
+}
+
 function paymentWindowError(error: unknown) {
   const { code, message } = (error ?? {}) as {
     code?: unknown;
     message?: unknown;
   };
   if (typeof code === "string" && USER_CANCELED_CODES.has(code)) {
-    toast("결제가 취소되었습니다.");
+    toast(WINDOW_CLOSED_MESSAGE);
   } else if (typeof code === "string" && typeof message === "string") {
     toast.error(message);
   } else {
@@ -76,6 +97,12 @@ export default function SupportCard({
   const isPastDue = subscription?.status === "past_due";
   // A plan that still holds a card and could charge (or be revived to).
   const planCanCharge = isActive || isScheduled || isPastDue;
+  // A renewal (or a scheduled first charge) whose day has passed is being
+  // retried: show that, not a healthy plan with a next date in the past.
+  const renewalOverdue =
+    (isActive || isScheduled) &&
+    subscription?.nextBillingAt != null &&
+    renewalChargeAt(subscription.nextBillingAt).getTime() <= Date.now();
   const showRecurringOptions = !isActive && !isScheduled;
   const showOneTimeOptions =
     !isScheduled &&
@@ -108,13 +135,17 @@ export default function SupportCard({
       const code = params.get("code");
       const message = params.get("message");
       if (code && USER_CANCELED_CODES.has(code)) {
-        toast("결제가 취소되었습니다.");
+        toast(WINDOW_CLOSED_MESSAGE);
       } else {
         toast.error(message || "결제 처리에 실패했습니다.");
       }
     } else if (support === "card-changed") {
       toast.success("결제 카드를 변경했습니다.");
-    } else if (support === "canceled") toast("결제가 취소되었습니다.");
+    } else if (support === "card-changed-unpaid") {
+      toast.warning(
+        "결제 카드를 변경했지만 밀린 정기 결제는 아직 완료되지 않았습니다. 결제 결과를 확인해 다시 시도합니다.",
+      );
+    } else if (support === "canceled") toast(WINDOW_CLOSED_MESSAGE);
     router.replace("/support");
   }, [params, router, untilLabel]);
 
@@ -219,6 +250,8 @@ export default function SupportCard({
       const res = await fetch("/api/account/resend-verification-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // The mail's link brings the supporter back here once verified.
+        body: JSON.stringify({ next: "/support" }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -236,7 +269,7 @@ export default function SupportCard({
   async function cancel() {
     if (
       !confirm(
-        "결제를 취소하시겠어요? 남은 기간 동안은 계속 이용하실 수 있습니다.",
+        "정기 결제를 해지하시겠어요? 더 이상 자동으로 결제되지 않으며, 결제한 기간 동안은 계속 이용하실 수 있습니다. 환불은 결제 내역에서 따로 신청합니다.",
       )
     ) {
       return;
@@ -250,13 +283,13 @@ export default function SupportCard({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        toast.success(data.message ?? "결제가 취소되었습니다.");
+        toast.success(data.message ?? "정기 결제를 해지했습니다.");
         router.refresh();
       } else {
-        toast.error(data.message ?? "결제 취소에 실패했습니다.");
+        toast.error(data.message ?? "정기 결제를 해지하지 못했습니다.");
       }
     } catch {
-      toast.error("결제 취소 중 오류가 발생했습니다.");
+      toast.error("정기 결제 해지 중 오류가 발생했습니다.");
     } finally {
       setPending(false);
     }
@@ -308,18 +341,18 @@ export default function SupportCard({
               <div className="space-y-3">
                 <div className="bg-muted border border-border p-3 text-sm">
                   {intervalLabel} 정기 결제를 이용 중입니다. 감사합니다!
-                  {subscription?.nextBillingAt && (
+                  {subscription?.nextBillingAt && !renewalOverdue && (
                     <>
                       {" "}
                       다음 결제일:{" "}
                       <strong className="text-foreground">
-                        {new Date(
-                          subscription.nextBillingAt,
-                        ).toLocaleDateString("ko-KR")}
-                      </strong>
+                        {formatChargeDate(subscription.nextBillingAt)}
+                      </strong>{" "}
+                      오전 9시
                     </>
                   )}
                 </div>
+                {renewalOverdue && <RenewalRetryNotice />}
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button
                     variant="outline"
@@ -329,7 +362,7 @@ export default function SupportCard({
                     카드 변경
                   </Button>
                   <Button variant="outline" onClick={cancel} disabled={pending}>
-                    결제 취소
+                    정기 결제 해지
                   </Button>
                 </div>
               </div>
@@ -340,6 +373,7 @@ export default function SupportCard({
                   <strong className="text-foreground">{untilLabel}</strong>까지
                   입니다. 이후 {intervalLabel} 정기 결제가 시작됩니다.
                 </div>
+                {renewalOverdue && <RenewalRetryNotice />}
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button
                     variant="outline"

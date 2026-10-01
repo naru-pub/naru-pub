@@ -1,5 +1,6 @@
 "use client";
 
+import { safeNextPath } from "@/lib/next-path";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -84,7 +85,10 @@ export default function SignUpPage() {
 
       const res = await response.json();
       if (res.success) {
-        window.location.href = "/";
+        window.location.href =
+          safeNextPath(
+            new URLSearchParams(window.location.search).get("next"),
+          ) ?? "/";
       } else {
         form.setError("username", {
           type: "manual",

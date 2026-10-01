@@ -20,10 +20,11 @@ import { deleteUserMedia } from "@/lib/site-data/media";
 import { deleteUserTemplateObjects } from "@/lib/board/templates";
 import {
   CHARGE_IN_FLIGHT_MESSAGE,
-  ChargeInFlightError,
+  DELETION_LOCK_WAIT_MS,
   deleteUserRow,
   settleChargesBeforeDeletion,
 } from "@/lib/account-deletion";
+import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 import { deleteRetiredBillingKey } from "@/lib/billing-keys";
 
 export async function POST(request: NextRequest) {
@@ -151,9 +152,11 @@ export async function POST(request: NextRequest) {
     await deleteCustomDomainsForUser(user.id);
 
     // Delete user account (this will cascade to all related tables)
-    const billingKey = await db
-      .transaction()
-      .execute((trx) => deleteUserRow(trx, user.id));
+    const billingKey = await withAccountLock(
+      user.id,
+      { waitMs: DELETION_LOCK_WAIT_MS },
+      () => db.transaction().execute((trx) => deleteUserRow(trx, user.id)),
+    );
     await deleteRetiredBillingKey(billingKey);
 
     // Invalidate session
@@ -168,8 +171,8 @@ export async function POST(request: NextRequest) {
       message: "계정이 성공적으로 삭제되었습니다.",
     });
   } catch (error) {
-    // A charge started between the check above and the delete.
-    if (error instanceof ChargeInFlightError) {
+    // Another payment operation on the account did not finish in time.
+    if (error instanceof AccountBusyError) {
       return NextResponse.json(
         { success: false, message: CHARGE_IN_FLIGHT_MESSAGE },
         { status: 409 },

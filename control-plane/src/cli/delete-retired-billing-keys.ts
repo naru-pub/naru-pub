@@ -1,12 +1,17 @@
 import { deleteRetiredBillingKeys } from "@/lib/billing-keys";
+import { retireAbandonedSignupKeys } from "@/lib/payment-invariants";
 
-deleteRetiredBillingKeys()
-  .then(({ deleted, failed }) => {
-    console.log(
-      `[delete-retired-billing-keys] deleted ${deleted}, failed ${failed}`,
-    );
-    process.exit(0);
-  })
+async function main() {
+  // Abandoned signups' keys join the queue first, so this run deletes them.
+  const abandoned = await retireAbandonedSignupKeys();
+  const { deleted, failed } = await deleteRetiredBillingKeys();
+  console.log(
+    `[delete-retired-billing-keys] abandoned signups ${abandoned}, deleted ${deleted}, failed ${failed}`,
+  );
+}
+
+main()
+  .then(() => process.exit(0))
   .catch((error) => {
     console.error("[delete-retired-billing-keys] fatal:", error);
     process.exit(1);

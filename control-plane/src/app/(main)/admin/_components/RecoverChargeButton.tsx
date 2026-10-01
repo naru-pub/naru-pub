@@ -15,7 +15,7 @@ export function RecoverChargeButton({ paymentId }: { paymentId: string }) {
   async function recover() {
     if (
       !confirm(
-        "Toss에서 이 주문이 결제 완료로 확인되면 기간을 부여합니다. 계속할까요?",
+        "Toss에서 이 주문이 결제 완료로 확인되면 기간을 부여합니다. 이용자에게 결제 완료 메일이 가고, 정기 결제라면 다음 결제일이 그만큼 미뤄지며 연체(past_due)였던 정기 결제는 다시 이어집니다. 이중 청구였다면 그 뒤 '환불 (정기 결제 유지)'로 돌려주세요. 계속할까요?",
       )
     ) {
       return;

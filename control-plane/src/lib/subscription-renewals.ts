@@ -26,23 +26,25 @@ import {
 import {
   addPaymentGrace,
   applySuccessfulCharge,
-  CHARGE_LEASE_MINUTES,
   MAX_PAYMENT_RETRY_ATTEMPTS,
 } from "@/lib/subscriptions";
+import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
+export { RENEWAL_HOUR_KST, renewalCutoff } from "@/lib/renewal-time";
 
-// A claimed subscription holds its lease while the rest of its batch is
-// charged. Each is renewed just before its own charge (renewLease), since a
-// subscription can make three Toss calls of up to 90 seconds each while Toss
-// is struggling — the lookup, the charge, the lookup after a failed charge —
-// and ten of those outlast CHARGE_LEASE_MINUTES. The batch size only bounds
-// how long a claimed subscription waits for its turn.
-const BATCH_SIZE = 10;
+// Renewals are charged at 09:00 KST: the run then charges every subscription
+// due by that time. The job also runs every hour after it, so a run missed for
+// a deploy or a database blip is made up the same day — but it only charges
+// what was due by the last 09:00, and each subscription is tried at most once
+// in MIN_HOURS_BETWEEN_TRIES, so the retries inside the grace period stay a
+// day apart. A subscription that falls due after 09:00 waits for the next
+// day's. An explicit charge (a card change, the billing lab) is not held to
+// either.
+const MIN_HOURS_BETWEEN_TRIES = 20;
 
 type DueSubscription = {
   id: string;
   user_id: string;
   status: string;
-  charging_started_at: Date;
   billing_interval: string;
   amount: number;
   toss_billing_key: string;
@@ -56,11 +58,12 @@ type PaymentAttempt = {
   id: string;
   order_id: string;
   status: string;
+  charge_attempted_at: Date | string | null;
 };
 
 // Charges active renewals and scheduled first periods whose next_billing_at has
 // passed. On success the period extends contiguously and supporter_until advances. On failure the
-// attempt is retried on subsequent runs (next_billing_at stays in the past)
+// attempt is retried on later days (next_billing_at stays in the past)
 // until the retry limit or payment grace window ends, after which the
 // subscription is marked past_due and grace-based access ends.
 
@@ -72,64 +75,50 @@ function renewalAttemptKey(sub: DueSubscription) {
   return `subscription:${sub.id}:${periodEnd}:${attemptNumber}`;
 }
 
-// `seen` holds the subscriptions this run already tried. A failed or
-// ambiguous charge leaves next_billing_at in the past and releases its lease,
-// so without it the next batch would claim the same subscription again.
-//
-// `now` decides what is due; the lease itself is wall-clock time, taken per
-// batch, so a later batch in a long run does not start with an aged lease.
-async function claimDueSubscriptions(
+// The subscriptions due now: active or scheduled, holding a key, past
+// next_billing_at, not a lifetime comp, and (unless named explicitly) not
+// tried in the last MIN_HOURS_BETWEEN_TRIES. Read once to list the run's work
+// and again under each account's lock, where it decides.
+function dueSubscriptions(
   now: Date,
-  seen: string[],
-  only: string[] | null,
+  opts: { only: string[] | null; explicit: boolean; dueBy: Date },
 ) {
-  const leasedAt = new Date();
-  const staleLeaseBefore = new Date(
-    leasedAt.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000,
+  const triedSince = new Date(
+    now.getTime() - MIN_HOURS_BETWEEN_TRIES * 60 * 60 * 1000,
   );
-  const notSeen =
-    seen.length > 0 ? sql`AND NOT (id = ANY(${seen}::uuid[]))` : sql``;
-  const onlyThese = only ? sql`AND id = ANY(${only}::uuid[])` : sql``;
-
-  const result = await sql<DueSubscription>`
-    UPDATE subscriptions
-    SET charging_started_at = ${leasedAt}, updated_at = ${leasedAt}
-    WHERE id IN (
-      SELECT id
-      FROM subscriptions
-      WHERE status IN ('active', 'scheduled')
-        AND toss_billing_key IS NOT NULL
-        AND next_billing_at <= ${now}
-        -- A lifetime comp is never charged, whatever plan it still has.
-        AND NOT EXISTS (
-          SELECT 1 FROM users
-          WHERE users.id = subscriptions.user_id AND users.supporter_comp
-        )
-        AND (
-          charging_started_at IS NULL
-          OR charging_started_at < ${staleLeaseBefore}
-        )
-        ${notSeen}
-        ${onlyThese}
-      ORDER BY next_billing_at ASC, id ASC
-      FOR UPDATE SKIP LOCKED
-      LIMIT ${BATCH_SIZE}
-    )
-    RETURNING
-      id,
-      user_id,
-      status,
-      charging_started_at,
-      billing_interval,
-      amount,
-      toss_billing_key,
-      toss_customer_key,
-      current_period_end,
-      payment_grace_notice_sent_at,
-      failed_charge_count
+  const onlyThese = opts.only
+    ? sql`AND s.id = ANY(${opts.only}::uuid[])`
+    : sql``;
+  const notTriedToday = opts.explicit
+    ? sql``
+    : sql`AND NOT EXISTS (
+        SELECT 1 FROM payments p
+        WHERE p.subscription_id = s.id AND p.charge_attempted_at > ${triedSince}
+      )`;
+  return sql<DueSubscription>`
+    SELECT
+      s.id,
+      s.user_id,
+      s.status,
+      s.billing_interval,
+      s.amount,
+      s.toss_billing_key,
+      s.toss_customer_key,
+      s.current_period_end,
+      s.payment_grace_notice_sent_at,
+      s.failed_charge_count
+    FROM subscriptions s
+    WHERE s.status IN ('active', 'scheduled')
+      AND s.toss_billing_key IS NOT NULL
+      AND s.next_billing_at <= ${opts.dueBy}
+      -- A lifetime comp is never charged, whatever plan it still has.
+      AND NOT EXISTS (
+        SELECT 1 FROM users u WHERE u.id = s.user_id AND u.supporter_comp
+      )
+      ${notTriedToday}
+      ${onlyThese}
+    ORDER BY s.next_billing_at ASC, s.id ASC
   `.execute(db);
-
-  return result.rows;
 }
 
 // Statuses under which an order is still worth asking Toss about again.
@@ -156,7 +145,7 @@ async function getOrCreatePaymentAttempt(
   const attemptsForTry = () =>
     db
       .selectFrom("payments")
-      .select(["id", "order_id", "status"])
+      .select(["id", "order_id", "status", "charge_attempted_at"])
       .where((eb) =>
         eb.or([
           eb("attempt_key", "=", baseKey),
@@ -189,7 +178,7 @@ async function getOrCreatePaymentAttempt(
           amount: sub.amount,
           status: "pending",
         })
-        .returning(["id", "order_id", "status"])
+        .returning(["id", "order_id", "status", "charge_attempted_at"])
         .executeTakeFirstOrThrow(),
     );
     return { attempt, declined: false };
@@ -200,51 +189,6 @@ async function getOrCreatePaymentAttempt(
     if (concurrent) return { attempt: concurrent, declined: false };
     throw error;
   }
-}
-
-// The subscription was claimed before the attempt row was prepared. Before
-// the card is charged, confirm that nobody canceled, refunded or switched it in
-// the meantime and that the lease is still ours.
-async function stillChargeable(sub: DueSubscription): Promise<boolean> {
-  const current = await db
-    .selectFrom("subscriptions")
-    .select(["status", "toss_billing_key", "charging_started_at"])
-    .where("id", "=", sub.id)
-    .executeTakeFirst();
-  return (
-    current != null &&
-    (current.status === "active" || current.status === "scheduled") &&
-    current.toss_billing_key === sub.toss_billing_key &&
-    current.charging_started_at != null &&
-    new Date(current.charging_started_at).getTime() ===
-      new Date(sub.charging_started_at).getTime()
-  );
-}
-
-// Takes a fresh lease for the subscription about to be charged, if the
-// batch's lease is still ours. A charge then runs on a lease no older than
-// itself, so neither the subscribe flow nor the reconciler's expiry takes it
-// for dead midway. False when the lease is gone (taken over as stale).
-async function renewLease(sub: DueSubscription): Promise<boolean> {
-  const renewedAt = new Date();
-  const renewed = await db
-    .updateTable("subscriptions")
-    .set({ charging_started_at: renewedAt, updated_at: renewedAt })
-    .where("id", "=", sub.id)
-    .where("charging_started_at", "=", new Date(sub.charging_started_at))
-    .executeTakeFirst();
-  if (Number(renewed.numUpdatedRows ?? 0) === 0) return false;
-  sub.charging_started_at = renewedAt;
-  return true;
-}
-
-async function releaseLease(sub: DueSubscription) {
-  await db
-    .updateTable("subscriptions")
-    .set({ charging_started_at: null, updated_at: new Date() })
-    .where("id", "=", sub.id)
-    .where("charging_started_at", "=", new Date(sub.charging_started_at))
-    .execute();
 }
 
 async function markAttemptFailed(opts: {
@@ -273,8 +217,8 @@ async function markAttemptFailed(opts: {
         .execute();
     }
 
-    // A cancel, refund or one-time switch that landed mid-charge wins: its
-    // status must not be overwritten back to active or past_due.
+    // A plan stopped since it was read (by a grant of the same order, say)
+    // keeps that state; it is not overwritten back to active or past_due.
     const updated = await trx
       .updateTable("subscriptions")
       .set({
@@ -304,20 +248,21 @@ async function markAttemptFailed(opts: {
         summary: `재시도 한도나 유예 기간에 도달해 연체(past_due)로 전환`,
       });
     }
-    // Its own lease only: one that went stale and was taken over is the
-    // new holder's.
+    // Counting a decline Toss reported earlier is today's try for this
+    // subscription, even though nothing was sent now.
     await trx
-      .updateTable("subscriptions")
-      .set({ charging_started_at: null })
-      .where("id", "=", opts.sub.id)
-      .where("charging_started_at", "=", new Date(opts.sub.charging_started_at))
+      .updateTable("payments")
+      .set({ charge_attempted_at: now })
+      .where("id", "=", opts.attempt.id)
       .execute();
     return { wentPastDue };
   });
 }
 
+// Sent after a decline while the grace period lasts, once: a send that failed
+// (the mail provider down) is tried again on the next decline rather than
+// lost, since payment_grace_notice_sent_at is only set once it went out.
 async function sendGraceNoticeIfNeeded(sub: DueSubscription, now: Date) {
-  if (sub.failed_charge_count !== 0) return;
   if (!sub.current_period_end) return;
   if (sub.payment_grace_notice_sent_at) {
     return;
@@ -437,31 +382,61 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
   );
 }
 
-// `subscriptionIds` limits the run to those subscriptions (the billing lab
-// charges one at a time); the cron charges everything due. `newCard` is set
-// by a card change charging right after the swap.
+// `subscriptionIds` limits the run to those subscriptions (a card change, the
+// billing lab), which are charged even if tried earlier today; the cron
+// charges everything due by `dueBy` (renewalCutoff: the last 09:00 KST).
+// `newCard` is set by a card change charging right after the swap.
+//
+// Each subscription is charged inside its account's lock (lib/account-lock),
+// taken without waiting: an account busy with another payment operation —
+// its supporter changing the card, a refund — is left for the next run.
 export async function chargeDueSubscriptions(
   now = new Date(),
-  opts: { subscriptionIds?: string[]; newCard?: boolean } = {},
+  opts: { subscriptionIds?: string[]; newCard?: boolean; dueBy?: Date } = {},
 ) {
-  const seen: string[] = [];
-  for (;;) {
-    const due = await claimDueSubscriptions(
-      now,
-      seen,
-      opts.subscriptionIds ?? null,
-    );
-    if (due.length === 0) break;
-    seen.push(...due.map((sub) => sub.id));
-    await chargeClaimedSubscriptions(due, now, opts.newCard ?? false);
+  const explicit = opts.subscriptionIds != null;
+  const only = opts.subscriptionIds ?? null;
+  const dueBy = opts.dueBy ?? now;
+  const due = (await dueSubscriptions(now, { only, explicit, dueBy })).rows;
+  let busy = 0;
+  for (const listed of due) {
+    try {
+      await withAccountLock(listed.user_id, { waitMs: 0 }, async () => {
+        // Read again under the lock: whatever ran on the account before it
+        // may have charged, canceled or switched it.
+        const [sub] = (
+          await dueSubscriptions(now, { only: [listed.id], explicit, dueBy })
+        ).rows;
+        if (!sub) return;
+        await chargeSubscription(sub, now, opts.newCard ?? false);
+      });
+    } catch (error) {
+      if (error instanceof AccountBusyError) {
+        busy += 1;
+        console.log(
+          `[charge-subscriptions] user ${listed.user_id}: busy with another payment operation; next run`,
+        );
+        continue;
+      }
+      // One subscription's failure — a database error, a bug — must not
+      // hold up the due renewals behind it.
+      console.error(
+        `[charge-subscriptions] user ${listed.user_id}: renewal failed with an error`,
+        error,
+      );
+    }
   }
-  console.log(`[charge-subscriptions] ${seen.length} subscription(s) due`);
+  console.log(
+    `[charge-subscriptions] ${due.length} subscription(s) due, ${busy} busy`,
+  );
 }
 
 type ChargeOutcome =
   | { state: "paid"; payment: TossPaymentResult }
   | { state: "refused"; error: unknown; keepAttemptStatus: boolean }
-  | { state: "unknown"; error: unknown };
+  // sent: whether a charge for this order has ever gone to Toss. An order
+  // only looked up (Toss down before anything was sent) cannot have charged.
+  | { state: "unknown"; error: unknown; sent: boolean };
 
 function declinedOrder(attempt: PaymentAttempt) {
   return new TossApiError(
@@ -507,9 +482,22 @@ async function chargeAttempt(
     }
   } catch (error) {
     if (!(error instanceof TossApiError && error.status === 404)) {
-      return { state: "unknown", error };
+      return {
+        state: "unknown",
+        error,
+        sent: attempt.charge_attempted_at != null,
+      };
     }
   }
+
+  // Recorded before the call: an order Toss has not heard of is expired 45
+  // minutes after its last attempt, not its creation, so a charge Toss may
+  // still be approving is never expired under it.
+  await db
+    .updateTable("payments")
+    .set({ charge_attempted_at: new Date() })
+    .where("id", "=", attempt.id)
+    .execute();
 
   let payment: TossPaymentResult;
   try {
@@ -533,12 +521,13 @@ async function chargeAttempt(
     }
     return settled.state === "refused"
       ? { state: "refused", error, keepAttemptStatus: false }
-      : { state: "unknown", error };
+      : { state: "unknown", error, sent: true };
   }
   if (payment.status !== "DONE") {
     return {
       state: "unknown",
       error: new Error(`unexpected payment status: ${payment.status}`),
+      sent: true,
     };
   }
   return { state: "paid", payment };
@@ -546,13 +535,17 @@ async function chargeAttempt(
 
 // Toss may have completed the request. Preserve the attempt so the next run
 // reconciles the same order instead of charging a new one.
+//
+// Only a charge that was sent can end in past_due: if Toss was down before
+// anything reached it, the card was never tried, and the plan is tried again
+// on the next run rather than stopped for good.
 async function leaveUnresolved(
   sub: DueSubscription,
   attempt: PaymentAttempt,
   error: unknown,
   now: Date,
+  sent: boolean,
 ) {
-  await releaseLease(sub);
   await notePaymentEvent({
     kind: "charge_unresolved",
     userId: sub.user_id,
@@ -560,59 +553,24 @@ async function leaveUnresolved(
     subscriptionId: sub.id,
     summary: `갱신 결제 ${won(sub.amount)} 결과 불분명, 같은 주문(${attempt.order_id})으로 다시 확인 예정: ${describeTossError(error)}`,
   });
-  await markPastDueAfterGrace(sub, now);
+  if (sent) await markPastDueAfterGrace(sub, now);
   console.error(
     `[charge-subscriptions] user ${sub.user_id}: ambiguous charge result; will reconcile ${attempt.order_id}: ${describeTossError(error)}`,
   );
 }
 
-// One subscription's failure — a database error, a bug — is logged and its
-// lease released, and the rest of the run goes on: due renewals behind it
-// must not wait for the next day's run.
-async function chargeClaimedSubscriptions(
-  due: DueSubscription[],
-  now: Date,
-  newCard: boolean,
-) {
-  for (const sub of due) {
-    try {
-      await chargeClaimedSubscription(sub, now, newCard);
-    } catch (error) {
-      console.error(
-        `[charge-subscriptions] user ${sub.user_id}: renewal failed with an error; lease released`,
-        error,
-      );
-      await releaseLease(sub).catch(() => {});
-    }
-  }
-}
-
-async function chargeClaimedSubscription(
+// Charges one due subscription. Runs under its account's lock.
+async function chargeSubscription(
   sub: DueSubscription,
   now: Date,
   newCard: boolean,
 ) {
-  if (!(await renewLease(sub))) {
-    console.log(
-      `[charge-subscriptions] user ${sub.user_id}: lease lost before charging; skipped`,
-    );
-    return;
-  }
   const interval = sub.billing_interval as BillingInterval;
   const { attempt, declined } = await getOrCreatePaymentAttempt(sub, newCard);
 
   if (attempt.status === "done") {
-    await releaseLease(sub);
     console.log(
       `[charge-subscriptions] user ${sub.user_id}: attempt already done (${attempt.order_id})`,
-    );
-    return;
-  }
-
-  if (!(await stillChargeable(sub))) {
-    await releaseLease(sub);
-    console.log(
-      `[charge-subscriptions] user ${sub.user_id}: stopped before charging; skipped`,
     );
     return;
   }
@@ -634,14 +592,10 @@ async function chargeClaimedSubscription(
         from: base,
         payment: outcome.payment,
         paymentId: attempt.id,
-        leaseHeldAt: sub.charging_started_at,
       });
       if (granted) await sendChargeReceipt(attempt.id);
-      // Granted already — by the reconciler, say — returns before the grant
-      // releases the lease; it is still this run's to release.
-      else await releaseLease(sub);
     } catch (error) {
-      await leaveUnresolved(sub, attempt, error, now);
+      await leaveUnresolved(sub, attempt, error, now, true);
       return;
     }
     console.log(`[charge-subscriptions] user ${sub.user_id}: renewed`);
@@ -649,7 +603,7 @@ async function chargeClaimedSubscription(
   }
 
   if (outcome.state === "unknown") {
-    await leaveUnresolved(sub, attempt, outcome.error, now);
+    await leaveUnresolved(sub, attempt, outcome.error, now, outcome.sent);
     return;
   }
 

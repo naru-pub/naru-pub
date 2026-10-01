@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { resolve } from "path";
 import { Client } from "pg";
 import { TEMPLATE_PUBLISHED_CHANNEL } from "@/lib/board/preview";
+import { notePaymentEvent } from "@/lib/payment-events";
 
 const SCREENSHOT_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const SCREENSHOT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
@@ -14,8 +15,10 @@ const CUSTOM_DOMAIN_INTERVAL = 3 * 60 * 1000; // 3 minutes
 const GITHUB_DEPLOYMENT_CLEANUP_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const CUSTOM_DOMAIN_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 // Every due subscription is charged in one run, and a billing charge alone can
-// take up to 60 seconds at Toss.
+// take up to 60 seconds at Toss. Runs hourly; a run still going when the next
+// hour comes is not started twice (runPaymentJob).
 const SUBSCRIPTION_CHARGE_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours
+const PAYMENT_INVARIANT_CHECK_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const BILLING_NOTIFICATION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const PAYMENT_RECONCILIATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const PAYMENT_RECONCILIATION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
@@ -163,25 +166,58 @@ async function runCustomDomainRefresher() {
   await runWithTimeout("refresh-custom-domains.ts", CUSTOM_DOMAIN_TIMEOUT);
 }
 
+// A payment job is never started while its last run is still going, and one
+// that fails or is killed for its timeout is recorded as a payment event, so
+// it reaches the operators' digest instead of only the container's log. (The
+// digest job itself is not: its own failure would only pile up events it
+// cannot send. /admin shows mail waiting too long instead.)
+const paymentJobsRunning = new Set<string>();
+
+async function runPaymentJob(script: string, timeout: number) {
+  if (paymentJobsRunning.has(script)) {
+    console.log(`[cron] ${script} is still running; not starting another`);
+    return;
+  }
+  paymentJobsRunning.add(script);
+  try {
+    const { success, code } = await runWithTimeout(script, timeout);
+    if (!success) {
+      await notePaymentEvent({
+        kind: "job_failed",
+        summary: `결제 작업 ${script}가 실패했습니다 (종료 코드 ${code ?? "없음"}, 제한 시간 ${timeout / 60_000}분). 로그를 확인하세요.`,
+      });
+    }
+  } finally {
+    paymentJobsRunning.delete(script);
+  }
+}
+
 async function runSubscriptionCharger() {
-  await runWithTimeout("charge-subscriptions.ts", SUBSCRIPTION_CHARGE_TIMEOUT);
+  await runPaymentJob("charge-subscriptions.ts", SUBSCRIPTION_CHARGE_TIMEOUT);
 }
 
 async function runBillingNotifications() {
-  await runWithTimeout(
+  await runPaymentJob(
     "send-billing-notifications.ts",
     BILLING_NOTIFICATION_TIMEOUT,
   );
 }
 
 async function runPaymentReconciliation() {
-  await runWithTimeout("reconcile-payments.ts", PAYMENT_RECONCILIATION_TIMEOUT);
+  await runPaymentJob("reconcile-payments.ts", PAYMENT_RECONCILIATION_TIMEOUT);
 }
 
 async function runBillingKeyDeletion() {
-  await runWithTimeout(
+  await runPaymentJob(
     "delete-retired-billing-keys.ts",
     BILLING_KEY_DELETION_TIMEOUT,
+  );
+}
+
+async function runPaymentInvariantCheck() {
+  await runPaymentJob(
+    "check-payment-invariants.ts",
+    PAYMENT_INVARIANT_CHECK_TIMEOUT,
   );
 }
 
@@ -193,7 +229,7 @@ async function runPaymentEventDigest() {
 }
 
 async function runPaymentRefundSync() {
-  await runWithTimeout("sync-payment-refunds.ts", PAYMENT_REFUND_SYNC_TIMEOUT);
+  await runPaymentJob("sync-payment-refunds.ts", PAYMENT_REFUND_SYNC_TIMEOUT);
 }
 
 async function runExpiredCustomDomainCleanup() {
@@ -221,10 +257,16 @@ async function runSiteDataGrantCleanup() {
   );
 }
 
+// Korea has no daylight saving time, so KST is always UTC+9.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+// Daily times are Korean time, whatever zone the container runs in (UTC in
+// production): 04:00 means 04:00 in Seoul, as the docs and the supporters'
+// mail say.
 function scheduleDaily(hour: number, minute: number, fn: () => Promise<void>) {
   const runIfTime = () => {
-    const now = new Date();
-    if (now.getHours() === hour && now.getMinutes() === minute) {
+    const kst = new Date(Date.now() + KST_OFFSET_MS);
+    if (kst.getUTCHours() === hour && kst.getUTCMinutes() === minute) {
       fn();
     }
   };
@@ -233,6 +275,15 @@ function scheduleDaily(hour: number, minute: number, fn: () => Promise<void>) {
   setInterval(runIfTime, 60 * 1000);
 
   // Also check on startup
+  runIfTime();
+}
+
+// Every hour at the given minute.
+function scheduleHourly(minute: number, fn: () => Promise<void>) {
+  const runIfTime = () => {
+    if (new Date().getUTCMinutes() === minute) fn();
+  };
+  setInterval(runIfTime, 60 * 1000);
   runIfTime();
 }
 
@@ -288,24 +339,32 @@ async function main() {
   setInterval(runSiteDataGrantCleanup, SITE_DATA_CLEANUP_INTERVAL);
   setTimeout(runSiteDataGrantCleanup, 50 * 1000);
 
-  // Run home directory updater daily at 22:00
-  console.log("[cron] Scheduling home directory updater daily at 22:00");
+  // Daily jobs run at Korean times (scheduleDaily).
+  console.log("[cron] Scheduling home directory updater daily at 22:00 KST");
   scheduleDaily(22, 0, runHomeDirectoryUpdater);
 
-  // Run subscription renewal charger daily at 04:00
-  console.log("[cron] Scheduling subscription charger daily at 04:00");
-  scheduleDaily(4, 0, runSubscriptionCharger);
+  // Renewals bill at 09:00 KST. The job runs every hour, but each run only
+  // charges what was due by the last 09:00 and was not tried in the last day
+  // (lib/subscription-renewals), so the hours after 09:00 only make up a run
+  // missed for a deploy or a database blip.
+  console.log(
+    "[cron] Scheduling subscription charger hourly (renewals due by 09:00 KST)",
+  );
+  scheduleHourly(0, runSubscriptionCharger);
 
-  console.log("[cron] Scheduling payment refund sync daily at 04:15");
+  console.log("[cron] Scheduling payment refund sync daily at 04:15 KST");
   scheduleDaily(4, 15, runPaymentRefundSync);
 
-  // Send renewal reminder emails daily at 09:00
-  console.log("[cron] Scheduling billing notifications daily at 09:00");
+  console.log("[cron] Scheduling billing notifications daily at 09:00 KST");
   scheduleDaily(9, 0, runBillingNotifications);
 
-  // Run expired custom-domain cleanup daily at 04:30
-  console.log("[cron] Scheduling expired custom-domain cleanup daily at 04:30");
+  console.log(
+    "[cron] Scheduling expired custom-domain cleanup daily at 04:30 KST",
+  );
   scheduleDaily(4, 30, runExpiredCustomDomainCleanup);
+
+  console.log("[cron] Scheduling payment invariant check daily at 05:00 KST");
+  scheduleDaily(5, 0, runPaymentInvariantCheck);
 
   // Keep process alive
   process.on("SIGTERM", () => {

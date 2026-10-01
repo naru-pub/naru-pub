@@ -1,5 +1,6 @@
 "use client";
 
+import { safeNextPath } from "@/lib/next-path";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -63,20 +64,12 @@ export default function LoginPage() {
 
       const res = await response.json();
       if (res.success) {
-        // Only resume the local database consent page; never accept an open redirect.
-        const next = new URLSearchParams(window.location.search).get("next");
-        let destination = "/";
-        if (next) {
-          try {
-            const url = new URL(next, window.location.origin);
-            if (
-              url.origin === window.location.origin &&
-              url.pathname === "/database/authorize"
-            ) {
-              destination = url.pathname + url.search;
-            }
-          } catch {}
-        }
+        // Back to the page that sent them here — the purchase page, the
+        // database consent page — and nowhere a link could pick.
+        const destination =
+          safeNextPath(
+            new URLSearchParams(window.location.search).get("next"),
+          ) ?? "/";
         window.location.assign(destination);
       } else {
         toast.error(res.message);

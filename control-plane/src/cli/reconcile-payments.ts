@@ -1,5 +1,6 @@
 import { sql } from "kysely";
 import { db } from "@/lib/database";
+import { AccountBusyError } from "@/lib/account-lock";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 
 const STALE_AFTER_MS = 2 * 60 * 1000;
@@ -24,11 +25,19 @@ async function main() {
   console.log(`[reconcile-payments] ${pending.length} pending payment(s)`);
   for (const payment of pending) {
     try {
-      const result = await reconcilePayment(payment.id);
+      // Without waiting for the account lock: an account busy with another
+      // payment operation is looked at again in five minutes.
+      const result = await reconcilePayment(payment.id, { waitMs: 0 });
       console.log(
         `[reconcile-payments] payment ${payment.id}: ${result.state}`,
       );
     } catch (error) {
+      if (error instanceof AccountBusyError) {
+        console.log(
+          `[reconcile-payments] payment ${payment.id}: account busy; next run`,
+        );
+        continue;
+      }
       console.error(
         `[reconcile-payments] payment ${payment.id}: reconciliation failed`,
         error,

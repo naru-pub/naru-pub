@@ -28,6 +28,8 @@ const FAILURE_KINDS = new Set([
   "charge_orphaned",
   "past_due",
   "key_deletion_stuck",
+  "job_failed",
+  "invariant_violation",
 ]);
 
 export default async function PaymentEventsPage({

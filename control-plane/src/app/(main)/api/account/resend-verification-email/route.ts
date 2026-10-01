@@ -7,6 +7,7 @@ import { assertSameOriginRequest } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { sendVerificationEmail, generateVerificationToken } from "@/lib/email";
+import { safeNextPath } from "@/lib/next-path";
 
 export async function POST(request: NextRequest) {
   try {
@@ -79,7 +80,13 @@ export async function POST(request: NextRequest) {
     });
 
     // Send verification email
-    await sendVerificationEmail(existingToken.email, token);
+    // Asked for from the purchase page: the mail's link continues there.
+    const body = await request.json().catch(() => null);
+    await sendVerificationEmail(
+      existingToken.email,
+      token,
+      safeNextPath(body?.next)
+    );
 
     return NextResponse.json({
       success: true,

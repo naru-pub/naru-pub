@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import {
   afterAll,
+  afterEach,
   beforeEach,
   describe,
   expect,
@@ -46,13 +47,19 @@ const {
   addPaymentGrace,
   applyOneTimePayment,
   applySuccessfulCharge,
-  claimSubscriptionForConfirm,
   MAX_PAYMENT_RETRY_ATTEMPTS,
-  releaseSubscriptionLease,
   scheduleSubscriptionStart,
 } = require("@/lib/subscriptions") as typeof import("@/lib/subscriptions");
 const { chargeDueSubscriptions } =
   require("@/lib/subscription-renewals") as typeof import("@/lib/subscription-renewals");
+const {
+  AccountBusyError,
+  closeAccountLockPool,
+  PAYMENTS_LOCK_SPACE,
+  runOutsideAccountLocks,
+  withAccountLock,
+} = require("@/lib/account-lock") as typeof import("@/lib/account-lock");
+const { Client: PgClient } = require("pg") as typeof import("pg");
 const { reconcilePayment, recoverOrphanedCharge } =
   require("@/lib/payment-reconciliation") as typeof import("@/lib/payment-reconciliation");
 const { refundPayment } =
@@ -86,6 +93,10 @@ const { POST: tossWebhook } =
 
 // Runs against a disposable, migrated database (scripts/test-payments-db.sh),
 // never the developer's own.
+//
+// Tests of an account busy with another payment operation really wait for
+// the lock (5–10 seconds, as in production), past Jest's 5-second default.
+jest.setTimeout(30_000);
 const integration =
   process.env.NARU_PAYMENTS_DB_TEST === "1" ? describe : describe.skip;
 
@@ -202,6 +213,43 @@ async function supporterUntil(userId: string) {
   return row.supporter_until ? new Date(row.supporter_until) : null;
 }
 
+// A renewal is tried at most once a day: makes the subscription's last try a
+// day old, so the next run tries it again.
+async function aDayLater(subscriptionId: string) {
+  await db
+    .updateTable("payments")
+    .set({ charge_attempted_at: new Date(Date.now() - 21 * 60 * 60 * 1000) })
+    .where("subscription_id", "=", subscriptionId)
+    .where("charge_attempted_at", "is not", null)
+    .execute();
+}
+
+// Holds an account's payment lock from another session, as a payment
+// operation running elsewhere would, until released (afterEach releases any
+// still held).
+const heldLocks: Array<() => Promise<void>> = [];
+
+async function holdAccountLock(userId: string): Promise<() => Promise<void>> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let acquired!: () => void;
+  const ready = new Promise<void>((resolve) => (acquired = resolve));
+  const done = withAccountLock(userId, { waitMs: 0 }, async () => {
+    acquired();
+    await held;
+  });
+  await ready;
+  let released = false;
+  const releaseLock = async () => {
+    if (released) return;
+    released = true;
+    release();
+    await done;
+  };
+  heldLocks.push(releaseLock);
+  return releaseLock;
+}
+
 integration("payments against the database", () => {
   beforeEach(async () => {
     await sql`truncate users, subscriptions, payments, retired_billing_keys, payment_events, toss_webhook_deliveries restart identity cascade`.execute(
@@ -219,7 +267,12 @@ integration("payments against the database", () => {
     );
   });
 
+  afterEach(async () => {
+    while (heldLocks.length > 0) await heldLocks.pop()!();
+  });
+
   afterAll(async () => {
+    await closeAccountLockPool();
     await db.destroy();
   });
 
@@ -329,34 +382,78 @@ integration("payments against the database", () => {
     });
   });
 
-  describe("the subscribe confirm lease", () => {
-    test("only one confirm at a time may charge", async () => {
+  describe("the account lock", () => {
+    test("one payment operation per account at a time", async () => {
       const userId = await makeUser();
-      const subId = await makeSubscription(userId, { status: "incomplete" });
+      const otherId = await makeUser();
+      const release = await holdAccountLock(userId);
 
-      const first = await claimSubscriptionForConfirm(subId);
-      expect(first).not.toBeNull();
-      expect(await claimSubscriptionForConfirm(subId)).toBeNull();
+      await expect(
+        withAccountLock(userId, { waitMs: 0 }, async () => "ran"),
+      ).rejects.toBeInstanceOf(AccountBusyError);
+      // Another account is not held up.
+      expect(
+        await withAccountLock(otherId, { waitMs: 0 }, async () => "ran"),
+      ).toBe("ran");
 
-      await releaseSubscriptionLease(subId, first!);
-      expect(await claimSubscriptionForConfirm(subId)).not.toBeNull();
+      await release();
+      expect(
+        await withAccountLock(userId, { waitMs: 0 }, async () => "ran"),
+      ).toBe("ran");
     });
 
-    test("an abandoned lease expires", async () => {
+    test("waits for the holder, up to its wait", async () => {
       const userId = await makeUser();
-      const subId = await makeSubscription(userId, { status: "incomplete" });
+      const release = await holdAccountLock(userId);
+      setTimeout(() => void release(), 100);
 
       expect(
-        await claimSubscriptionForConfirm(subId, new Date(Date.now() - DAY)),
-      ).not.toBeNull();
-      expect(await claimSubscriptionForConfirm(subId)).not.toBeNull();
+        await withAccountLock(userId, { waitMs: 5000 }, async () => "ran"),
+      ).toBe("ran");
     });
 
-    test("an active subscription is not charged again", async () => {
+    test("an operation that throws lets go of the lock", async () => {
       const userId = await makeUser();
-      const subId = await makeSubscription(userId, { status: "active" });
+      await expect(
+        withAccountLock(userId, { waitMs: 0 }, async () => {
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
 
-      expect(await claimSubscriptionForConfirm(subId)).toBeNull();
+      expect(
+        await withAccountLock(userId, { waitMs: 0 }, async () => "ran"),
+      ).toBe("ran");
+    });
+
+    test("a holder whose connection dies lets go at once", async () => {
+      const userId = await makeUser();
+      const holder = new PgClient({
+        connectionString: process.env.DATABASE_URL,
+      });
+      await holder.connect();
+      await holder.query("select pg_advisory_lock($1, hashtext($2::text))", [
+        PAYMENTS_LOCK_SPACE,
+        userId,
+      ]);
+      await expect(
+        withAccountLock(userId, { waitMs: 0 }, async () => "ran"),
+      ).rejects.toBeInstanceOf(AccountBusyError);
+
+      // A process killed mid-charge: its connection closes, and with it the
+      // lock — no lease to wait out.
+      await holder.end();
+      expect(
+        await withAccountLock(userId, { waitMs: 2000 }, async () => "ran"),
+      ).toBe("ran");
+    });
+
+    test("an operation calling another for the same account does not wait on itself", async () => {
+      const userId = await makeUser();
+      expect(
+        await withAccountLock(userId, { waitMs: 0 }, () =>
+          withAccountLock(userId, { waitMs: 0 }, async () => "nested"),
+        ),
+      ).toBe("nested");
     });
 
     test("scheduling a first charge resets notices left from an earlier subscription", async () => {
@@ -395,7 +492,6 @@ integration("payments against the database", () => {
 
       const sub = await subscription(subId);
       expect(sub.status).toBe("active");
-      expect(sub.charging_started_at).toBeNull();
       expect(new Date(sub.next_billing_at!) > new Date()).toBe(true);
       expect(await supporterUntil(userId)).toEqual(
         new Date(sub.current_period_end!),
@@ -436,7 +532,6 @@ integration("payments against the database", () => {
 
       const sub = await subscription(subId);
       expect(sub.status).toBe("canceled");
-      expect(sub.charging_started_at).toBeNull();
     });
 
     test("a cancel during a successful charge is not revived", async () => {
@@ -1165,26 +1260,21 @@ integration("payments against the database", () => {
     test("two reconciliations that see one refund at once mail it once", async () => {
       const userId = await makeUser();
       const { orderId, paymentId } = await paidOneTime(userId);
-      // Both have read the payment before either records the refund.
-      let arrived = 0;
-      let release!: () => void;
-      const bothArrived = new Promise<void>((resolve) => (release = resolve));
-      toss.getPaymentByOrderId.mockImplementation(async () => {
-        arrived += 1;
-        if (arrived === 2) release();
-        await bothArrived;
-        return tossPayment(orderId, 12000, {
+      // The webhook and the refund's own reconcile, at once: the account lock
+      // runs them one after the other, and the second finds the payment
+      // already canceled.
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(orderId, 12000, {
           status: "CANCELED",
           cancels: [{ cancelAmount: 12000 }],
-        });
-      });
+        }),
+      );
 
       await Promise.all([
         reconcilePayment(paymentId),
         reconcilePayment(paymentId),
       ]);
 
-      expect(arrived).toBe(2);
       expect(email.sendPaymentCanceledEmail).toHaveBeenCalledTimes(1);
     });
 
@@ -1246,7 +1336,8 @@ integration("payments against the database", () => {
 
       await cancelRequest(userId);
 
-      expect((await subscription(subId)).status).toBe("switched_to_one_time");
+      // Canceled, not switched_to_one_time: nothing was bought one-time.
+      expect((await subscription(subId)).status).toBe("canceled");
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           reason: "user_schedule",
@@ -1435,6 +1526,7 @@ integration("payments against the database", () => {
       toss.chargeBillingKey.mockImplementation(async (params) =>
         tossPayment(params.orderId, params.amount),
       );
+      await aDayLater(subId);
 
       await chargeDueSubscriptions();
 
@@ -1470,16 +1562,21 @@ integration("payments against the database", () => {
         .set({ created_at: new Date(Date.now() - DAY) })
         .where("id", "=", paymentId)
         .execute();
+      await aDayLater(subId);
 
+      // The reconciler, a separate process, runs while the charge is at
+      // Toss: the charge holds the account's lock, so it cannot touch it.
       let reconciledMidCharge: unknown;
       toss.chargeBillingKey.mockImplementation(async (params) => {
-        reconciledMidCharge = await reconcilePayment(paymentId);
+        reconciledMidCharge = await runOutsideAccountLocks(() =>
+          reconcilePayment(paymentId, { waitMs: 0 }).catch((error) => error),
+        );
         return tossPayment(params.orderId, params.amount);
       });
 
       await chargeDueSubscriptions();
 
-      expect(reconciledMidCharge).toEqual({ state: "pending" });
+      expect(reconciledMidCharge).toBeInstanceOf(AccountBusyError);
       const all = await attempts(subId);
       expect(all).toHaveLength(1);
       expect(all[0]).toMatchObject({
@@ -1625,6 +1722,7 @@ integration("payments against the database", () => {
       );
 
       await chargeDueSubscriptions();
+      await aDayLater(subId);
       await chargeDueSubscriptions();
 
       const [first, second] = toss.chargeBillingKey.mock.calls.map(
@@ -1648,6 +1746,7 @@ integration("payments against the database", () => {
         .set({ status: "aborted" })
         .where("order_id", "=", first.order_id)
         .execute();
+      await aDayLater(subId);
 
       await chargeDueSubscriptions();
 
@@ -1655,7 +1754,6 @@ integration("payments against the database", () => {
       const sub = await subscription(subId);
       expect(sub.failed_charge_count).toBe(1);
       expect(sub.status).toBe("active");
-      expect(sub.charging_started_at).toBeNull();
       expect((await attempts(subId))[0].status).toBe("aborted");
       expect(email.sendSubscriptionPaymentGraceEmail).toHaveBeenCalledTimes(1);
     });
@@ -1693,7 +1791,6 @@ integration("payments against the database", () => {
       const sub = await subscription(subId);
       expect(sub.status).toBe("active");
       expect(sub.failed_charge_count).toBe(0);
-      expect(sub.charging_started_at).toBeNull();
       expect((await attempts(subId))[0].status).toBe("pending");
       expect(email.sendSubscriptionPaymentGraceEmail).not.toHaveBeenCalled();
     });
@@ -1732,6 +1829,7 @@ integration("payments against the database", () => {
       toss.getPaymentByOrderId.mockResolvedValue(
         tossPayment(first.order_id, 1000, { status: "ABORTED" }),
       );
+      await aDayLater(subId);
 
       await chargeDueSubscriptions();
 
@@ -1793,26 +1891,44 @@ integration("payments against the database", () => {
     });
 
     // The cancel does not wait for the confirm's lease.
-    test("a cancel that lands while Toss issues the key gets no key and no charge", async () => {
+    test("a cancel during signup waits for it, then stops the new plan", async () => {
       const { userId, subId, customerKey } = await signingUp();
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+      let canceling: Promise<Response> | null = null;
       toss.issueBillingKey.mockImplementation(async () => {
-        await db
-          .updateTable("subscriptions")
-          .set({ status: "canceled" })
-          .where("id", "=", subId)
-          .execute();
-        return { billingKey: "orphan-key", customerKey };
+        // The supporter cancels from another tab while Toss issues the key.
+        auth.validateRequest.mockResolvedValue({
+          user: { id: userId },
+          session: {},
+        } as Awaited<ReturnType<typeof auth.validateRequest>>);
+        canceling = runOutsideAccountLocks(() =>
+          cancelSubscriptionRoute(
+            new NextRequest(
+              "http://localhost/api/account/subscription/cancel",
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: "{}",
+              },
+            ),
+          ),
+        );
+        return { billingKey: "issued-key", customerKey };
       });
 
-      const result = await confirm(userId, customerKey);
+      expect(await confirm(userId, customerKey)).toMatchObject({ ok: true });
+      expect((await canceling!)!.status).toBe(200);
 
-      expect(result).toMatchObject({ ok: false, status: 409 });
+      // The signup completed first; the cancel then ended the plan and
+      // retired its card. The paid first period stays.
       const sub = await subscription(subId);
       expect(sub.status).toBe("canceled");
       expect(sub.toss_billing_key).toBeNull();
-      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
-      expect(toss.deleteBillingKey).toHaveBeenCalledWith("orphan-key");
-      expect(await queuedKeys()).toEqual([]);
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("issued-key");
+      expect((await supporterUntil(userId))! > new Date()).toBe(true);
     });
 
     test("a declined first charge retires the key it was made with", async () => {
@@ -1829,7 +1945,6 @@ integration("payments against the database", () => {
       const sub = await subscription(subId);
       expect(sub.status).toBe("incomplete");
       expect(sub.toss_billing_key).toBeNull();
-      expect(sub.charging_started_at).toBeNull();
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("issued-key");
       const [attempt] = await db
         .selectFrom("payments")
@@ -1912,7 +2027,6 @@ integration("payments against the database", () => {
         ok: false,
         status: 503,
       });
-      expect((await subscription(subId)).charging_started_at).toBeNull();
     });
 
     test("a stale callback cannot charge a subscription that moved on", async () => {
@@ -1950,11 +2064,7 @@ integration("payments against the database", () => {
         status: "past_due",
         billingKey: "old-key",
       });
-      await db
-        .updateTable("subscriptions")
-        .set({ charging_started_at: new Date() })
-        .where("id", "=", subId)
-        .execute();
+      await holdAccountLock(userId);
 
       expect(
         await prepareSubscription({ userId, interval: "month" }),
@@ -2117,7 +2227,6 @@ integration("payments against the database", () => {
       const sub = await subscription(subId);
       expect(sub.status).toBe("active");
       expect(sub.toss_billing_key).toBe("new-key");
-      expect(sub.charging_started_at).toBeNull();
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("old-key");
       expect(toss.chargeBillingKey).not.toHaveBeenCalled();
       expect(await events("card_changed")).toHaveLength(1);
@@ -2229,25 +2338,21 @@ integration("payments against the database", () => {
 
       const sub = await subscription(subId);
       expect(sub.toss_billing_key).toBe("new-key");
-      expect(sub.charging_started_at).toBeNull();
       expect(new Date(sub.current_period_end!) > new Date()).toBe(true);
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("old-key");
       expect(toss.deleteBillingKey).not.toHaveBeenCalledWith("new-key");
     });
 
     test("a card change waits for a renewal charge in flight", async () => {
-      const { subId, confirm } = await running({
+      const { userId, subId, confirm } = await running({
         status: "active",
         billingKey: "old-key",
         nextBillingAt: new Date(Date.now() + 10 * DAY),
       });
-      await db
-        .updateTable("subscriptions")
-        .set({ charging_started_at: new Date() })
-        .where("id", "=", subId)
-        .execute();
+      await holdAccountLock(userId);
 
-      expect(await confirm()).toMatchObject({ ok: false, status: 409 });
+      // 503: the callback page retries it.
+      expect(await confirm()).toMatchObject({ ok: false, status: 503 });
       expect(toss.issueBillingKey).not.toHaveBeenCalled();
       expect((await subscription(subId)).toss_billing_key).toBe("old-key");
     });
@@ -2304,17 +2409,12 @@ integration("payments against the database", () => {
   });
 
   describe("abandoned signups", () => {
-    async function abandoned(lease: Date | null) {
+    async function abandoned() {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, {
         status: "incomplete",
         billingKey: "signup-key",
       });
-      await db
-        .updateTable("subscriptions")
-        .set({ charging_started_at: lease })
-        .where("id", "=", subId)
-        .execute();
       const paymentId = await makePendingPayment({
         userId,
         subscriptionId: subId,
@@ -2327,11 +2427,11 @@ integration("payments against the database", () => {
         .set({ created_at: new Date(Date.now() - DAY) })
         .where("id", "=", paymentId)
         .execute();
-      return { subId, paymentId };
+      return { userId, subId, paymentId };
     }
 
     test("a first charge Toss never saw retires the signup's key", async () => {
-      const { subId, paymentId } = await abandoned(null);
+      const { subId, paymentId } = await abandoned();
 
       expect(await reconcilePayment(paymentId)).toEqual({ state: "expired" });
 
@@ -2340,7 +2440,7 @@ integration("payments against the database", () => {
     });
 
     test("a first charge Toss declined retires the signup's key", async () => {
-      const { subId, paymentId } = await abandoned(null);
+      const { subId, paymentId } = await abandoned();
       toss.getPaymentByOrderId.mockResolvedValue(
         tossPayment(`initial-${subId}`, 1000, { status: "ABORTED" }),
       );
@@ -2351,28 +2451,35 @@ integration("payments against the database", () => {
     });
 
     test("a signup still confirming keeps its key and its order", async () => {
-      const { subId, paymentId } = await abandoned(new Date());
+      const { userId, subId, paymentId } = await abandoned();
+      // The confirm holding the account may be charging this very order,
+      // which Toss has not recorded yet.
+      await holdAccountLock(userId);
 
-      // The confirm holding the lease may be charging this very order, which
-      // Toss has not recorded yet.
-      expect(await reconcilePayment(paymentId)).toEqual({ state: "pending" });
+      await expect(
+        reconcilePayment(paymentId, { waitMs: 0 }),
+      ).rejects.toBeInstanceOf(AccountBusyError);
 
       expect((await subscription(subId)).toss_billing_key).toBe("signup-key");
+      const row = await db
+        .selectFrom("payments")
+        .select("status")
+        .where("id", "=", paymentId)
+        .executeTakeFirstOrThrow();
+      expect(row.status).toBe("pending");
     });
 
-    test("the lease's own holder can expire an order Toss never saw", async () => {
-      const lease = new Date();
-      const { paymentId } = await abandoned(lease);
+    test("an order recently sent to Toss is not expired yet", async () => {
+      const { subId, paymentId } = await abandoned();
+      // Made a day ago, but charged again just now (a reused order).
+      await db
+        .updateTable("payments")
+        .set({ charge_attempted_at: new Date() })
+        .where("id", "=", paymentId)
+        .execute();
 
-      expect(await reconcilePayment(paymentId, { leaseHeldAt: lease })).toEqual(
-        { state: "expired" },
-      );
-    });
-
-    test("an abandoned lease does not keep an order from expiring", async () => {
-      const { paymentId } = await abandoned(new Date(Date.now() - DAY));
-
-      expect(await reconcilePayment(paymentId)).toEqual({ state: "expired" });
+      expect(await reconcilePayment(paymentId)).toEqual({ state: "pending" });
+      expect((await subscription(subId)).toss_billing_key).toBe("signup-key");
     });
   });
 
@@ -3488,61 +3595,55 @@ integration("payments against the database", () => {
       expect(await supporterUntil(userId)).toEqual(bEnd);
     });
 
-    describe("the charge lease", () => {
-      test("ending a plan leaves the lease of a charge in flight", async () => {
+    describe("payment operations on one account", () => {
+      test("a refund waits for a charge in flight", async () => {
         const userId = await makeUser();
         const paymentId = await oneTimeOrder(userId, {
-          orderId: "lease-refund",
+          orderId: "refund-waits",
           status: "done",
           paidMinutesAgo: 60,
         });
-        const subId = await makeSubscription(userId, { status: "active" });
-        const lease = new Date();
         await db
-          .updateTable("subscriptions")
-          .set({ charging_started_at: lease })
-          .where("id", "=", subId)
+          .updateTable("payments")
+          .set({ toss_payment_key: "pk-refund-waits" })
+          .where("id", "=", paymentId)
           .execute();
-        toss.getPaymentByOrderId.mockResolvedValue(
-          canceledAt("lease-refund", 12000, new Date()),
-        );
+        await holdAccountLock(userId);
 
-        await reconcilePayment(paymentId);
-
-        const sub = await subscription(subId);
-        expect(sub.status).toBe("canceled");
-        expect(new Date(sub.charging_started_at!)).toEqual(lease);
+        await expect(
+          refundPayment({ paymentId, overridePolicy: true, reason: "test" }),
+        ).rejects.toMatchObject({ name: "RefundError", status: 409 });
+        expect(toss.cancelPayment).not.toHaveBeenCalled();
       });
 
-      test("each subscription is charged on a lease taken just before", async () => {
+      test("a renewal run leaves a busy account for its next run", async () => {
         const periodEnd = new Date(Date.now() - 60_000);
-        for (let i = 0; i < 2; i++) {
-          const userId = await makeUser(periodEnd);
-          await makeSubscription(userId, {
-            status: "active",
-            currentPeriodEnd: periodEnd,
-            nextBillingAt: periodEnd,
-          });
-        }
-        const leasesAtCharge: number[] = [];
-        toss.chargeBillingKey.mockImplementation(async (params) => {
-          const row = await db
-            .selectFrom("subscriptions")
-            .select("charging_started_at")
-            .where("toss_billing_key", "=", params.billingKey)
-            .executeTakeFirstOrThrow();
-          leasesAtCharge.push(new Date(row.charging_started_at!).getTime());
-          // The first charge is slow.
-          await new Promise((r) => setTimeout(r, 50));
-          return tossPayment(params.orderId, params.amount);
+        const busyUser = await makeUser(periodEnd);
+        const busy = await makeSubscription(busyUser, {
+          status: "active",
+          currentPeriodEnd: periodEnd,
+          nextBillingAt: periodEnd,
         });
+        const freeUser = await makeUser(periodEnd);
+        await makeSubscription(freeUser, {
+          status: "active",
+          currentPeriodEnd: periodEnd,
+          nextBillingAt: periodEnd,
+        });
+        toss.chargeBillingKey.mockImplementation(async (params) =>
+          tossPayment(params.orderId, params.amount),
+        );
+        const release = await holdAccountLock(busyUser);
 
         await chargeDueSubscriptions();
+        expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+        expect((await supporterUntil(freeUser))! > periodEnd).toBe(true);
 
-        expect(leasesAtCharge).toHaveLength(2);
-        expect(leasesAtCharge[1] - leasesAtCharge[0]).toBeGreaterThanOrEqual(
-          40,
-        );
+        await release();
+        await chargeDueSubscriptions();
+        expect(toss.chargeBillingKey).toHaveBeenCalledTimes(2);
+        expect((await subscription(busy)).status).toBe("active");
+        expect((await supporterUntil(busyUser))! > periodEnd).toBe(true);
       });
     });
 
@@ -3599,7 +3700,6 @@ integration("payments against the database", () => {
 
       await chargeDueSubscriptions();
 
-      expect((await subscription(broken)).charging_started_at).toBeNull();
       expect((await supporterUntil(fineUser))! > periodEnd).toBe(true);
       expect((await subscription(fine)).status).toBe("active");
     });
@@ -3722,20 +3822,15 @@ integration("payments against the database", () => {
     });
 
     describe("account deletion", () => {
-      test("waits for a charge in flight", async () => {
+      test("waits for a payment operation in flight", async () => {
         const userId = await makeUser();
         const subId = await makeSubscription(userId, { status: "active" });
-        await db
-          .updateTable("subscriptions")
-          .set({ charging_started_at: new Date() })
-          .where("id", "=", subId)
-          .execute();
+        await holdAccountLock(userId);
 
-        expect(await settleChargesBeforeDeletion(userId)).toBe(false);
         await expect(
-          db.transaction().execute((trx) => deleteUserRow(trx, userId)),
-        ).rejects.toMatchObject({ name: "ChargeInFlightError" });
-        expect(await supporterUntil(userId)).toBeNull();
+          settleChargesBeforeDeletion(userId),
+        ).rejects.toBeInstanceOf(AccountBusyError);
+        expect((await subscription(subId)).status).toBe("active");
         const still = await db
           .selectFrom("users")
           .select("id")
@@ -3805,14 +3900,6 @@ integration("payments against the database", () => {
         orderId,
         amount: 12000,
       });
-    }
-
-    async function holdLease(subId: string) {
-      await db
-        .updateTable("subscriptions")
-        .set({ charging_started_at: new Date() })
-        .where("id", "=", subId)
-        .execute();
     }
 
     test("a queued key a subscription still holds is never deleted", async () => {
@@ -3893,7 +3980,7 @@ integration("payments against the database", () => {
     test("one-time prepare waits while a renewal is being charged", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, { status: "active" });
-      await holdLease(subId);
+      await holdAccountLock(userId);
 
       expect((await prepareOneTime(userId)).status).toBe(409);
     });
@@ -3912,7 +3999,7 @@ integration("payments against the database", () => {
     test("one-time confirm waits while a renewal is being charged", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, { status: "active" });
-      await holdLease(subId);
+      await holdAccountLock(userId);
       await pendingOneTime(userId, "confirm-waits");
       signedIn(userId);
 

@@ -129,6 +129,9 @@ export default async function AdminOverviewPage() {
           "unsent",
         ),
         sql<Date | null>`max(emailed_at)`.as("lastEmailed"),
+        sql<Date | null>`min(created_at) filter (where emailed_at is null)`.as(
+          "oldestUnsent",
+        ),
       ])
       .executeTakeFirstOrThrow(),
     db
@@ -286,6 +289,14 @@ export default async function AdminOverviewPage() {
             value={live ? events.unsent : "-"}
             detail={live ? "몇 분 안에 한 통으로 발송" : "운영 환경에서만 발송"}
             href="/admin/events?unsent=1"
+            // The digest goes out within 15 minutes; mail waiting longer
+            // means the digest job or the mail provider is failing.
+            alert={
+              live &&
+              events.oldestUnsent != null &&
+              now.getTime() - new Date(events.oldestUnsent).getTime() >
+                30 * 60 * 1000
+            }
           />
         </div>
       </section>

@@ -192,7 +192,7 @@ export default async function PaymentOperatorPage({
                         paymentId={payment.id}
                         keepPlan
                         label="환불 (정기 결제 유지)"
-                        confirmMessage={`${payment.login_name}님의 ${formatKrw(payment.amount)} 결제만 환불하고 정기 결제는 그대로 둘까요? 이중 청구처럼 이 결제만 돌려줄 때 씁니다. 이 결제가 부여한 기간은 사라지고, 남은 기간이 없으면 다음 갱신 때 다시 청구됩니다.`}
+                        confirmMessage={`${payment.login_name}님의 ${formatKrw(payment.amount)} 결제만 환불하고 정기 결제는 그대로 둘까요? 이중 청구처럼 이 결제만 돌려줄 때 씁니다. 이 결제가 부여한 기간은 사라지고, 남은 기간이 없으면 바로 다음 정기 결제 시간(오전 9시)에 다시 청구됩니다.`}
                       />
                     ) : null}
                   </div>

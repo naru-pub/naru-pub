@@ -108,7 +108,6 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
       "current_period_end",
       "next_billing_at",
       "failed_charge_count",
-      "charging_started_at",
       "canceled_at",
       "renewal_notice_sent_at",
       "payment_grace_notice_sent_at",
@@ -235,10 +234,10 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
         throw new LabError("빌링키가 없는 구독입니다.");
       }
       run = async () => {
-        // Due now, and the lease freed in case an earlier run left one.
+        // Due now.
         await db
           .updateTable("subscriptions")
-          .set({ next_billing_at: new Date(), charging_started_at: null })
+          .set({ next_billing_at: new Date() })
           .where("id", "=", input.subscriptionId)
           .execute();
         await chargeDueSubscriptions(new Date(), {
@@ -265,7 +264,6 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
             .set({
               current_period_end: periodEnd,
               next_billing_at: periodEnd,
-              charging_started_at: null,
               updated_at: new Date(),
             })
             .where("id", "=", input.subscriptionId)

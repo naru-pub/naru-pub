@@ -1,4 +1,5 @@
 import { db } from "@/lib/database";
+import { addPaymentGrace } from "@/lib/subscriptions";
 import {
   sendPaymentCanceledEmail,
   sendSubscriptionCanceledEmail,
@@ -10,15 +11,19 @@ import {
 // billing mail: a failed send is logged, and never undoes the change it
 // reports. Call them after the change has committed.
 
-// Paid access left after the change, or null when none is: past, or a comp
-// whose access no date describes.
+// When paid features actually end after the change, or null when they
+// already have (or a comp, whose access no date describes): the paid time
+// left, and past it the payment grace window entitlements grant, which a
+// refund does not take away.
 function remainingAccess(user: {
   supporter_until: Date | string | null;
   supporter_comp: boolean;
 }): Date | null {
   if (user.supporter_comp || !user.supporter_until) return null;
   const until = new Date(user.supporter_until);
-  return until.getTime() > Date.now() ? until : null;
+  if (until.getTime() > Date.now()) return until;
+  const graceEndsAt = addPaymentGrace(until);
+  return graceEndsAt.getTime() > Date.now() ? graceEndsAt : null;
 }
 
 // Call it once per refund 나루 sees — when reconciliation first records the

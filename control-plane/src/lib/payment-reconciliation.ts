@@ -18,9 +18,9 @@ import type { Executor } from "@/lib/entitlements";
 import {
   applyOneTimePayment,
   applySuccessfulCharge,
-  CHARGE_LEASE_MINUTES,
   retireUnusedSignupKey,
 } from "@/lib/subscriptions";
+import { withAccountLock } from "@/lib/account-lock";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payment-events";
 
@@ -116,43 +116,25 @@ export type ReconciliationResult =
     }
   | { state: "expired" };
 
-// A charge holds its subscription's lease from before it picks the order to
-// charge until Toss has answered, and Toss knows nothing of the order until
-// then. An order that is not at Toss while the lease is held may be the one
-// being charged right now: expiring it would let that charge land on a row
-// nothing grants or looks at again, and the next try would charge a new order
-// — the card twice. The subscription row is locked, after the payment's (the
-// order applySuccessfulCharge takes them in), so a claim committed after the
-// lookup is seen here, and one still to come waits for this expiry and then
-// finds the order expired. A caller holding the lease itself (leaseHeldAt) is
-// not charging anything while it reconciles.
-async function chargeInFlight(
-  trx: Executor,
-  paymentId: string,
-  subscriptionId: string,
-  leaseHeldAt: Date | null,
-): Promise<boolean> {
-  await trx
-    .selectFrom("payments")
-    .select("id")
-    .where("id", "=", paymentId)
-    .forUpdate()
-    .execute();
-  const row = await trx
-    .selectFrom("subscriptions")
-    .select("charging_started_at")
-    .where("id", "=", subscriptionId)
-    .forUpdate()
-    .executeTakeFirst();
-  if (!row?.charging_started_at) return false;
-  const leasedAt = new Date(row.charging_started_at).getTime();
-  if (leaseHeldAt && leasedAt === leaseHeldAt.getTime()) return false;
-  return leasedAt > Date.now() - CHARGE_LEASE_MINUTES * 60 * 1000;
+// When the order was last sent to Toss, or made if it never was. An order
+// Toss has not heard of is expired UNCONFIRMED_EXPIRY_MS after this: a charge
+// that timed out may still be approved by Toss after the lock was let go, and
+// a reused order's creation can be a day old.
+export function lastAttemptAt(payment: {
+  created_at: Date | string;
+  charge_attempted_at: Date | string | null;
+}): Date {
+  const created = new Date(payment.created_at);
+  const attempted = payment.charge_attempted_at
+    ? new Date(payment.charge_attempted_at)
+    : null;
+  return attempted && attempted > created ? attempted : created;
 }
 
 export type ReconcileOptions = {
-  // The charge lease the caller holds on the payment's subscription, if any.
-  leaseHeldAt?: Date | null;
+  // How long to wait for the account lock (lib/account-lock): 0 for the
+  // background jobs, which skip a busy account until their next run.
+  waitMs?: number;
   // Leave a key this retires queued for the delete-retired-billing-keys cron
   // (every 5 minutes) instead of deleting it at Toss now. A webhook must answer
   // within 10 seconds, and the delete may wait out the whole Toss timeout.
@@ -188,23 +170,13 @@ async function reconcilePaymentCore(
     );
   } catch (error) {
     if (error instanceof TossApiError && error.status === 404) {
+      // Under the account lock no charge of this order is in flight here, and
+      // the last one sent has had UNCONFIRMED_EXPIRY_MS to reach Toss.
       if (
         payment.status === "pending" &&
-        Date.now() - new Date(payment.created_at).getTime() >
-          UNCONFIRMED_EXPIRY_MS
+        Date.now() - lastAttemptAt(payment).getTime() > UNCONFIRMED_EXPIRY_MS
       ) {
         const outcome = await db.transaction().execute(async (trx) => {
-          if (
-            payment.subscription_id &&
-            (await chargeInFlight(
-              trx,
-              payment.id,
-              payment.subscription_id,
-              opts.leaseHeldAt ?? null,
-            ))
-          ) {
-            return { inFlight: true as const, retiredKey: null };
-          }
           const expired = await trx
             .updateTable("payments")
             .set({ status: "expired" })
@@ -221,13 +193,11 @@ async function reconcilePaymentCore(
             });
           }
           return {
-            inFlight: false as const,
             retiredKey: initialAttempt
               ? await retireUnusedSignupKey(trx, payment.subscription_id!)
               : null,
           };
         });
-        if (outcome.inFlight) return { state: "pending" };
         if (!opts.deferKeyDeletion) {
           await deleteRetiredBillingKey(outcome.retiredKey);
         }
@@ -248,8 +218,7 @@ async function reconcilePaymentCore(
     tossPayment.status === "IN_PROGRESS" &&
     payment.status === "pending" &&
     payment.attempt_key?.startsWith("one_time:") &&
-    !(await oneTimeOrderSuperseded(payment)) &&
-    !(await subscriptionChargeInFlight(payment.user_id))
+    !(await oneTimeOrderSuperseded(payment))
   ) {
     tossPayment = await confirmAuthenticatedPayment(payment, tossPayment);
   }
@@ -382,9 +351,6 @@ async function reconcilePaymentCore(
           let stopped: { id: string } | undefined;
           if (newlyRefunded && !before.refund_keeps_plan) {
             const refundedBy = refundedAt ?? new Date();
-            // The charge lease is left alone: a renewal charging now holds
-            // it, and expiry reads it to tell a charge in flight from an
-            // order Toss never saw.
             stopped = await trx
               .updateTable("subscriptions")
               .set({
@@ -560,33 +526,6 @@ export async function oneTimeOrderSuperseded(payment: {
   return other != null;
 }
 
-// True while a renewal or a signup's first charge is being made for the
-// account (its subscription holds a live charge lease). A one-time payment
-// approved now would switch that plan off under a charge that still lands, so
-// one-time approval waits until it has finished — a minute or so, well inside
-// the 10 minutes Toss gives an authenticated payment.
-export async function subscriptionChargeInFlight(
-  userId: string,
-  now = new Date(),
-): Promise<boolean> {
-  const row = await db
-    .selectFrom("subscriptions")
-    .select("charging_started_at")
-    .where("user_id", "=", userId)
-    .executeTakeFirst();
-  return (
-    row?.charging_started_at != null &&
-    new Date(row.charging_started_at).getTime() >
-      now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000
-  );
-}
-
-// Settles the account's pending one-time orders before a new purchase is
-// decided: one the buyer authenticated is confirmed (or not, if superseded),
-// one Toss approved is granted. False when one may still be approved — its
-// confirm is still running at Toss, so it would land beside whatever is
-// bought now: a second year, or a new plan switched straight off. An order
-// Toss never saw (a closed payment window) does not count.
 // The Toss status the last lookup stored on a payment row (payments.raw).
 function storedTossStatus(raw: unknown): unknown {
   let value = raw;
@@ -602,11 +541,18 @@ function storedTossStatus(raw: unknown): unknown {
     : null;
 }
 
+// Settles the account's pending one-time orders before a new purchase is
+// decided: one the buyer authenticated is confirmed (or not, if superseded),
+// one Toss approved is granted. False when one may still be approved — its
+// confirm is still running at Toss, so it would land beside whatever is
+// bought now: a second year, or a new plan switched straight off. An order
+// Toss never saw (a closed payment window) does not count, nor one past the
+// window in which Toss could still approve it. Callers hold the account lock.
 export async function settleOneTimeOrders(userId: string): Promise<boolean> {
   const pending = () =>
     db
       .selectFrom("payments")
-      .select(["id", "user_id", "created_at", "raw"])
+      .select(["id", "user_id", "created_at", "charge_attempted_at", "raw"])
       .where("user_id", "=", userId)
       .where("attempt_key", "like", "one_time:%")
       .where("status", "=", "pending")
@@ -620,6 +566,7 @@ export async function settleOneTimeOrders(userId: string): Promise<boolean> {
     const tossStatus = storedTossStatus(payment.raw);
     if (
       tossStatus === "IN_PROGRESS" &&
+      Date.now() - lastAttemptAt(payment).getTime() <= UNCONFIRMED_EXPIRY_MS &&
       !(await oneTimeOrderSuperseded(payment))
     ) {
       return false;
@@ -645,6 +592,11 @@ async function confirmAuthenticatedPayment(
   payment: { id: string; order_id: string; amount: number },
   inProgress: TossPaymentResult,
 ): Promise<TossPaymentResult> {
+  await db
+    .updateTable("payments")
+    .set({ charge_attempted_at: new Date() })
+    .where("id", "=", payment.id)
+    .execute();
   try {
     const confirmed = await confirmPayment(
       {
@@ -692,9 +644,27 @@ async function sendOneTimeThankYou(
   }
 }
 
+// Asks Toss what became of a payment and brings the ledger, the account's
+// paid time and its plan in line. Runs under the account's lock
+// (lib/account-lock), waiting opts.waitMs (default 5 s) for it; throws
+// AccountBusyError when another payment operation holds it.
 export async function reconcilePayment(
   paymentId: string,
   opts: ReconcileOptions = {},
+): Promise<ReconciliationResult> {
+  const owner = await db
+    .selectFrom("payments")
+    .select("user_id")
+    .where("id", "=", paymentId)
+    .executeTakeFirstOrThrow();
+  return withAccountLock(owner.user_id, { waitMs: opts.waitMs ?? 5000 }, () =>
+    reconcileLocked(paymentId, opts),
+  );
+}
+
+async function reconcileLocked(
+  paymentId: string,
+  opts: ReconcileOptions,
 ): Promise<ReconciliationResult> {
   try {
     const result = await reconcilePaymentCore(paymentId, opts);
@@ -709,12 +679,20 @@ export async function reconcilePayment(
       error instanceof Error ? error.message : String(error)
     ).slice(0, 2000);
     try {
+      // The error is recorded; the check is counted only for a pending row,
+      // which the reconciler visits least recently checked first. A paid
+      // row whose lookup failed stays due for the refund sweep.
       await db
         .updateTable("payments")
-        .set({
-          last_reconciled_at: new Date(),
+        .set((eb) => ({
           reconciliation_error: message,
-        })
+          last_reconciled_at: eb
+            .case()
+            .when("status", "=", "pending")
+            .then(new Date())
+            .else(eb.ref("last_reconciled_at"))
+            .end(),
+        }))
         .where("id", "=", paymentId)
         .execute();
     } catch (diagnosticError) {
@@ -752,6 +730,17 @@ export class RecoveryError extends Error {
 export async function recoverOrphanedCharge(
   paymentId: string,
 ): Promise<RecoveryResult> {
+  const owner = await db
+    .selectFrom("payments")
+    .select("user_id")
+    .where("id", "=", paymentId)
+    .executeTakeFirstOrThrow();
+  return withAccountLock(owner.user_id, { waitMs: 10_000 }, () =>
+    recoverLocked(paymentId),
+  );
+}
+
+async function recoverLocked(paymentId: string): Promise<RecoveryResult> {
   const payment = await db
     .selectFrom("payments")
     .select(["id", "order_id", "amount", "status", "toss_flow", "attempt_key"])

@@ -6,8 +6,16 @@ const transport = new ResendTransport({
   apiKey: process.env.RESEND_API_KEY!,
 });
 
-export async function sendVerificationEmail(email: string, token: string) {
-  const verificationUrl = `${process.env.BASE_URL}/verify-email?token=${token}`;
+// `next` is a page to continue to once verified (safeNextPath): /support when
+// the mail was asked for from the purchase page.
+export async function sendVerificationEmail(
+  email: string,
+  token: string,
+  next?: string | null,
+) {
+  const params = new URLSearchParams({ token });
+  if (next) params.set("next", next);
+  const verificationUrl = `${process.env.BASE_URL}/verify-email?${params}`;
 
   const message = createMessage({
     from: process.env.FROM_EMAIL || "noreply@naru.pub",
@@ -224,7 +232,8 @@ export async function sendSubscriptionRenewalNoticeEmail(opts: {
   amount: number;
   nextBillingAt: Date;
 }) {
-  const accountUrl = `${process.env.BASE_URL}/account`;
+  // Card change, cancel and re-subscribe live on /support, not /account.
+  const accountUrl = `${process.env.BASE_URL}/support`;
   const nextBillingLabel = formatKoreanDateTime(opts.nextBillingAt);
   const amountLabel = formatKrw(opts.amount);
 
@@ -245,7 +254,7 @@ export async function sendSubscriptionRenewalNoticeEmail(opts: {
               계정에서 결제 관리
             </a>
           </p>
-          <p>원치 않으시면 결제 예정일 전에 계정 페이지에서 결제를 취소할 수 있습니다.</p>
+          <p>원치 않으시면 결제 예정일 전에 결제 페이지에서 정기 결제를 해지할 수 있습니다.</p>
         </div>
       `,
       text: `
@@ -257,7 +266,7 @@ export async function sendSubscriptionRenewalNoticeEmail(opts: {
         결제 예정 금액: ${amountLabel}
 
         결제를 계속 유지하면 커스텀 도메인 같은 유료 기능을 계속 이용하실 수 있습니다.
-        원치 않으시면 결제 예정일 전에 계정 페이지에서 결제를 취소할 수 있습니다.
+        원치 않으시면 결제 예정일 전에 결제 페이지에서 정기 결제를 해지할 수 있습니다.
 
         결제 관리: ${accountUrl}
       `,
@@ -280,7 +289,8 @@ export async function sendSubscriptionPaymentGraceEmail(opts: {
   amount: number;
   graceEndsAt: Date;
 }) {
-  const accountUrl = `${process.env.BASE_URL}/account`;
+  // Card change, cancel and re-subscribe live on /support, not /account.
+  const accountUrl = `${process.env.BASE_URL}/support`;
   const graceEndsLabel = formatKoreanDateTime(opts.graceEndsAt);
   const amountLabel = formatKrw(opts.amount);
 
@@ -336,7 +346,8 @@ export async function sendSupportThankYouEmail(opts: {
   amount: number;
   supporterUntil: Date;
 }) {
-  const accountUrl = `${process.env.BASE_URL}/account`;
+  // Card change, cancel and re-subscribe live on /support, not /account.
+  const accountUrl = `${process.env.BASE_URL}/support`;
   const supporterUntilLabel = formatKoreanDateTime(opts.supporterUntil);
   const amountLabel = formatKrw(opts.amount);
   const kindLabel = opts.kind === "recurring" ? "정기 결제" : "한 번만 결제";
@@ -353,7 +364,7 @@ export async function sendSupportThankYouEmail(opts: {
           <p>결제해 주신 금액은 한국어 인디웹을 더 오래, 더 안정적으로 이어 가는 데 사용됩니다.</p>
           <p><strong>결제 금액:</strong> ${amountLabel}</p>
           <p><strong>유료 기능 이용 기한:</strong> ${supporterUntilLabel}</p>
-          <p>유료 기능과 결제 정보는 계정 페이지에서 확인하실 수 있습니다.</p>
+          <p>결제 내역과 정기 결제는 결제 페이지에서 확인하실 수 있습니다.</p>
           <p>
             <a href="${accountUrl}" style="background-color: #007cba; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
               계정에서 확인하기
@@ -371,7 +382,7 @@ export async function sendSupportThankYouEmail(opts: {
         결제 금액: ${amountLabel}
         유료 기능 이용 기한: ${supporterUntilLabel}
 
-        유료 기능과 결제 정보는 계정 페이지에서 확인하실 수 있습니다.
+        결제 내역과 정기 결제는 결제 페이지에서 확인하실 수 있습니다.
         ${accountUrl}
       `,
     },
@@ -649,7 +660,8 @@ export async function sendSubscriptionPastDueEmail(opts: {
   // when no date applies, as for a comp.
   accessEndsAt: Date | null | undefined;
 }) {
-  const accountUrl = `${process.env.BASE_URL}/account`;
+  // Card change, cancel and re-subscribe live on /support, not /account.
+  const accountUrl = `${process.env.BASE_URL}/support`;
   const amountLabel = formatKrw(opts.amount);
   const intro =
     opts.reason === "declined"
@@ -664,7 +676,7 @@ export async function sendSubscriptionPastDueEmail(opts: {
         ? `유료 기능은 ${formatKoreanDateTime(opts.accessEndsAt)}까지 유지됩니다. 그 전에 다시 결제하시면 끊기지 않고 이어집니다.`
         : "커스텀 도메인 같은 유료 기능은 중단되었고, 연결된 커스텀 도메인은 해제될 수 있습니다.";
   const closing =
-    "계정 페이지에서 결제 수단을 다시 등록하면 정기 결제를 다시 시작할 수 있습니다.";
+    "결제 페이지에서 카드를 다시 등록하면 정기 결제를 다시 시작할 수 있습니다.";
 
   const message = createMessage({
     from: process.env.FROM_EMAIL || "noreply@naru.pub",

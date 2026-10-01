@@ -64,7 +64,7 @@ function SignedOutSupportCard() {
             <Link href="/login?next=/support">로그인하고 결제하기</Link>
           </Button>
           <Button asChild variant="outline" className="flex-1">
-            <Link href="/signup">회원가입</Link>
+            <Link href="/signup?next=/support">회원가입</Link>
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">

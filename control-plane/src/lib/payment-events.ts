@@ -23,6 +23,8 @@ export const PAYMENT_EVENT_LABELS = {
   billing_key_deleted: "빌링키 삭제",
   order_expired: "주문 만료",
   key_deletion_stuck: "빌링키 삭제 지연",
+  job_failed: "결제 작업 실패",
+  invariant_violation: "결제 데이터 이상",
 } as const;
 
 export type PaymentEventKind = keyof typeof PAYMENT_EVENT_LABELS;

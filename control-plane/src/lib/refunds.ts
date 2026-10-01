@@ -1,3 +1,4 @@
+import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
@@ -96,10 +97,6 @@ async function stopRecurringBilling(userId: string): Promise<boolean> {
     .execute(async (trx) => {
       const stopped = await trx
         .updateTable("subscriptions")
-        // The charge lease is left alone: a renewal still charging holds it,
-        // and the reconciler reads it to tell a charge in flight from an order
-        // Toss never saw. The renewal releases it, and does not revive a
-        // canceled plan.
         .set({
           status: "canceled",
           next_billing_at: null,
@@ -153,7 +150,7 @@ export type RefundOutcome = {
 // Toss so the ledger, supporter_until and the subscription all move in the one
 // reconciliation path that every other refund (webhook, daily sync) goes
 // through.
-export async function refundPayment(opts: {
+type RefundRequest = {
   paymentId: string;
   /** Operators may refund outside the policy window; owners may not. */
   overridePolicy: boolean;
@@ -164,7 +161,34 @@ export async function refundPayment(opts: {
    * the webhook reconciling the same cancel honours it too.
    */
   keepPlan?: boolean;
-}): Promise<RefundOutcome> {
+};
+
+// Runs under the account lock (lib/account-lock): a second click, the
+// webhook of this very cancel, or a renewal waits for it to finish.
+export async function refundPayment(
+  opts: RefundRequest,
+): Promise<RefundOutcome> {
+  const owner = await db
+    .selectFrom("payments")
+    .select("user_id")
+    .where("id", "=", opts.paymentId)
+    .executeTakeFirstOrThrow();
+  try {
+    return await withAccountLock(owner.user_id, { waitMs: 10_000 }, () =>
+      refundLocked(opts),
+    );
+  } catch (error) {
+    if (error instanceof AccountBusyError) {
+      throw new RefundError(
+        "다른 결제 작업을 처리하고 있습니다. 잠시 후 다시 시도해 주세요.",
+        409,
+      );
+    }
+    throw error;
+  }
+}
+
+async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
   const payment = await db
     .selectFrom("payments")
     .select([

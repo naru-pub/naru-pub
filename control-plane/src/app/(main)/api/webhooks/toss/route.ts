@@ -10,7 +10,7 @@ import {
 } from "@/lib/toss";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { retireBillingKey } from "@/lib/billing-keys";
-import { retireUnusedSignupKey } from "@/lib/subscriptions";
+import { withAccountLock } from "@/lib/account-lock";
 import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
 import {
   notePaymentEvent,
@@ -105,54 +105,65 @@ export async function POST(request: NextRequest) {
       if (!isTrustedWebhookSource(sourceIp)) {
         return respond(200, `ignored: untrusted address ${sourceIp}`);
       }
-      const canceled = await db.transaction().execute(async (trx) => {
-        const subscription = await trx
-          .selectFrom("subscriptions")
-          .select(["id", "status", "canceled_at", "user_id"])
-          .where("toss_billing_key", "=", event.billingKey)
-          .forUpdate()
-          .executeTakeFirst();
+      // Under the owner's account lock (lib/account-lock): no charge or card
+      // change on that plan runs while it is canceled.
+      const holder = await db
+        .selectFrom("subscriptions")
+        .select("user_id")
+        .where("toss_billing_key", "=", event.billingKey)
+        .executeTakeFirst();
+      const cancelPlan = () =>
+        db.transaction().execute(async (trx) => {
+          const subscription = await trx
+            .selectFrom("subscriptions")
+            .select(["id", "status", "canceled_at", "user_id"])
+            .where("toss_billing_key", "=", event.billingKey)
+            .forUpdate()
+            .executeTakeFirst();
 
-        if (subscription) {
-          const now = new Date();
+          if (subscription) {
+            const now = new Date();
+            await trx
+              .updateTable("subscriptions")
+              .set({
+                status: "canceled",
+                next_billing_at: null,
+                canceled_at: subscription.canceled_at ?? now,
+                updated_at: now,
+              })
+              .where("id", "=", subscription.id)
+              .execute();
+            await retireBillingKey(
+              trx,
+              { subscriptionId: subscription.id },
+              { deletedAtToss: true },
+            );
+            await recordPaymentEvent(trx, {
+              kind: "billing_key_deleted",
+              userId: subscription.user_id,
+              subscriptionId: subscription.id,
+              summary: `Toss에서 빌링키가 삭제됨 (BILLING_DELETED) → 정기 결제 취소`,
+            });
+          }
+          // Toss already deleted this key, so it has nothing left to retire,
+          // including a copy queued before this event arrived.
           await trx
-            .updateTable("subscriptions")
-            .set({
-              status: "canceled",
-              next_billing_at: null,
-              canceled_at: subscription.canceled_at ?? now,
-              updated_at: now,
-            })
-            .where("id", "=", subscription.id)
+            .deleteFrom("retired_billing_keys")
+            .where("billing_key", "=", event.billingKey)
             .execute();
-          await retireBillingKey(
-            trx,
-            { subscriptionId: subscription.id },
-            { deletedAtToss: true },
-          );
-          await recordPaymentEvent(trx, {
-            kind: "billing_key_deleted",
-            userId: subscription.user_id,
-            subscriptionId: subscription.id,
-            summary: `Toss에서 빌링키가 삭제됨 (BILLING_DELETED) → 정기 결제 취소`,
-          });
-        }
-        // Toss already deleted this key, so it has nothing left to retire,
-        // including a copy queued before this event arrived.
-        await trx
-          .deleteFrom("retired_billing_keys")
-          .where("billing_key", "=", event.billingKey)
-          .execute();
-        return subscription
-          ? {
-              id: subscription.id,
-              // A plan already stopped had its cancel mailed then.
-              newlyStopped: !["canceled", "switched_to_one_time"].includes(
-                subscription.status,
-              ),
-            }
-          : null;
-      });
+          return subscription
+            ? {
+                id: subscription.id,
+                // A plan already stopped had its cancel mailed then.
+                newlyStopped: !["canceled", "switched_to_one_time"].includes(
+                  subscription.status,
+                ),
+              }
+            : null;
+        });
+      const canceled = holder
+        ? await withAccountLock(holder.user_id, { waitMs: 5000 }, cancelPlan)
+        : await cancelPlan();
       if (canceled?.newlyStopped) {
         await sendSubscriptionCanceledNotice(
           canceled.id,
@@ -212,12 +223,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // A cancel, or an order Toss ended without approving it (ABORTED,
+    // EXPIRED): reconciliation brings the ledger, the paid time and the plan
+    // in line under the account lock, as it does for every other path. A key
+    // that frees is deleted by the cron, not here inside Toss's 10 seconds; a
+    // busy account answers 503 and Toss retries.
     const action = webhookLedgerAction(payment.status);
-    if (action.type === "reconcile") {
-      // Toss wants an answer within 10 seconds; a key the refund retires is
-      // deleted by the cron instead.
+    if (action.type === "reconcile" || action.type === "fail") {
       const result = await reconcilePayment(ledger.id, {
         deferKeyDeletion: true,
+        waitMs: 5000,
       });
       return respond(
         200,
@@ -234,45 +249,6 @@ export async function POST(request: NextRequest) {
       })
       .where("id", "=", ledger.id)
       .execute();
-    if (action.type === "fail") {
-      // Only an attempt still waiting on its outcome can fail; a done or
-      // refunded row keeps the state that granted or revoked its period.
-      const failed = await db
-        .updateTable("payments")
-        .set({ status: action.status })
-        .where("id", "=", ledger.id)
-        .where("status", "=", "pending")
-        .executeTakeFirst();
-      if (
-        Number(failed.numUpdatedRows ?? 0) > 0 &&
-        ledger.subscription_id &&
-        ledger.attempt_key?.startsWith("subscription_initial:")
-      ) {
-        // A signup's first charge Toss ended: the key registered for it has
-        // nothing left to charge, as when the reconciler learns the same.
-        // Queued for the deletion cron rather than deleted here, inside
-        // Toss's 10-second window.
-        const subscriptionId = ledger.subscription_id;
-        await db
-          .transaction()
-          .execute((trx) => retireUnusedSignupKey(trx, subscriptionId));
-      }
-      if (Number(failed.numUpdatedRows ?? 0) > 0) {
-        await notePaymentEvent({
-          kind: action.status === "expired" ? "order_expired" : "charge_failed",
-          userId: ledger.user_id,
-          paymentId: ledger.id,
-          subscriptionId: ledger.subscription_id,
-          summary: `주문 ${orderId} (${ledger.amount.toLocaleString("ko-KR")}원): 웹훅으로 Toss 상태 ${payment.status} 확인`,
-        });
-      }
-      return respond(
-        200,
-        Number(failed.numUpdatedRows ?? 0) > 0
-          ? `payment ${ledger.id} pending -> ${action.status}`
-          : `payment ${ledger.id} already settled; recorded only`,
-      );
-    }
     return respond(200, `payment ${ledger.id} recorded only`);
   } catch (error) {
     // Ask Toss to retry transient lookup/database failures.

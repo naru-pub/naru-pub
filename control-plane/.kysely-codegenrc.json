@@ -9,6 +9,7 @@
       "board_templates.license": "\"cc-by-4.0\" | \"cc-by-sa-4.0\" | \"cc0-1.0\"",
       "board_notifications.reason": "\"reply_to_post\" | \"reply_to_reply\"",
       "subscriptions.card_registration_kind": "\"signup\" | \"card_change\" | null",
+      "subscriptions.card_registration_interval": "\"month\" | \"year\" | null",
       "board_replies.path": "ColumnType<string[], never, never>",
       "board_template_versions.data_collections": "ColumnType<import(\"./board/template-collections\").BoardTemplateCollection[], string | undefined, string>"
     }

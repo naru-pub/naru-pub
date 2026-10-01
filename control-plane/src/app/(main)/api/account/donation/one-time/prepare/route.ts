@@ -16,9 +16,9 @@ import {
 import { canStartOneTimePurchase } from "@/lib/support-purchases";
 import {
   settleOneTimeOrders,
-  subscriptionChargeInFlight,
   UNCONFIRMED_EXPIRY_MS,
 } from "@/lib/payment-reconciliation";
+import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 
 // Unconfirmed one-time orders an account may have open at once.
 const MAX_PENDING_ONE_TIME_ORDERS = 10;
@@ -90,102 +90,118 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Settle what may still turn into paid time before deciding whether a
-    // one-time purchase is allowed: an earlier one-time order the buyer
-    // authenticated (confirmed now) or that Toss already approved. One whose
-    // confirm is still running blocks, as does a renewal being charged right
-    // now. An order Toss never saw — a closed payment window — does not.
-    if (
-      !(await settleOneTimeOrders(user.id)) ||
-      (await subscriptionChargeInFlight(user.id))
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "이전 결제를 처리하고 있습니다. 잠시 후 다시 시도해 주세요.",
-        },
-        { status: 409 },
-      );
-    }
-    const existingSubscription = await db
-      .selectFrom("subscriptions")
-      .select("id")
-      .where("user_id", "=", user.id)
-      .executeTakeFirst();
-    // A subscription charge that may yet succeed would land beside this
-    // purchase — the same check a new signup makes.
-    if (
-      existingSubscription &&
-      !(await settlePendingCharges(existingSubscription.id))
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message:
-            "이전 결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
-        },
-        { status: 409 },
-      );
-    }
+    // The rest runs under the account lock (lib/account-lock): no renewal,
+    // signup or other purchase on the account runs meanwhile.
+    try {
+      return await withAccountLock(user.id, { waitMs: 5000 }, async () => {
+        // Settle what may still turn into paid time before deciding whether a
+        // one-time purchase is allowed: an earlier one-time order the buyer
+        // authenticated (confirmed now) or that Toss already approved. One whose
+        // confirm is still running blocks. An order Toss never saw — a closed
+        // payment window — does not.
+        if (!(await settleOneTimeOrders(user.id))) {
+          return NextResponse.json(
+            {
+              success: false,
+              message:
+                "이전 결제를 처리하고 있습니다. 잠시 후 다시 시도해 주세요.",
+            },
+            { status: 409 },
+          );
+        }
+        const existingSubscription = await db
+          .selectFrom("subscriptions")
+          .select("id")
+          .where("user_id", "=", user.id)
+          .executeTakeFirst();
+        // A subscription charge that may yet succeed would land beside this
+        // purchase — the same check a new signup makes.
+        if (
+          existingSubscription &&
+          !(await settlePendingCharges(existingSubscription.id))
+        ) {
+          return NextResponse.json(
+            {
+              success: false,
+              message:
+                "이전 결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
+            },
+            { status: 409 },
+          );
+        }
 
-    // Ensure a stable customerKey for dashboard linkage (optional for one-time).
-    const userRow = await db
-      .selectFrom("users")
-      .select(["supporter_comp", "supporter_until", "toss_customer_key"])
-      .where("id", "=", user.id)
-      .executeTakeFirst();
-    const subscription = await db
-      .selectFrom("subscriptions")
-      .select("status")
-      .where("user_id", "=", user.id)
-      .executeTakeFirst();
-    if (
-      !canStartOneTimePurchase({
-        supporterComp: !!userRow?.supporter_comp,
-        supporterUntil: userRow?.supporter_until ?? null,
-        subscriptionStatus: subscription?.status ?? null,
-      })
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "일회성 결제 기간 중에는 정기 결제로만 전환할 수 있습니다.",
-        },
-        { status: 409 },
-      );
-    }
-    let customerKey = userRow?.toss_customer_key ?? null;
-    if (!customerKey) {
-      customerKey = randomUUID();
-      await db
-        .updateTable("users")
-        .set({ toss_customer_key: customerKey })
-        .where("id", "=", user.id)
-        .execute();
-    }
+        // Ensure a stable customerKey for dashboard linkage (optional for one-time).
+        const userRow = await db
+          .selectFrom("users")
+          .select(["supporter_comp", "supporter_until", "toss_customer_key"])
+          .where("id", "=", user.id)
+          .executeTakeFirst();
+        const subscription = await db
+          .selectFrom("subscriptions")
+          .select("status")
+          .where("user_id", "=", user.id)
+          .executeTakeFirst();
+        if (
+          !canStartOneTimePurchase({
+            supporterComp: !!userRow?.supporter_comp,
+            supporterUntil: userRow?.supporter_until ?? null,
+            subscriptionStatus: subscription?.status ?? null,
+          })
+        ) {
+          return NextResponse.json(
+            {
+              success: false,
+              message:
+                "일회성 결제 기간 중에는 정기 결제로만 전환할 수 있습니다.",
+            },
+            { status: 409 },
+          );
+        }
+        let customerKey = userRow?.toss_customer_key ?? null;
+        if (!customerKey) {
+          customerKey = randomUUID();
+          await db
+            .updateTable("users")
+            .set({ toss_customer_key: customerKey })
+            .where("id", "=", user.id)
+            .execute();
+        }
 
-    const orderId = await withNewOrderId(async (orderId) => {
-      await db
-        .insertInto("payments")
-        .values({
-          attempt_key: `one_time:${years}:${orderId}`,
-          user_id: user.id,
-          subscription_id: null,
-          order_id: orderId,
+        const orderId = await withNewOrderId(async (orderId) => {
+          await db
+            .insertInto("payments")
+            .values({
+              attempt_key: `one_time:${years}:${orderId}`,
+              user_id: user.id,
+              subscription_id: null,
+              order_id: orderId,
+              amount,
+              status: "pending",
+            })
+            .execute();
+          return orderId;
+        });
+        return NextResponse.json({
+          success: true,
+          customerKey,
+          orderId,
           amount,
-          status: "pending",
-        })
-        .execute();
-      return orderId;
-    });
-
-    return NextResponse.json({
-      success: true,
-      customerKey,
-      orderId,
-      amount,
-      orderName: oneTimeOrderName(years),
-    });
+          orderName: oneTimeOrderName(years),
+        });
+      });
+    } catch (error) {
+      if (error instanceof AccountBusyError) {
+        return NextResponse.json(
+          {
+            success: false,
+            message:
+              "이전 결제를 처리하고 있습니다. 잠시 후 다시 시도해 주세요.",
+          },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
   } catch (error) {
     console.error("One-time prepare error:", error);
     return NextResponse.json(

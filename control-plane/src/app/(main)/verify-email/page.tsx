@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { safeNextPath } from "@/lib/next-path";
 import { CheckCircle, XCircle, Loader } from "lucide-react";
 
 type Outcome = { status: "success" | "error"; message: string };
@@ -10,6 +11,8 @@ type Outcome = { status: "success" | "error"; message: string };
 export default function VerifyEmailPage() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  // Where the verification was asked from — the purchase page — if anywhere.
+  const next = safeNextPath(searchParams.get("next"));
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
   useEffect(() => {
@@ -78,7 +81,11 @@ export default function VerifyEmailPage() {
                 {message}
               </p>
               <Button asChild className="w-full">
-                <a href="/account">계정 관리로 이동</a>
+                {next === "/support" ? (
+                  <a href="/support">결제 계속하기</a>
+                ) : (
+                  <a href="/account">계정 관리로 이동</a>
+                )}
               </Button>
             </div>
           )}

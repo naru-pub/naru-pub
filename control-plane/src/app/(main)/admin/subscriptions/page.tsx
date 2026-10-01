@@ -50,7 +50,6 @@ export default async function SubscriptionsPage({
       "subscriptions.current_period_end",
       "subscriptions.next_billing_at",
       "subscriptions.failed_charge_count",
-      "subscriptions.charging_started_at",
       "subscriptions.canceled_at",
       "subscriptions.updated_at",
       "users.login_name",
@@ -133,11 +132,6 @@ export default async function SubscriptionsPage({
                   >
                     {SUBSCRIPTION_STATUS_LABELS[sub.status] ?? sub.status}
                   </Badge>
-                  {sub.charging_started_at ? (
-                    <span className="block text-xs text-muted-foreground">
-                      청구 중 ({formatDate(sub.charging_started_at)})
-                    </span>
-                  ) : null}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {sub.billing_interval === "year" ? "연간" : "월간"}{" "}

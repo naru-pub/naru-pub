@@ -17,15 +17,11 @@ import {
   TossPaymentResult,
 } from "@/lib/toss";
 
-// Subscription renewals run daily. This value is the payment grace window before
-// a subscription becomes past_due and related paid-only resources are reclaimed.
+// A renewal is tried at most once a day. This value is the payment grace window
+// before a subscription becomes past_due and related paid-only resources are
+// reclaimed.
 export const PAYMENT_GRACE_DAYS = 4;
 export const MAX_PAYMENT_RETRY_ATTEMPTS = 4;
-
-// A charge in flight holds charging_started_at on its subscription. The renewal
-// cron and the subscribe confirm share this lease, so two of them never charge
-// the same subscription at once; a lease older than this is presumed dead.
-export const CHARGE_LEASE_MINUTES = 30;
 
 // Subscriptions that must not be revived by a charge that was already in flight
 // when the user (or a refund, or a one-time purchase) stopped them.
@@ -213,8 +209,7 @@ export async function applyOneTimePayment(opts: {
       // prepaid access atomically, so the old billing key can never renew at the
       // boundary that now belongs to the prepaid period. Only a plan that
       // existed when the payment was approved: an old one-time order granted
-      // late (recoverOrphanedCharge) must not end a plan started since. The
-      // charge lease is left for whoever holds it.
+      // late (recoverOrphanedCharge) must not end a plan started since.
       const switched = await trx
         .updateTable("subscriptions")
         .set({
@@ -265,10 +260,6 @@ export async function applySuccessfulCharge(opts: {
   from: Date; // base for the new period (now for first charge, current_period_end for renewals)
   payment: TossPaymentResult;
   paymentId?: string;
-  // The charge lease the caller holds, released with the grant. A grant made
-  // by someone not holding it — the reconciler, or a card change settling a
-  // renewal — leaves the lease to its holder, whose own checks read it.
-  leaseHeldAt?: Date;
 }): Promise<{ periodStart: Date; periodEnd: Date; granted: boolean }> {
   const now = new Date();
   const paidAt = approvedAt(opts.payment, now);
@@ -380,15 +371,6 @@ export async function applySuccessfulCharge(opts: {
         })
         .where("id", "=", opts.subscriptionId)
         .execute();
-      if (opts.leaseHeldAt) {
-        await trx
-          .updateTable("subscriptions")
-          .set({ charging_started_at: null })
-          .where("id", "=", opts.subscriptionId)
-          .where("charging_started_at", "=", opts.leaseHeldAt)
-          .execute();
-      }
-
       await trx
         .updateTable("users")
         .set({ supporter_until: periodEnd })
@@ -410,50 +392,6 @@ export async function applySuccessfulCharge(opts: {
       return { periodStart, periodEnd, granted: true };
     }),
   );
-}
-
-// Takes the charge lease on a subscription that is waiting for its card, or
-// returns null when another charge holds a live lease or the subscription is
-// not incomplete. The subscribe confirm uses this so a doubled callback cannot
-// charge the first period twice, and a stale callback cannot charge a
-// subscription that has since moved on (past_due, canceled, scheduled). A card
-// change claims an active or scheduled subscription the same way, so its key
-// is never swapped under a renewal charging the old one.
-export async function claimSubscriptionForConfirm(
-  subscriptionId: string,
-  now = new Date(),
-  statuses: string[] = ["incomplete"],
-): Promise<Date | null> {
-  const staleLeaseBefore = new Date(
-    now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000,
-  );
-  const claimed = await db
-    .updateTable("subscriptions")
-    .set({ charging_started_at: now, updated_at: now })
-    .where("id", "=", subscriptionId)
-    .where("status", "in", statuses)
-    .where((eb) =>
-      eb.or([
-        eb("charging_started_at", "is", null),
-        eb("charging_started_at", "<", staleLeaseBefore),
-      ]),
-    )
-    .executeTakeFirst();
-  return Number(claimed.numUpdatedRows ?? 0) > 0 ? now : null;
-}
-
-// Releases a lease taken at `leasedAt`. A lease that has since been cleared or
-// re-taken by someone else is left alone.
-export async function releaseSubscriptionLease(
-  subscriptionId: string,
-  leasedAt: Date,
-): Promise<void> {
-  await db
-    .updateTable("subscriptions")
-    .set({ charging_started_at: null })
-    .where("id", "=", subscriptionId)
-    .where("charging_started_at", "=", leasedAt)
-    .execute();
 }
 
 // Defers the first recurring charge to the end of prepaid access. Notice
@@ -489,26 +427,19 @@ export async function scheduleSubscriptionStart(
 // A subscription still incomplete holds a key only for the signup under way.
 // Once that signup's first charge has failed for good, the key has nothing
 // left to charge and is retired, rather than kept in plain text until the
-// supporter happens to start over. A signup that holds the charge lease is
-// still using its key, unless the caller is that signup (ownsLease).
+// supporter happens to start over. Callers hold the account lock, so no
+// confirm of that signup is running meanwhile.
 export async function retireUnusedSignupKey(
   trx: Executor,
   subscriptionId: string,
-  opts: { ownsLease?: boolean; now?: Date } = {},
 ): Promise<string | null> {
-  const now = opts.now ?? new Date();
   const row = await trx
     .selectFrom("subscriptions")
-    .select(["status", "charging_started_at"])
+    .select("status")
     .where("id", "=", subscriptionId)
     .forUpdate()
     .executeTakeFirst();
   if (!row || row.status !== "incomplete") return null;
-  const leaseLive =
-    row.charging_started_at != null &&
-    new Date(row.charging_started_at).getTime() >
-      now.getTime() - CHARGE_LEASE_MINUTES * 60 * 1000;
-  if (leaseLive && !opts.ownsLease) return null;
   const retired = await retireBillingKey(trx, { subscriptionId });
   // The signup is over: its callback, reopened, would get the same key back
   // from Toss — the issue call's idempotency key comes from the authKey and

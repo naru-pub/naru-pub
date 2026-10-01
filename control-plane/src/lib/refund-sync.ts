@@ -1,5 +1,6 @@
 import { sql } from "kysely";
 import { db } from "@/lib/database";
+import { AccountBusyError } from "@/lib/account-lock";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { REFUND_WINDOW_DAYS } from "@/lib/refunds";
 
@@ -121,7 +122,9 @@ export async function syncPaymentRefunds(
       }
       result.checked += 1;
       try {
-        const outcome = await reconcilePayment(payment.id);
+        // Without waiting: an account busy with another payment operation
+        // stays due, and the next run (or this one's next page) gets it.
+        const outcome = await reconcilePayment(payment.id, { waitMs: 0 });
         if (outcome.state === "refunded") {
           result.refunded += 1;
           console.log(
@@ -129,6 +132,10 @@ export async function syncPaymentRefunds(
           );
         }
       } catch (error) {
+        if (error instanceof AccountBusyError) {
+          result.checked -= 1;
+          continue;
+        }
         result.failed += 1;
         console.error(
           `[sync-payment-refunds] payment ${payment.id}: sync failed`,
