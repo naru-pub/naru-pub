@@ -25,6 +25,7 @@ export const metadata: Metadata = { title: "결제 이벤트 · 운영 · 나루
 const FAILURE_KINDS = new Set([
   "charge_failed",
   "charge_unresolved",
+  "charge_orphaned",
   "past_due",
   "key_deletion_stuck",
 ]);

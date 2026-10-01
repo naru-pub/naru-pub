@@ -14,6 +14,7 @@ export const PAYMENT_EVENT_LABELS = {
   charge_succeeded: "결제 완료",
   charge_failed: "결제 실패",
   charge_unresolved: "결과 불분명",
+  charge_orphaned: "결제됐으나 기간 미부여",
   past_due: "연체 전환",
   refunded: "환불",
   subscription_scheduled: "정기 결제 예약",

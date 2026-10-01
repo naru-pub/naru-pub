@@ -1,7 +1,12 @@
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import type { Executor } from "@/lib/entitlements";
-import { kstDate, recordPaymentEvent, won } from "@/lib/payment-events";
+import {
+  kstDate,
+  notePaymentEvent,
+  recordPaymentEvent,
+  won,
+} from "@/lib/payment-events";
 import {
   addInterval,
   addMonths,
@@ -44,9 +49,55 @@ export function addPaymentGrace(until: Date): Date {
 // it was pending ran before Toss was called; by the time the grant's lock is
 // held, another path may have settled it — failed, expired or refunded — and
 // that state must not be overwritten with a fresh period.
+export class UngrantableChargeError extends Error {
+  constructor(
+    public readonly paymentId: string,
+    public readonly status: string,
+  ) {
+    super(`Payment ${paymentId} is ${status}, not pending`);
+    this.name = "UngrantableChargeError";
+  }
+}
+
 function assertGrantable(paymentId: string, status: string) {
   if (status !== "pending") {
-    throw new Error(`Payment ${paymentId} is ${status}, not pending`);
+    throw new UngrantableChargeError(paymentId, status);
+  }
+}
+
+// Toss approved a charge whose order the ledger had already settled another
+// way: money taken with no period granted, and — since expired and failed
+// rows are never looked at again — nothing that will fix it. Logged on its own
+// so it stands out of the routine unresolved charges; a person refunds it in
+// the Toss dashboard or grants the period. Recorded after the grant's
+// transaction has rolled back, so never inside it.
+async function noteOrphanedCharge(
+  error: unknown,
+  opts: { userId: string; subscriptionId?: string; payment: TossPaymentResult },
+) {
+  if (!(error instanceof UngrantableChargeError)) return;
+  if (opts.payment.status !== "DONE") return;
+  console.error(
+    `[payments] ORPHANED charge: order ${opts.payment.orderId} was approved at Toss but payment ${error.paymentId} is ${error.status}`,
+  );
+  await notePaymentEvent({
+    kind: "charge_orphaned",
+    userId: opts.userId,
+    paymentId: error.paymentId,
+    subscriptionId: opts.subscriptionId ?? null,
+    summary: `Toss에서 승인된 결제 ${won(opts.payment.totalAmount)} (주문 ${opts.payment.orderId}, paymentKey ${opts.payment.paymentKey})가 이미 ${error.status} 상태라 기간을 부여하지 못함 — Toss 대시보드에서 환불하거나 기간을 직접 부여해야 함`,
+  });
+}
+
+async function grantOrNote<T>(
+  opts: { userId: string; subscriptionId?: string; payment: TossPaymentResult },
+  grant: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await grant();
+  } catch (error) {
+    await noteOrphanedCharge(error, opts);
+    throw error;
   }
 }
 
@@ -66,9 +117,8 @@ export async function applyOneTimePayment(opts: {
     throw new Error("Invalid one-time support years");
   }
   const now = new Date();
-  const { retiredKey, ...period } = await db
-    .transaction()
-    .execute(async (trx) => {
+  const { retiredKey, ...period } = await grantOrNote(opts, () =>
+    db.transaction().execute(async (trx) => {
       if (opts.paymentId) {
         const ledger = await trx
           .selectFrom("payments")
@@ -173,7 +223,8 @@ export async function applyOneTimePayment(opts: {
         summary: `한 번만 결제 ${won(opts.amount)} (${opts.years}년) · ${kstDate(periodEnd)}까지${switched ? " · 정기 결제는 한 번만 결제로 전환" : ""}`,
       });
       return { periodStart, periodEnd, granted: true, retiredKey };
-    });
+    }),
+  );
   await deleteRetiredBillingKey(retiredKey);
   return period;
 }
@@ -201,129 +252,133 @@ export async function applySuccessfulCharge(opts: {
 }): Promise<{ periodStart: Date; periodEnd: Date; granted: boolean }> {
   const now = new Date();
 
-  return db.transaction().execute(async (trx) => {
-    if (opts.paymentId) {
-      const ledger = await trx
-        .selectFrom("payments")
-        .select(["status", "period_start", "period_end"])
-        .where("id", "=", opts.paymentId)
+  return grantOrNote(opts, () =>
+    db.transaction().execute(async (trx) => {
+      if (opts.paymentId) {
+        const ledger = await trx
+          .selectFrom("payments")
+          .select(["status", "period_start", "period_end"])
+          .where("id", "=", opts.paymentId)
+          .forUpdate()
+          .executeTakeFirstOrThrow();
+        if (
+          ledger.status === "done" &&
+          ledger.period_start &&
+          ledger.period_end
+        ) {
+          return {
+            periodStart: new Date(ledger.period_start),
+            periodEnd: new Date(ledger.period_end),
+            granted: false,
+          };
+        }
+        assertGrantable(opts.paymentId, ledger.status);
+      }
+
+      // Same lock order as applyOneTimePayment: payments, users, subscriptions.
+      const current = await trx
+        .selectFrom("users")
+        .select("supporter_until")
+        .where("id", "=", opts.userId)
         .forUpdate()
         .executeTakeFirstOrThrow();
+      const subscription = await trx
+        .selectFrom("subscriptions")
+        .select(["status", "toss_billing_key"])
+        .where("id", "=", opts.subscriptionId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+
+      let periodStart = opts.from;
       if (
-        ledger.status === "done" &&
-        ledger.period_start &&
-        ledger.period_end
+        current.supporter_until &&
+        new Date(current.supporter_until) > periodStart
       ) {
-        return {
-          periodStart: new Date(ledger.period_start),
-          periodEnd: new Date(ledger.period_end),
-          granted: false,
-        };
+        periodStart = new Date(current.supporter_until);
       }
-      assertGrantable(opts.paymentId, ledger.status);
-    }
+      const periodEnd = addInterval(periodStart, opts.interval);
 
-    // Same lock order as applyOneTimePayment: payments, users, subscriptions.
-    const current = await trx
-      .selectFrom("users")
-      .select("supporter_until")
-      .where("id", "=", opts.userId)
-      .forUpdate()
-      .executeTakeFirstOrThrow();
-    const subscription = await trx
-      .selectFrom("subscriptions")
-      .select(["status", "toss_billing_key"])
-      .where("id", "=", opts.subscriptionId)
-      .forUpdate()
-      .executeTakeFirstOrThrow();
+      if (opts.paymentId) {
+        await trx
+          .updateTable("payments")
+          .set({
+            ...paymentProviderMetadata(opts.payment, "billing"),
+            toss_payment_key: opts.payment.paymentKey,
+            order_id: opts.payment.orderId,
+            amount: opts.amount,
+            status: "done",
+            paid_at: now,
+            period_start: periodStart,
+            period_end: periodEnd,
+            raw: JSON.stringify(opts.payment),
+          })
+          .where("id", "=", opts.paymentId)
+          .execute();
+      } else {
+        await trx
+          .insertInto("payments")
+          .values({
+            ...paymentProviderMetadata(opts.payment, "billing"),
+            user_id: opts.userId,
+            subscription_id: opts.subscriptionId,
+            toss_payment_key: opts.payment.paymentKey,
+            order_id: opts.payment.orderId,
+            amount: opts.amount,
+            status: "done",
+            paid_at: now,
+            period_start: periodStart,
+            period_end: periodEnd,
+            raw: JSON.stringify(opts.payment),
+          })
+          .execute();
+      }
 
-    let periodStart = opts.from;
-    if (
-      current.supporter_until &&
-      new Date(current.supporter_until) > periodStart
-    ) {
-      periodStart = new Date(current.supporter_until);
-    }
-    const periodEnd = addInterval(periodStart, opts.interval);
-
-    if (opts.paymentId) {
+      // Without a billing key there is nothing to renew with: a late renewal
+      // reconciled after the supporter began registering a new card lands on
+      // an incomplete subscription whose old key is gone. Marking that active
+      // would make the new card's confirm report "already subscribed" and never
+      // store the new key, so the status is left for the confirm to settle.
+      const stopped = STOPPED_SUBSCRIPTION_STATUSES.includes(
+        subscription.status,
+      );
+      const renewable = !stopped && subscription.toss_billing_key != null;
       await trx
-        .updateTable("payments")
+        .updateTable("subscriptions")
         .set({
-          ...paymentProviderMetadata(opts.payment, "billing"),
-          toss_payment_key: opts.payment.paymentKey,
-          order_id: opts.payment.orderId,
-          amount: opts.amount,
-          status: "done",
-          paid_at: now,
-          period_start: periodStart,
-          period_end: periodEnd,
-          raw: JSON.stringify(opts.payment),
+          status: renewable ? "active" : subscription.status,
+          current_period_start: periodStart,
+          current_period_end: periodEnd,
+          next_billing_at: renewable ? periodEnd : null,
+          failed_charge_count: 0,
+          charging_started_at: null,
+          renewal_notice_sent_at: null,
+          payment_grace_notice_sent_at: null,
+          updated_at: now,
         })
-        .where("id", "=", opts.paymentId)
+        .where("id", "=", opts.subscriptionId)
         .execute();
-    } else {
+
       await trx
-        .insertInto("payments")
-        .values({
-          ...paymentProviderMetadata(opts.payment, "billing"),
-          user_id: opts.userId,
-          subscription_id: opts.subscriptionId,
-          toss_payment_key: opts.payment.paymentKey,
-          order_id: opts.payment.orderId,
-          amount: opts.amount,
-          status: "done",
-          paid_at: now,
-          period_start: periodStart,
-          period_end: periodEnd,
-          raw: JSON.stringify(opts.payment),
-        })
+        .updateTable("users")
+        .set({ supporter_until: periodEnd })
+        .where("id", "=", opts.userId)
         .execute();
-    }
-
-    // Without a billing key there is nothing to renew with: a late renewal
-    // reconciled after the supporter began registering a new card lands on
-    // an incomplete subscription whose old key is gone. Marking that active
-    // would make the new card's confirm report "already subscribed" and never
-    // store the new key, so the status is left for the confirm to settle.
-    const stopped = STOPPED_SUBSCRIPTION_STATUSES.includes(subscription.status);
-    const renewable = !stopped && subscription.toss_billing_key != null;
-    await trx
-      .updateTable("subscriptions")
-      .set({
-        status: renewable ? "active" : subscription.status,
-        current_period_start: periodStart,
-        current_period_end: periodEnd,
-        next_billing_at: renewable ? periodEnd : null,
-        failed_charge_count: 0,
-        charging_started_at: null,
-        renewal_notice_sent_at: null,
-        payment_grace_notice_sent_at: null,
-        updated_at: now,
-      })
-      .where("id", "=", opts.subscriptionId)
-      .execute();
-
-    await trx
-      .updateTable("users")
-      .set({ supporter_until: periodEnd })
-      .where("id", "=", opts.userId)
-      .execute();
-    await recordPaymentEvent(trx, {
-      kind: "charge_succeeded",
-      userId: opts.userId,
-      paymentId: opts.paymentId,
-      subscriptionId: opts.subscriptionId,
-      summary: `정기 결제 ${won(opts.amount)} (${opts.interval === "month" ? "월간" : "연간"}) · ${kstDate(periodEnd)}까지${
-        stopped
-          ? ` · 구독은 ${subscription.status} 그대로`
-          : renewable
-            ? ""
-            : " · 빌링키가 없어 자동 갱신은 하지 않음"
-      }`,
-    });
-    return { periodStart, periodEnd, granted: true };
-  });
+      await recordPaymentEvent(trx, {
+        kind: "charge_succeeded",
+        userId: opts.userId,
+        paymentId: opts.paymentId,
+        subscriptionId: opts.subscriptionId,
+        summary: `정기 결제 ${won(opts.amount)} (${opts.interval === "month" ? "월간" : "연간"}) · ${kstDate(periodEnd)}까지${
+          stopped
+            ? ` · 구독은 ${subscription.status} 그대로`
+            : renewable
+              ? ""
+              : " · 빌링키가 없어 자동 갱신은 하지 않음"
+        }`,
+      });
+      return { periodStart, periodEnd, granted: true };
+    }),
+  );
 }
 
 // Takes the charge lease on a subscription that is waiting for its card, or

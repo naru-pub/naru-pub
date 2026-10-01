@@ -183,7 +183,11 @@ export async function POST(request: NextRequest) {
 
     const action = webhookLedgerAction(payment.status);
     if (action.type === "reconcile") {
-      const result = await reconcilePayment(ledger.id);
+      // Toss wants an answer within 10 seconds; a key the refund retires is
+      // deleted by the cron instead.
+      const result = await reconcilePayment(ledger.id, {
+        deferKeyDeletion: true,
+      });
       return respond(
         200,
         `reconciled payment ${ledger.id}: ${JSON.stringify(result)}`,

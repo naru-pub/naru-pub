@@ -152,6 +152,10 @@ async function chargeInFlight(
 export type ReconcileOptions = {
   // The charge lease the caller holds on the payment's subscription, if any.
   leaseHeldAt?: Date | null;
+  // Leave a key this retires queued for the delete-retired-billing-keys cron
+  // (every 5 minutes) instead of deleting it at Toss now. A webhook must answer
+  // within 10 seconds, and the delete may wait out the whole Toss timeout.
+  deferKeyDeletion?: boolean;
 };
 
 async function reconcilePaymentCore(
@@ -223,7 +227,9 @@ async function reconcilePaymentCore(
           };
         });
         if (outcome.inFlight) return { state: "pending" };
-        await deleteRetiredBillingKey(outcome.retiredKey);
+        if (!opts.deferKeyDeletion) {
+          await deleteRetiredBillingKey(outcome.retiredKey);
+        }
         return { state: "expired" };
       }
       return { state: "pending" };
@@ -402,7 +408,7 @@ async function reconcilePaymentCore(
           }
           return { subscriptionCanceled: false, retiredKey: null };
         });
-      await deleteRetiredBillingKey(retiredKey);
+      if (!opts.deferKeyDeletion) await deleteRetiredBillingKey(retiredKey);
       if (status === "canceled" || status === "partial_canceled") {
         return {
           state: "refunded",

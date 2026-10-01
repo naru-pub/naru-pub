@@ -66,6 +66,10 @@ const { deleteUserRow } =
   require("@/lib/account-deletion") as typeof import("@/lib/account-deletion");
 const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
+const { NextRequest } =
+  require("next/server") as typeof import("next/server");
+const { POST: tossWebhook } =
+  require("@/app/(main)/api/webhooks/toss/route") as typeof import("@/app/(main)/api/webhooks/toss/route");
 
 // Runs against a disposable, migrated database (scripts/test-payments-db.sh),
 // never the developer's own.
@@ -939,6 +943,47 @@ integration("payments against the database", () => {
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("later-key");
     });
 
+    // Toss wants a webhook answered within 10 seconds, and deleting a key may
+    // wait out the whole Toss timeout.
+    test("a refund webhook leaves the key it retires to the cron", async () => {
+      const userId = await makeUser();
+      await paidPayment(userId);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "webhook-key",
+      });
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+
+      const response = await tossWebhook(
+        new NextRequest("http://localhost/api/webhooks/toss", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            eventType: "PAYMENT_STATUS_CHANGED",
+            createdAt: new Date().toISOString(),
+            data: { orderId: `refund-order-${userId}`, status: "CANCELED" },
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect((await subscription(subId)).toss_billing_key).toBeNull();
+      expect(toss.deleteBillingKey).not.toHaveBeenCalled();
+      const queued = await db
+        .selectFrom("retired_billing_keys")
+        .select("billing_key")
+        .execute();
+      expect(queued).toEqual([{ billing_key: "webhook-key" }]);
+
+      await deleteRetiredBillingKeys();
+      expect(toss.deleteBillingKey).toHaveBeenCalledWith("webhook-key");
+    });
+
     test("a refund reconciled again does not cancel a plan started since", async () => {
       const userId = await makeUser();
       const paymentId = await paidPayment(userId);
@@ -1173,6 +1218,50 @@ integration("payments against the database", () => {
       toss.chargeBillingKey.mockClear();
       await chargeDueSubscriptions();
       expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+    });
+
+    test("a charge approved for an order settled meanwhile is flagged", async () => {
+      const { userId, subId, periodEnd } = await dueSubscription();
+      // Something else settles the order while Toss is approving it.
+      toss.chargeBillingKey.mockImplementation(async (params) => {
+        await db
+          .updateTable("payments")
+          .set({ status: "expired" })
+          .where("order_id", "=", params.orderId)
+          .execute();
+        return tossPayment(params.orderId, params.amount);
+      });
+
+      await chargeDueSubscriptions();
+
+      const [attempt] = await attempts(subId);
+      expect(attempt.status).toBe("expired");
+      expect(await supporterUntil(userId)).toEqual(periodEnd);
+      const orphaned = await db
+        .selectFrom("payment_events")
+        .select(["kind", "summary", "user_id"])
+        .where("kind", "=", "charge_orphaned")
+        .execute();
+      expect(orphaned).toHaveLength(1);
+      expect(orphaned[0].user_id).toBe(userId);
+      expect(orphaned[0].summary).toContain(attempt.order_id);
+      expect(orphaned[0].summary).toContain(`pk-${attempt.order_id}`);
+    });
+
+    test("an ordinary renewal flags nothing", async () => {
+      await dueSubscription();
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+
+      await chargeDueSubscriptions();
+
+      const orphaned = await db
+        .selectFrom("payment_events")
+        .select("id")
+        .where("kind", "=", "charge_orphaned")
+        .execute();
+      expect(orphaned).toHaveLength(0);
     });
 
     test("a pending order is retried with the same order and key", async () => {
