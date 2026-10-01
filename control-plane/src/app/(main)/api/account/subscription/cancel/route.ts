@@ -3,7 +3,7 @@ import { assertJsonContentType } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
-import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
+import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import { recordPaymentEvent } from "@/lib/payment-events";
 import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 
@@ -93,6 +93,15 @@ export async function POST(request: NextRequest) {
             cancelingSchedule,
             wasPastDue: current.status === "past_due",
             billingKey: await retireBillingKey(trx, { subscriptionId: sub.id }),
+            noticeJob: await enqueueJob(
+              trx,
+              {
+                kind: "subscription_canceled",
+                subscriptionId: sub.id,
+                reason: cancelingSchedule ? "user_schedule" : "user",
+              },
+              { dedupeKey: `subscription_canceled:${sub.id}` },
+            ),
           };
         }),
       );
@@ -113,10 +122,7 @@ export async function POST(request: NextRequest) {
     const billingKey = result === undefined ? undefined : result.billingKey;
     if (billingKey !== undefined) {
       await deleteRetiredBillingKey(billingKey);
-      await sendSubscriptionCanceledNotice(
-        sub.id,
-        cancelingSchedule ? "user_schedule" : "user",
-      );
+      await runJobs([result?.noticeJob ?? null]);
     }
 
     return NextResponse.json({

@@ -1,12 +1,12 @@
 import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
-import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
 import {
   reconcilePayment,
   type ReconciliationResult,
 } from "@/lib/payment-reconciliation";
 import { recordPaymentEvent } from "@/lib/payment-events";
+import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import { paymentFlowForRecord } from "@/lib/toss";
 import { cancelOrder } from "@/lib/toss-gateway";
 
@@ -93,7 +93,7 @@ export class RefundError extends Error {
 // Reconciliation stops the account's recurring plan when it first sees the
 // refund; this is for a cancel Toss accepted but the lookup does not show yet.
 async function stopRecurringBilling(userId: string): Promise<boolean> {
-  const { stoppedId, billingKey } = await db
+  const { stoppedId, billingKey, noticeJob } = await db
     .transaction()
     .execute(async (trx) => {
       const stopped = await trx
@@ -121,12 +121,23 @@ async function stopRecurringBilling(userId: string): Promise<boolean> {
         billingKey: stopped
           ? await retireBillingKey(trx, { subscriptionId: stopped.id })
           : null,
+        // The refund's own cancel mail went out before this stop, or goes out
+        // later without it, so it cannot say so: this one does.
+        noticeJob: stopped
+          ? await enqueueJob(
+              trx,
+              {
+                kind: "subscription_canceled",
+                subscriptionId: stopped.id,
+                reason: "refund",
+              },
+              { dedupeKey: `subscription_canceled:${stopped.id}` },
+            )
+          : null,
       };
     });
   await deleteRetiredBillingKey(billingKey);
-  // The refund's own cancel mail went out before this stop, or goes out
-  // later without it, so it cannot say so: this one does.
-  if (stoppedId) await sendSubscriptionCanceledNotice(stoppedId, "refund");
+  await runJobs([noticeJob]);
   return stoppedId != null;
 }
 

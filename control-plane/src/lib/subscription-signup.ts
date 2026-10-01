@@ -7,7 +7,6 @@ import {
   discardIssuedBillingKey,
   retireBillingKey,
 } from "@/lib/billing-keys";
-import { sendSupportThankYouEmail } from "@/lib/email";
 import {
   reconcilePayment,
   settleOneTimeOrders,
@@ -748,7 +747,9 @@ async function confirmAdoptedSignup(opts: {
   }
   const payment = outcome.payment;
 
-  const period = await applySuccessfulCharge({
+  // The thank-you goes with the grant (lib/payment-jobs); a doubled callback,
+  // or the reconciler settling this order first, finds it already owed.
+  await applySuccessfulCharge({
     subscriptionId: sub.id,
     userId,
     interval,
@@ -756,23 +757,8 @@ async function confirmAdoptedSignup(opts: {
     from: now,
     payment,
     paymentId: attempt.id,
+    notice: "thank_you",
   });
-
-  // A doubled callback, or the reconciler settling this order first (it sends
-  // its own receipt), finds the period already granted.
-  if (period.granted && userRow.email && userRow.email_verified_at) {
-    try {
-      await sendSupportThankYouEmail({
-        email: userRow.email,
-        loginName: userRow.login_name,
-        kind: "recurring",
-        amount: sub.amount,
-        supporterUntil: period.periodEnd,
-      });
-    } catch (error) {
-      console.error("Support thank-you email error:", error);
-    }
-  }
 
   return { ok: true, message: "결제가 시작되었습니다. 감사합니다!" };
 }

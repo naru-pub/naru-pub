@@ -69,7 +69,7 @@ export default async function WebhookDeliveriesPage({
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Toss가 보낸 웹훅과 나루가 한 일을 최근 200건까지 보여 줍니다(90일 보관).
+        Toss가 보낸 웹훅과 나루가 한 일을 최근 200건까지 보여 줍니다(5년 보관).
         5xx로 답한 웹훅은 Toss가 다시 보냅니다. 보낸 쪽 기록은{" "}
         <a
           href="https://developers.tosspayments.com/my/webhooks"

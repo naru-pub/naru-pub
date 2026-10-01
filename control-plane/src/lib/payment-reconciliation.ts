@@ -1,8 +1,5 @@
 import { randomUUID } from "crypto";
-import { sendPaymentCanceledNotice } from "@/lib/cancellation-notices";
-import { sendChargeReceipt } from "@/lib/charge-receipts";
 import { db } from "@/lib/database";
-import { sendSupportThankYouEmail } from "@/lib/email";
 import {
   BillingInterval,
   confirmPayment,
@@ -24,6 +21,7 @@ import { withAccountLock } from "@/lib/account-lock";
 import { confirmOrder, lookupOrder } from "@/lib/toss-gateway";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payment-events";
+import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 
 // An order Toss has never heard of is given up after this long. A one-time
 // order exists at Toss only once the buyer has opened the payment window,
@@ -252,7 +250,7 @@ async function reconcilePaymentCore(
         payment.amount,
       );
 
-      const { retiredKey, subscriptionCanceled, newlyRefunded } = await db
+      const { retiredKey, subscriptionCanceled, noticeJob } = await db
         .transaction()
         .execute(async (trx) => {
           // Read under a lock, so of two reconciliations that see the same
@@ -403,9 +401,24 @@ async function reconcilePaymentCore(
             });
           }
 
+          // Enqueued with the refund it reports, once per refunded amount.
+          const noticeJob = newlyRefunded
+            ? await enqueueJob(
+                trx,
+                {
+                  kind: "payment_canceled",
+                  paymentId: payment.id,
+                  subscriptionCanceled: !!stopped,
+                },
+                {
+                  dedupeKey: `payment_canceled:${payment.id}:${refundedAmount}`,
+                },
+              )
+            : null;
+
           if (stopped) {
             return {
-              newlyRefunded,
+              noticeJob,
               subscriptionCanceled: true,
               retiredKey: await retireBillingKey(trx, {
                 subscriptionId: stopped.id,
@@ -414,7 +427,7 @@ async function reconcilePaymentCore(
           }
           if (initialAttempt && refundedAmount === 0) {
             return {
-              newlyRefunded,
+              noticeJob,
               subscriptionCanceled: false,
               retiredKey: await retireUnusedSignupKey(
                 trx,
@@ -423,15 +436,13 @@ async function reconcilePaymentCore(
             };
           }
           return {
-            newlyRefunded,
+            noticeJob,
             subscriptionCanceled: false,
             retiredKey: null,
           };
         });
       if (!opts.deferKeyDeletion) await deleteRetiredBillingKey(retiredKey);
-      if (newlyRefunded) {
-        await sendPaymentCanceledNotice(payment.id, { subscriptionCanceled });
-      }
+      await runJobs([noticeJob]);
       if (status === "canceled" || status === "partial_canceled") {
         return {
           state: "refunded",
@@ -452,22 +463,15 @@ async function reconcilePaymentCore(
     if (years === null) {
       throw new Error(`Payment ${payment.id} has an invalid one-time amount`);
     }
-    const period = await applyOneTimePayment({
+    // The buyer's own confirm never got this far — they left before the
+    // callback ran, or it failed — so the grant's thank-you is theirs.
+    await applyOneTimePayment({
       userId: payment.user_id,
       amount: payment.amount,
       years,
       payment: tossPayment,
       paymentId: payment.id,
     });
-    // The buyer's own confirm never got this far — they left before the
-    // callback ran, or it failed — so nobody has thanked them yet.
-    if (period.granted) {
-      await sendOneTimeThankYou(
-        payment.user_id,
-        payment.amount,
-        period.periodEnd,
-      );
-    }
     return { state: "done" };
   }
 
@@ -486,7 +490,9 @@ async function reconcilePaymentCore(
     : now;
   const from = initialAttempt || currentEnd < now ? now : currentEnd;
 
-  const { granted } = await applySuccessfulCharge({
+  // The charge's own run left it unresolved, so nobody has told the
+  // supporter about it yet: a receipt goes with the grant.
+  await applySuccessfulCharge({
     subscriptionId: payment.subscription_id,
     userId: payment.user_id,
     interval: subscription.billing_interval as BillingInterval,
@@ -494,10 +500,8 @@ async function reconcilePaymentCore(
     from,
     payment: tossPayment,
     paymentId: payment.id,
+    notice: "receipt",
   });
-  // The charge's own run left it unresolved, so nobody has told the
-  // supporter about it yet.
-  if (granted) await sendChargeReceipt(payment.id);
   return { state: "done" };
 }
 
@@ -610,30 +614,6 @@ async function confirmAuthenticatedPayment(
     `Reconciling payment ${payment.id}: confirming the authenticated payment did not approve it: ${describeTossError(outcome.error)}`,
   );
   return inProgress;
-}
-
-async function sendOneTimeThankYou(
-  userId: string,
-  amount: number,
-  supporterUntil: Date,
-) {
-  try {
-    const user = await db
-      .selectFrom("users")
-      .select(["email", "email_verified_at", "login_name"])
-      .where("id", "=", userId)
-      .executeTakeFirst();
-    if (!user?.email || !user.email_verified_at) return;
-    await sendSupportThankYouEmail({
-      email: user.email,
-      loginName: user.login_name,
-      kind: "one_time",
-      amount,
-      supporterUntil,
-    });
-  } catch (error) {
-    console.error("Support thank-you email error:", error);
-  }
 }
 
 // Asks Toss what became of a payment and brings the ledger, the account's

@@ -7,9 +7,9 @@ import {
 } from "@/lib/email";
 
 // Mail for the two ways a billing relationship winds down: a payment canceled
-// (refunded), and recurring billing stopped. Best effort, like the other
-// billing mail: a failed send is logged, and never undoes the change it
-// reports. Call them after the change has committed.
+// (refunded), and recurring billing stopped. Run as payment jobs
+// (lib/payment-jobs): a failed send throws and is tried again; it never undoes
+// the change it reports.
 
 // When paid features actually end after the change, or null when they
 // already have (or a comp, whose access no date describes): the paid time
@@ -32,7 +32,7 @@ export async function sendPaymentCanceledNotice(
   paymentId: string,
   opts: { subscriptionCanceled: boolean },
 ): Promise<void> {
-  try {
+  {
     const row = await db
       .selectFrom("payments")
       .innerJoin("users", "users.id", "payments.user_id")
@@ -62,8 +62,6 @@ export async function sendPaymentCanceledNotice(
       supporterUntil: remainingAccess(row),
       subscriptionCanceled: opts.subscriptionCanceled,
     });
-  } catch (error) {
-    console.error(`Payment canceled notice for ${paymentId} failed:`, error);
   }
 }
 
@@ -73,7 +71,7 @@ export async function sendSubscriptionCanceledNotice(
   subscriptionId: string,
   reason: SubscriptionCancelReason,
 ): Promise<void> {
-  try {
+  {
     const row = await db
       .selectFrom("subscriptions")
       .innerJoin("users", "users.id", "subscriptions.user_id")
@@ -96,10 +94,5 @@ export async function sendSubscriptionCanceledNotice(
       canceledAt: row.canceled_at ? new Date(row.canceled_at) : new Date(),
       supporterUntil: remainingAccess(row),
     });
-  } catch (error) {
-    console.error(
-      `Subscription canceled notice for ${subscriptionId} failed:`,
-      error,
-    );
   }
 }

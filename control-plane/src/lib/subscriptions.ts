@@ -1,3 +1,4 @@
+import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import { randomUUID } from "crypto";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
@@ -145,6 +146,7 @@ export async function applyOneTimePayment(opts: {
             periodEnd: new Date(ledger.period_end),
             granted: false,
             retiredKey: null,
+            notice: null,
           };
         }
         assertGrantable(opts.paymentId, ledger.status);
@@ -233,11 +235,22 @@ export async function applyOneTimePayment(opts: {
         subscriptionId: switched?.id,
         summary: `한 번만 결제 ${won(opts.amount)} (${opts.years}년) · ${kstDate(periodEnd)}까지${switched ? " · 정기 결제는 한 번만 결제로 전환" : ""}`,
       });
-      return { periodStart, periodEnd, granted: true, retiredKey };
+      // The thank-you owed for it, in this transaction (lib/payment-jobs):
+      // sent once, and only if the grant commits.
+      const notice = opts.paymentId
+        ? await enqueueJob(
+            trx,
+            { kind: "thank_you", paymentId: opts.paymentId },
+            { dedupeKey: `thank_you:${opts.paymentId}` },
+          )
+        : null;
+      return { periodStart, periodEnd, granted: true, retiredKey, notice };
     }),
   );
   await deleteRetiredBillingKey(retiredKey);
-  return period;
+  const { notice, ...result } = period;
+  await runJobs([notice]);
+  return result;
 }
 
 // Applies a successful Toss charge atomically: records the payment, extends the
@@ -260,11 +273,14 @@ export async function applySuccessfulCharge(opts: {
   from: Date; // base for the new period (now for first charge, current_period_end for renewals)
   payment: TossPaymentResult;
   paymentId?: string;
+  // The mail owed when this grants: a thank-you for a signup's first charge,
+  // a receipt for any later one.
+  notice: "thank_you" | "receipt";
 }): Promise<{ periodStart: Date; periodEnd: Date; granted: boolean }> {
   const now = new Date();
   const paidAt = approvedAt(opts.payment, now);
 
-  return grantOrNote(opts, () =>
+  const { notice, ...result } = await grantOrNote(opts, () =>
     db.transaction().execute(async (trx) => {
       if (opts.paymentId) {
         const ledger = await trx
@@ -282,6 +298,7 @@ export async function applySuccessfulCharge(opts: {
             periodStart: new Date(ledger.period_start),
             periodEnd: new Date(ledger.period_end),
             granted: false,
+            notice: null,
           };
         }
         assertGrantable(opts.paymentId, ledger.status);
@@ -389,9 +406,20 @@ export async function applySuccessfulCharge(opts: {
               : " · 빌링키가 없어 자동 갱신은 하지 않음"
         }`,
       });
-      return { periodStart, periodEnd, granted: true };
+      const notice = opts.paymentId
+        ? await enqueueJob(
+            trx,
+            opts.notice === "thank_you"
+              ? { kind: "thank_you", paymentId: opts.paymentId }
+              : { kind: "charge_receipt", paymentId: opts.paymentId },
+            { dedupeKey: `${opts.notice}:${opts.paymentId}` },
+          )
+        : null;
+      return { periodStart, periodEnd, granted: true, notice };
     }),
   );
+  await runJobs([notice]);
+  return result;
 }
 
 // Defers the first recurring charge to the end of prepaid access. Notice

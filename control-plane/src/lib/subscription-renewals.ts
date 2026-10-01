@@ -1,12 +1,7 @@
 import { db } from "@/lib/database";
-import {
-  sendSubscriptionPastDueEmail,
-  sendSubscriptionPaymentGraceEmail,
-  type SubscriptionPastDueReason,
-} from "@/lib/email";
-import { getUserEntitlement } from "@/lib/entitlements";
+import type { Executor } from "@/lib/entitlements";
+import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import { sql } from "kysely";
-import { sendChargeReceipt } from "@/lib/charge-receipts";
 import {
   BillingInterval,
   chargeBillingKey,
@@ -198,7 +193,7 @@ async function markAttemptFailed(opts: {
   nextStatus: string;
   error: unknown;
   keepAttemptStatus?: boolean;
-}): Promise<{ wentPastDue: boolean }> {
+}): Promise<{ jobs: Array<string | null> }> {
   const now = new Date();
   return db.transaction().execute(async (trx) => {
     if (!opts.keepAttemptStatus) {
@@ -255,99 +250,60 @@ async function markAttemptFailed(opts: {
       .set({ charge_attempted_at: now })
       .where("id", "=", opts.attempt.id)
       .execute();
-    return { wentPastDue };
+    return {
+      jobs: [
+        await enqueueGraceNotice(trx, opts.sub, now),
+        wentPastDue
+          ? await enqueuePastDueNotice(trx, opts.sub, {
+              reason: "declined",
+              declinedAttempts: opts.failures,
+            })
+          : null,
+      ],
+    };
   });
 }
 
-// Sent after a decline while the grace period lasts, once: a send that failed
-// (the mail provider down) is tried again on the next decline rather than
-// lost, since payment_grace_notice_sent_at is only set once it went out.
-async function sendGraceNoticeIfNeeded(sub: DueSubscription, now: Date) {
-  if (!sub.current_period_end) return;
-  if (sub.payment_grace_notice_sent_at) {
-    return;
-  }
-  const graceEndsAt = addPaymentGrace(new Date(sub.current_period_end));
+// Sent after a decline while the grace period lasts, once per lapse: the
+// dedupe key is the period that lapsed, and the job (lib/payment-jobs) sets
+// payment_grace_notice_sent_at once it went out.
+async function enqueueGraceNotice(
+  trx: Executor,
+  sub: DueSubscription,
+  now: Date,
+): Promise<string | null> {
+  if (!sub.current_period_end || sub.payment_grace_notice_sent_at) return null;
+  const periodEnd = new Date(sub.current_period_end);
   // A grace notice whose grace period has already ended would tell the user
   // they still have time they do not have.
-  if (graceEndsAt <= now) return;
-
-  const user = await db
-    .selectFrom("users")
-    .select(["email", "email_verified_at", "login_name"])
-    .where("id", "=", sub.user_id)
-    .executeTakeFirst();
-
-  if (!user?.email || !user.email_verified_at) return;
-
-  try {
-    await sendSubscriptionPaymentGraceEmail({
-      email: user.email,
-      loginName: user.login_name,
-      amount: sub.amount,
-      graceEndsAt,
-    });
-
-    await db
-      .updateTable("subscriptions")
-      .set({
-        payment_grace_notice_sent_at: new Date(),
-        updated_at: new Date(),
-      })
-      .where("id", "=", sub.id)
-      .execute();
-
-    console.log(
-      `[charge-subscriptions] user ${sub.user_id}: payment grace notice sent`,
-    );
-  } catch (error) {
-    console.error(
-      `[charge-subscriptions] user ${sub.user_id}: failed to send payment grace notice:`,
-      error,
-    );
-  }
+  if (addPaymentGrace(periodEnd) <= now) return null;
+  return enqueueJob(
+    trx,
+    { kind: "grace_notice", subscriptionId: sub.id },
+    { dedupeKey: `grace_notice:${sub.id}:${periodEnd.toISOString()}` },
+  );
 }
 
-// Tells the supporter their plan stopped renewing. Called only by the update
-// that moved it to past_due, so it goes out once per lapse. Best effort: a
-// failed send is logged and never undoes the status change.
-async function sendPastDueNotice(
+// Tells the supporter their plan stopped renewing. Enqueued only by the
+// update that moved it to past_due, and once per lapsed period.
+async function enqueuePastDueNotice(
+  trx: Executor,
   sub: DueSubscription,
-  reason: SubscriptionPastDueReason,
-  declinedAttempts?: number,
-) {
-  try {
-    const user = await db
-      .selectFrom("users")
-      .select(["email", "email_verified_at", "login_name"])
-      .where("id", "=", sub.user_id)
-      .executeTakeFirst();
-    if (!user?.email || !user.email_verified_at) return;
-
-    // Paid features follow supporter_until and its grace window, which may
-    // still be running when the retries are spent.
-    const entitlement = await getUserEntitlement(sub.user_id);
-    await sendSubscriptionPastDueEmail({
-      email: user.email,
-      loginName: user.login_name,
-      amount: sub.amount,
-      reason,
-      declinedAttempts,
-      accessEndsAt: entitlement.comp
-        ? undefined
-        : entitlement.isSupporter
-          ? entitlement.graceEndsAt
-          : null,
-    });
-    console.log(
-      `[charge-subscriptions] user ${sub.user_id}: past due notice sent`,
-    );
-  } catch (error) {
-    console.error(
-      `[charge-subscriptions] user ${sub.user_id}: failed to send past due notice:`,
-      error,
-    );
-  }
+  opts: { reason: "declined" | "unresolved"; declinedAttempts?: number },
+): Promise<string | null> {
+  const periodEnd = sub.current_period_end
+    ? new Date(sub.current_period_end).toISOString()
+    : "none";
+  return enqueueJob(
+    trx,
+    {
+      kind: "past_due_notice",
+      subscriptionId: sub.id,
+      reason: opts.reason,
+      declinedAttempts: opts.declinedAttempts,
+    },
+    { dedupeKey: `past_due_notice:${sub.id}:${periodEnd}` },
+  );
 }
 
 // A subscription whose charges keep ending ambiguously (Toss 5xx, timeouts)
@@ -360,23 +316,25 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
   if (addPaymentGrace(new Date(sub.current_period_end)) > now) return;
   // Only the period this run saw: a reconciler that granted the order in the
   // meantime moved it on, and that plan is paid, not past due.
-  const updated = await db
-    .updateTable("subscriptions")
-    .set({ status: "past_due", updated_at: now })
-    .where("id", "=", sub.id)
-    .where("status", "in", ["active", "scheduled"])
-    .where("current_period_end", "=", new Date(sub.current_period_end))
-    .executeTakeFirst();
-  if (Number(updated.numUpdatedRows ?? 0) > 0) {
-    await notePaymentEvent({
+  const notice = await db.transaction().execute(async (trx) => {
+    const updated = await trx
+      .updateTable("subscriptions")
+      .set({ status: "past_due", updated_at: now })
+      .where("id", "=", sub.id)
+      .where("status", "in", ["active", "scheduled"])
+      .where("current_period_end", "=", new Date(sub.current_period_end!))
+      .executeTakeFirst();
+    if (Number(updated.numUpdatedRows ?? 0) === 0) return null;
+    await recordPaymentEvent(trx, {
       kind: "past_due",
       userId: sub.user_id,
       subscriptionId: sub.id,
       summary:
         "유예 기간이 끝났는데 갱신 결제 결과가 아직 불분명해 연체(past_due)로 전환",
     });
-    await sendPastDueNotice(sub, "unresolved");
-  }
+    return enqueuePastDueNotice(trx, sub, { reason: "unresolved" });
+  });
+  await runJobs([notice]);
   console.error(
     `[charge-subscriptions] user ${sub.user_id}: grace period over with the charge still unresolved -> past_due`,
   );
@@ -540,7 +498,7 @@ async function chargeSubscription(
       : now;
     const base = periodEnd > now ? periodEnd : now;
     try {
-      const { granted } = await applySuccessfulCharge({
+      await applySuccessfulCharge({
         subscriptionId: sub.id,
         userId: sub.user_id,
         interval,
@@ -548,8 +506,8 @@ async function chargeSubscription(
         from: base,
         payment: outcome.payment,
         paymentId: attempt.id,
+        notice: "receipt",
       });
-      if (granted) await sendChargeReceipt(attempt.id);
     } catch (error) {
       await leaveUnresolved(sub, attempt, error, now, true);
       return;
@@ -573,7 +531,7 @@ async function chargeSubscription(
     failures >= MAX_PAYMENT_RETRY_ATTEMPTS || graceEndsAt <= now
       ? "past_due"
       : sub.status;
-  const { wentPastDue } = await markAttemptFailed({
+  const { jobs } = await markAttemptFailed({
     attempt,
     sub,
     failures,
@@ -581,8 +539,7 @@ async function chargeSubscription(
     error: outcome.error,
     keepAttemptStatus: outcome.keepAttemptStatus,
   });
-  await sendGraceNoticeIfNeeded(sub, now);
-  if (wentPastDue) await sendPastDueNotice(sub, "declined", failures);
+  await runJobs(jobs);
   console.error(
     `[charge-subscriptions] user ${sub.user_id}: charge failed (${failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}) -> ${nextStatus}: ${describeTossError(outcome.error)}`,
   );

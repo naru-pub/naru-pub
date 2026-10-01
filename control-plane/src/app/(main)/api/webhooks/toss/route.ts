@@ -8,11 +8,10 @@ import {
   TossApiError,
   tossSecretKeys,
 } from "@/lib/toss";
-import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { retireBillingKey } from "@/lib/billing-keys";
 import { withAccountLock } from "@/lib/account-lock";
 import { lookupOrder } from "@/lib/toss-gateway";
-import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
+import { enqueueJob, runJobs } from "@/lib/payment-jobs";
 import {
   notePaymentEvent,
   recordPaymentEvent,
@@ -152,25 +151,30 @@ export async function POST(request: NextRequest) {
             .deleteFrom("retired_billing_keys")
             .where("billing_key", "=", event.billingKey)
             .execute();
-          return subscription
-            ? {
-                id: subscription.id,
-                // A plan already stopped had its cancel mailed then.
-                newlyStopped: !["canceled", "switched_to_one_time"].includes(
-                  subscription.status,
-                ),
-              }
-            : null;
+          // A plan already stopped had its cancel mailed then.
+          const newlyStopped =
+            subscription &&
+            !["canceled", "switched_to_one_time"].includes(subscription.status);
+          if (!subscription) return null;
+          return {
+            id: subscription.id,
+            noticeJob: newlyStopped
+              ? await enqueueJob(
+                  trx,
+                  {
+                    kind: "subscription_canceled",
+                    subscriptionId: subscription.id,
+                    reason: "billing_key_deleted",
+                  },
+                  { dedupeKey: `subscription_canceled:${subscription.id}` },
+                )
+              : null,
+          };
         });
       const canceled = holder
         ? await withAccountLock(holder.user_id, { waitMs: 5000 }, cancelPlan)
         : await cancelPlan();
-      if (canceled?.newlyStopped) {
-        await sendSubscriptionCanceledNotice(
-          canceled.id,
-          "billing_key_deleted",
-        );
-      }
+      await runJobs([canceled?.noticeJob ?? null]);
 
       return respond(
         200,
@@ -232,19 +236,19 @@ export async function POST(request: NextRequest) {
 
     // A cancel, or an order Toss ended without approving it (ABORTED,
     // EXPIRED): reconciliation brings the ledger, the paid time and the plan
-    // in line under the account lock, as it does for every other path. A key
-    // that frees is deleted by the cron, not here inside Toss's 10 seconds; a
-    // busy account answers 503 and Toss retries.
+    // in line under the account lock, as it does for every other path. It is
+    // a payment job, tried here at once and, when the account is busy or Toss
+    // does not answer, by the run-payment-jobs cron after; the webhook is
+    // answered either way. A key that frees is deleted by the cron, not here
+    // inside Toss's 10 seconds.
     const action = webhookLedgerAction(payment.status);
     if (action.type === "reconcile" || action.type === "fail") {
-      const result = await reconcilePayment(ledger.id, {
-        deferKeyDeletion: true,
-        waitMs: 5000,
+      const job = await enqueueJob(db, {
+        kind: "reconcile_payment",
+        paymentId: ledger.id,
       });
-      return respond(
-        200,
-        `reconciled payment ${ledger.id}: ${JSON.stringify(result)}`,
-      );
+      await runJobs([job]);
+      return respond(200, `reconcile job ${job} for payment ${ledger.id}`);
     }
     const flow = paymentFlowForRecord(ledger.toss_flow, ledger.attempt_key);
     await db

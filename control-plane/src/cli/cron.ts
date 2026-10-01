@@ -27,6 +27,8 @@ const BILLING_KEY_DELETION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 // Every minute, so a digest goes out soon after events stop arriving.
 const PAYMENT_EVENT_DIGEST_INTERVAL = 60 * 1000; // 1 minute
 const PAYMENT_EVENT_DIGEST_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+const PAYMENT_JOB_QUEUE_INTERVAL = 60 * 1000; // 1 minute
+const PAYMENT_JOB_QUEUE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 // One Toss lookup per paid payment in the lookback window.
 const PAYMENT_REFUND_SYNC_TIMEOUT = 60 * 60 * 1000; // 60 minutes
 const EXPIRED_CUSTOM_DOMAIN_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
@@ -221,6 +223,10 @@ async function runPaymentInvariantCheck() {
   );
 }
 
+async function runPaymentJobQueue() {
+  await runPaymentJob("run-payment-jobs.ts", PAYMENT_JOB_QUEUE_TIMEOUT);
+}
+
 async function runPaymentEventDigest() {
   await runWithTimeout(
     "send-payment-event-digest.ts",
@@ -319,6 +325,10 @@ async function main() {
   console.log("[cron] Scheduling billing key deletion every 5 minutes");
   setInterval(runBillingKeyDeletion, BILLING_KEY_DELETION_INTERVAL);
   setTimeout(runBillingKeyDeletion, 55 * 1000);
+
+  console.log("[cron] Scheduling payment job queue every minute");
+  setInterval(runPaymentJobQueue, PAYMENT_JOB_QUEUE_INTERVAL);
+  setTimeout(runPaymentJobQueue, 15 * 1000);
 
   console.log("[cron] Scheduling payment event digest every minute");
   setInterval(runPaymentEventDigest, PAYMENT_EVENT_DIGEST_INTERVAL);

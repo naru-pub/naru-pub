@@ -228,7 +228,11 @@ export async function recordWebhookDelivery(delivery: {
   }
 }
 
-const WEBHOOK_DELIVERY_RETENTION_DAYS = 90;
+// Webhook deliveries and Toss calls are the raw evidence of what Toss said and
+// when — for a dispute or an audit — and carry some personal data (names,
+// masked card numbers), so they are kept as long as payment records must be
+// (전자상거래법: 5 years) and Toss answers lookups, and no longer.
+const RAW_PAYMENT_LOG_RETENTION_DAYS = 5 * 365;
 const PAYMENT_EVENT_RETENTION_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -240,7 +244,7 @@ export async function prunePaymentLogs(now = new Date()) {
     .where(
       "received_at",
       "<",
-      new Date(now.getTime() - WEBHOOK_DELIVERY_RETENTION_DAYS * DAY_MS),
+      new Date(now.getTime() - RAW_PAYMENT_LOG_RETENTION_DAYS * DAY_MS),
     )
     .executeTakeFirst();
   const calls = await db
@@ -248,7 +252,7 @@ export async function prunePaymentLogs(now = new Date()) {
     .where(
       "created_at",
       "<",
-      new Date(now.getTime() - WEBHOOK_DELIVERY_RETENTION_DAYS * DAY_MS),
+      new Date(now.getTime() - RAW_PAYMENT_LOG_RETENTION_DAYS * DAY_MS),
     )
     .executeTakeFirst();
   const events = await db

@@ -253,6 +253,20 @@ export interface PaymentEvents {
   user_id: string | null;
 }
 
+export interface PaymentJobs {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  dedupe_key: string | null;
+  done_at: Timestamp | null;
+  failed_at: Timestamp | null;
+  id: Generated<string>;
+  kind: string;
+  last_error: string | null;
+  locked_until: Timestamp | null;
+  payload: unknown;
+  run_at: Generated<Timestamp>;
+}
+
 export interface Payments {
   amount: number;
   attempt_key: string | null;
@@ -482,6 +496,7 @@ export interface DB {
   pageviews: Pageviews;
   password_reset_tokens: PasswordResetTokens;
   payment_events: PaymentEvents;
+  payment_jobs: PaymentJobs;
   payments: Payments;
   remote_actors: RemoteActors;
   retired_billing_keys: RetiredBillingKeys;

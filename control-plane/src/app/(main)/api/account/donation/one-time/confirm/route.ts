@@ -3,7 +3,6 @@ import { randomUUID } from "crypto";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
-import { sendSupportThankYouEmail } from "@/lib/email";
 import {
   confirmPayment,
   describeTossError,
@@ -177,21 +176,8 @@ export async function POST(request: NextRequest) {
           paymentId: pendingPayment.id,
         });
 
-        // A doubled callback, or the reconciler settling this order first, finds
-        // the period already granted, and its thank-you already sent.
-        if (period.granted && user.email && user.emailVerifiedAt) {
-          try {
-            await sendSupportThankYouEmail({
-              email: user.email,
-              loginName: user.loginName,
-              kind: "one_time",
-              amount: pendingPayment.amount,
-              supporterUntil: period.periodEnd,
-            });
-          } catch (error) {
-            console.error("Support thank-you email error:", error);
-          }
-        }
+        // The grant owes the thank-you (lib/payment-jobs); a doubled callback,
+        // or the reconciler settling this order first, finds it already owed.
 
         return NextResponse.json({
           success: true,

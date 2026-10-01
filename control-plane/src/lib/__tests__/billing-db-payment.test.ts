@@ -84,6 +84,8 @@ const { POST: oneTimeConfirmRoute } =
   require("@/app/(main)/api/account/donation/one-time/confirm/route") as typeof import("@/app/(main)/api/account/donation/one-time/confirm/route");
 const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
+const { enqueueJob, runDueJobs, MAX_ATTEMPTS } =
+  require("@/lib/payment-jobs") as typeof import("@/lib/payment-jobs");
 const { NextRequest } = require("next/server") as typeof import("next/server");
 const auth = require("@/lib/auth") as jest.Mocked<typeof import("@/lib/auth")>;
 const { POST: cancelSubscriptionRoute } =
@@ -252,7 +254,7 @@ async function holdAccountLock(userId: string): Promise<() => Promise<void>> {
 
 integration("payments against the database", () => {
   beforeEach(async () => {
-    await sql`truncate users, subscriptions, payments, retired_billing_keys, payment_events, toss_webhook_deliveries restart identity cascade`.execute(
+    await sql`truncate users, subscriptions, payments, retired_billing_keys, payment_events, toss_webhook_deliveries, payment_jobs, toss_calls restart identity cascade`.execute(
       db,
     );
     jest.clearAllMocks();
@@ -317,6 +319,7 @@ integration("payments against the database", () => {
       });
 
       const { periodStart, periodEnd: granted } = await applySuccessfulCharge({
+        notice: "receipt",
         subscriptionId: subId,
         userId,
         interval: "month",
@@ -338,6 +341,7 @@ integration("payments against the database", () => {
       });
 
       await applySuccessfulCharge({
+        notice: "receipt",
         subscriptionId: subId,
         userId,
         interval: "month",
@@ -651,6 +655,7 @@ integration("payments against the database", () => {
         amount: 1000,
       });
       await applySuccessfulCharge({
+        notice: "receipt",
         subscriptionId: subId,
         userId,
         interval: "month",
@@ -2633,6 +2638,96 @@ integration("payments against the database", () => {
     });
   });
 
+  describe("payment jobs", () => {
+    async function job(id: string) {
+      return db
+        .selectFrom("payment_jobs")
+        .selectAll()
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+    }
+
+    test("a mail that fails to send stays queued and goes out later", async () => {
+      const periodEnd = new Date(Date.now() - 60 * 1000);
+      const userId = await makeUser(periodEnd);
+      await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("card declined", 400),
+      );
+      email.sendSubscriptionPaymentGraceEmail.mockRejectedValueOnce(
+        new Error("mail provider down"),
+      );
+
+      await chargeDueSubscriptions();
+
+      const [queued] = await db
+        .selectFrom("payment_jobs")
+        .selectAll()
+        .where("kind", "=", "grace_notice")
+        .execute();
+      expect(queued).toMatchObject({
+        attempts: 1,
+        done_at: null,
+        last_error: "mail provider down",
+      });
+      expect(new Date(queued.run_at).getTime()).toBeGreaterThan(Date.now());
+
+      await db
+        .updateTable("payment_jobs")
+        .set({ run_at: new Date(Date.now() - 1000) })
+        .execute();
+      expect(await runDueJobs()).toEqual({ done: 1, retried: 0, failed: 0 });
+      expect(email.sendSubscriptionPaymentGraceEmail).toHaveBeenCalledTimes(2);
+      expect((await job(queued.id)).done_at).not.toBeNull();
+    });
+
+    test("a job owed twice is queued once", async () => {
+      const userId = await makeUser(new Date(Date.now() + 10 * DAY));
+      const subId = await makeSubscription(userId, { status: "canceled" });
+      const enqueue = () =>
+        enqueueJob(
+          db,
+          {
+            kind: "subscription_canceled",
+            subscriptionId: subId,
+            reason: "user",
+          },
+          { dedupeKey: `subscription_canceled:${subId}` },
+        );
+      expect(await enqueue()).not.toBeNull();
+      expect(await enqueue()).toBeNull();
+    });
+
+    test("a job that keeps failing gives up and tells the operators", async () => {
+      const id = (await enqueueJob(db, {
+        kind: "thank_you",
+        paymentId: "00000000-0000-0000-0000-000000000000",
+      }))!;
+      await db
+        .updateTable("payment_jobs")
+        .set({ attempts: MAX_ATTEMPTS - 1 })
+        .where("id", "=", id)
+        .execute();
+      // A malformed id: the lookup itself fails.
+      await sql`update payment_jobs set payload = jsonb_set(payload, '{paymentId}', '"not-a-uuid"') where id = ${id}`.execute(
+        db,
+      );
+
+      expect(await runDueJobs()).toEqual({ done: 0, retried: 0, failed: 1 });
+      expect((await job(id)).failed_at).not.toBeNull();
+      const events = await db
+        .selectFrom("payment_events")
+        .select("kind")
+        .where("kind", "=", "job_failed")
+        .execute();
+      expect(events).toHaveLength(1);
+    });
+  });
+
   describe("settled orders", () => {
     test("an order settled elsewhere is not granted again", async () => {
       const userId = await makeUser();
@@ -4149,6 +4244,7 @@ integration("payments against the database", () => {
       // that moment.
       toss.getPaymentByOrderId.mockImplementationOnce(async () => {
         await applySuccessfulCharge({
+          notice: "receipt",
           subscriptionId: subId,
           userId,
           interval: "month",

@@ -20,7 +20,7 @@ function pretty(body: unknown) {
   return JSON.stringify(body, null, 2);
 }
 
-// Every request 나루 made to Toss and its answer (toss_calls, 90 days), for
+// Every request 나루 made to Toss and its answer (toss_calls, 5 years), for
 // "what did Toss actually say". Billing keys and secrets are masked.
 export default async function TossCallsPage({
   searchParams,
@@ -48,7 +48,7 @@ export default async function TossCallsPage({
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        나루가 Toss에 보낸 요청과 받은 답을 최근 200건까지 보여 줍니다(90일
+        나루가 Toss에 보낸 요청과 받은 답을 최근 200건까지 보여 줍니다(5년
         보관). 빌링키와 비밀값은 가려 둡니다.{" "}
         <Link
           href={onlyFailed ? "/admin/toss-calls" : "/admin/toss-calls?failed=1"}
