@@ -83,3 +83,29 @@ export function isTrustedWebhookSource(
   if (!trustForwardedIp) return true;
   return cfConnectingIp != null && TOSS_WEBHOOK_IPS.has(cfConnectingIp.trim());
 }
+
+// What one webhook delivery was and what became of it, logged as one line so
+// a delivery that changed nothing is as visible as one that failed.
+export type WebhookLogEntry = {
+  eventType: string;
+  transmissionId: string | null;
+  retriedCount: string | null;
+  // The orderId, or the billing key (masked) for BILLING_DELETED.
+  subject: string | null;
+  tossStatus: string | null;
+  outcome: string;
+  httpStatus: number;
+  durationMs: number;
+};
+
+export function formatWebhookLog(entry: WebhookLogEntry): string {
+  const fields = [
+    ["id", entry.transmissionId],
+    ["retry", entry.retriedCount],
+    ["subject", entry.subject],
+    ["toss", entry.tossStatus],
+  ]
+    .filter(([, value]) => value != null && value !== "")
+    .map(([key, value]) => `${key}=${value}`);
+  return `[toss-webhook] ${[entry.eventType, ...fields].join(" ")} -> ${entry.outcome} (${entry.httpStatus}, ${entry.durationMs}ms)`;
+}

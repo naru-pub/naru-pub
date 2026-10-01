@@ -1,5 +1,6 @@
 import { describe, expect, test } from "@jest/globals";
 import {
+  formatWebhookLog,
   isTrustedWebhookSource,
   parseTossWebhook,
   webhookLedgerAction,
@@ -85,5 +86,39 @@ describe("Toss webhook sender", () => {
   test("does not check a header the caller controls", () => {
     expect(isTrustedWebhookSource(null, false)).toBe(true);
     expect(isTrustedWebhookSource("203.0.113.9", false)).toBe(true);
+  });
+});
+
+describe("Toss webhook log line", () => {
+  test("says what arrived and what was done with it", () => {
+    expect(
+      formatWebhookLog({
+        eventType: "PAYMENT_STATUS_CHANGED",
+        transmissionId: "whtrans_1",
+        retriedCount: "2",
+        subject: "2026-10-01-1234-5678",
+        tossStatus: "CANCELED",
+        outcome: 'reconciled payment 7: {"state":"refunded"}',
+        httpStatus: 200,
+        durationMs: 41,
+      }),
+    ).toBe(
+      '[toss-webhook] PAYMENT_STATUS_CHANGED id=whtrans_1 retry=2 subject=2026-10-01-1234-5678 toss=CANCELED -> reconciled payment 7: {"state":"refunded"} (200, 41ms)',
+    );
+  });
+
+  test("leaves out what is not known", () => {
+    expect(
+      formatWebhookLog({
+        eventType: "(unparsed)",
+        transmissionId: null,
+        retriedCount: null,
+        subject: null,
+        tossStatus: null,
+        outcome: "ignored: malformed JSON",
+        httpStatus: 200,
+        durationMs: 0,
+      }),
+    ).toBe("[toss-webhook] (unparsed) -> ignored: malformed JSON (200, 0ms)");
   });
 });
