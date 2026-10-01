@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       title: body.title,
       body: body.body,
       slug: body.slug,
-      license: body.license,
+      cc0Accepted: body.cc0Accepted,
       files: body.files,
       collections: body.collections,
     });

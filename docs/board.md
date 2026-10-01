@@ -66,8 +66,10 @@ Code: `control-plane/src/lib/board/` (logic), `src/app/(main)/board/` (pages),
   Later edits to the author's site don't change the template. "새 버전
   올리기" (publish a new version) on the edit page takes another snapshot,
   starting with the previous version's files checked.
-- **Licenses**: CC BY 4.0, CC BY-SA 4.0 or CC0 1.0. All three allow copying,
-  which is what applying does.
+- **Licenses**: new templates require explicit CC0 1.0 consent; the server
+  always stores CC0. Authors dedicate their own contributions and retain
+  applicable third-party license notices. Existing templates keep their
+  original license, including when publishing new versions.
 - **Collections**: an author can attach some of their own site-data
   collections. Only each collection's name and permissions travel with the
   template, never its documents. Applying creates them empty, but only for

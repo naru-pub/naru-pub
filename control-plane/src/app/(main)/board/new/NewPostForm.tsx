@@ -4,12 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  LICENSES,
   MAX_POST_BODY_LENGTH,
   MAX_TITLE_LENGTH,
   POST_KINDS,
   POST_KIND_LABELS,
-  type License,
   type PostKind,
 } from "@/lib/board/constants";
 import { boardRequest } from "../_components/api";
@@ -38,7 +36,7 @@ export function NewPostForm({
   const [selection, setSelection] = useState<string[]>([]);
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
-  const [license, setLicense] = useState<License>("cc-by-4.0");
+  const [cc0Accepted, setCc0Accepted] = useState(false);
   const [chosenCollections, setChosenCollections] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -58,7 +56,7 @@ export function NewPostForm({
               title,
               body,
               slug: effectiveSlug,
-              license,
+              cc0Accepted,
               files: selection,
               collections: chosenCollections,
             }
@@ -151,24 +149,35 @@ export function NewPostForm({
             </p>
           </div>
 
-          <div>
-            <div className="space-y-2">
-              <label htmlFor="template-license" className="text-sm font-bold">
-                라이선스
-              </label>
-              <select
-                id="template-license"
-                value={license}
-                onChange={(event) => setLicense(event.target.value as License)}
-                className="h-11 w-full border border-border bg-background px-3 text-sm"
+          <div className="space-y-3">
+            <p className="text-sm">
+              템플릿은{" "}
+              <a
+                href="https://creativecommons.org/publicdomain/zero/1.0/deed.ko"
+                target="_blank"
+                rel="noreferrer"
+                className="underline"
               >
-                {Object.entries(LICENSES).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
+                CC0 1.0
+              </a>
+              으로 공개돼요. 누구나 출처 표시 없이 복사하거나 수정할 수 있고,
+              상업적으로도 쓸 수 있어요.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              직접 만든 부분에 대해서만 권리를 포기할 수 있어요. 다른 사람이
+              만든 코드, 글꼴, 이미지의 라이선스와 저작권 표시는 유지하고, 함께
+              공유할 수 있는 자료만 포함해 주세요.
+            </p>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={cc0Accepted}
+                onChange={(event) => setCc0Accepted(event.target.checked)}
+                required
+                className="mt-1"
+              />
+              내가 만든 부분을 CC0 1.0으로 공개하는 데 동의해요.
+            </label>
           </div>
 
           {collections.length > 0 && (

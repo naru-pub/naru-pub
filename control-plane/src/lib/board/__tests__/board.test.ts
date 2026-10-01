@@ -365,7 +365,7 @@ integration("board", () => {
         title: "템플릿",
         body: "",
         slug: "mod-tpl",
-        license: "cc0-1.0",
+        cc0Accepted: true,
         files: ["tpl/index.html"],
         collections: [],
       });
@@ -396,12 +396,39 @@ integration("board", () => {
         title: "레트로 홈",
         body: "설명",
         slug: `retro-${Math.random().toString(36).slice(2, 8)}`,
-        license: "cc-by-4.0",
+        cc0Accepted: true,
         files: aliceFiles(),
         collections: [],
         ...overrides,
       });
     }
+
+    test("requires explicit CC0 consent and fixes the license server-side", async () => {
+      put("alice/retro/index.html");
+      for (const cc0Accepted of [undefined, false, "true", 1]) {
+        await expect(publish({ cc0Accepted })).rejects.toMatchObject({
+          status: 400,
+        });
+      }
+      const { postId } = await publish({ license: "cc-by-4.0" });
+      expect((await getTemplateForPost(postId))?.license).toBe("cc0-1.0");
+    });
+
+    test("publishing a version preserves an existing template's license", async () => {
+      put("alice/retro/index.html");
+      const { postId, templateId } = await publish();
+      await db
+        .updateTable("board_templates")
+        .set({ license: "cc-by-sa-4.0" })
+        .where("id", "=", templateId)
+        .execute();
+      await publishTemplateVersion(alice, templateId, {
+        files: aliceFiles(),
+        changelog: "업데이트",
+        collections: [],
+      });
+      expect((await getTemplateForPost(postId))?.license).toBe("cc-by-sa-4.0");
+    });
 
     test("publishes a snapshot of only the checked files", async () => {
       put("alice/retro/index.html");
@@ -464,9 +491,7 @@ integration("board", () => {
       ]) {
         await expect(publish({ files })).rejects.toMatchObject({ status: 400 });
       }
-      await expect(
-        publish({ license: "all-rights-reserved" }),
-      ).rejects.toMatchObject({
+      await expect(publish({ cc0Accepted: false })).rejects.toMatchObject({
         status: 400,
       });
     });
