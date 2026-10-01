@@ -200,6 +200,34 @@ integration("payments against the database", () => {
     await db.destroy();
   });
 
+  // withNewOrderId recognizes a taken order id by the constraint Postgres
+  // names, so check that name against the real schema.
+  test("draws another order id when one is taken", async () => {
+    const userId = await makeUser();
+    await makePendingPayment({
+      userId,
+      subscriptionId: null,
+      attemptKey: "taken",
+      orderId: "2026-10-01-0000-0001",
+      amount: 1000,
+    });
+    const tried: string[] = [];
+    const orderId = await toss.withNewOrderId(async (id) => {
+      const orderId = tried.length === 0 ? "2026-10-01-0000-0001" : id;
+      tried.push(orderId);
+      await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "fresh",
+        orderId,
+        amount: 1000,
+      });
+      return orderId;
+    });
+    expect(tried).toHaveLength(2);
+    expect(orderId).not.toBe("2026-10-01-0000-0001");
+  });
+
   describe("granting a charged period", () => {
     // A one-time year stacked past current_period_end must survive a renewal
     // that was computed from the subscription's own period.

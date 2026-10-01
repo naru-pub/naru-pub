@@ -23,6 +23,7 @@ import {
   oneTimeOrderName,
   oneTimeYearsForAmount,
   TossApiError,
+  withNewOrderId,
 } from "@/lib/toss";
 import { settleFailedOrder } from "@/lib/toss-orders";
 
@@ -378,9 +379,43 @@ describe("order ids", () => {
     expect(ids.every((id) => id.length === 20)).toBe(true);
   });
 
-  test("does not repeat", () => {
-    const ids = new Set(Array.from({ length: 1000 }, () => newOrderId()));
-    expect(ids.size).toBe(1000);
+  // 겹칠 확률은 0이 아니라서(하루 10^8개 중에서 뽑는다) 몇 개를 뽑아 서로
+  // 다른지 세는 테스트는 가끔 떨어진다. 겹쳤을 때 다시 뽑는지를 본다.
+  const conflict = (constraint: string) =>
+    Object.assign(new Error("duplicate key"), { code: "23505", constraint });
+
+  test("draws another id when the order id is taken", async () => {
+    const tried: string[] = [];
+    const orderId = await withNewOrderId(async (id) => {
+      tried.push(id);
+      if (tried.length === 1) throw conflict("payments_order_id_key");
+      return id;
+    });
+    expect(tried).toHaveLength(2);
+    expect(orderId).toBe(tried[1]);
+  });
+
+  test("does not retry other conflicts or errors", async () => {
+    for (const error of [
+      conflict("payments_attempt_key_unique_idx"),
+      new Error("connection reset"),
+    ]) {
+      const insert = jest.fn(async (_id: string) => {
+        throw error;
+      });
+      await expect(withNewOrderId(insert)).rejects.toBe(error);
+      expect(insert).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  test("gives up after three draws", async () => {
+    const insert = jest.fn(async (_id: string) => {
+      throw conflict("payments_order_id_key");
+    });
+    await expect(withNewOrderId(insert)).rejects.toMatchObject({
+      code: "23505",
+    });
+    expect(insert).toHaveBeenCalledTimes(3);
   });
 });
 

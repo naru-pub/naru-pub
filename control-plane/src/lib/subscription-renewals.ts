@@ -7,7 +7,7 @@ import {
   chargeBillingKey,
   describeTossError,
   getPaymentByOrderId,
-  newOrderId,
+  withNewOrderId,
   PLAN_ORDER_NAMES,
   TossApiError,
   TossPaymentResult,
@@ -161,18 +161,20 @@ async function getOrCreatePaymentAttempt(
   const attemptKey =
     attempts.length === 0 ? baseKey : `${baseKey}:r${attempts.length}`;
   try {
-    const attempt = await db
-      .insertInto("payments")
-      .values({
-        attempt_key: attemptKey,
-        user_id: sub.user_id,
-        subscription_id: sub.id,
-        order_id: newOrderId(),
-        amount: sub.amount,
-        status: "pending",
-      })
-      .returning(["id", "order_id", "status"])
-      .executeTakeFirstOrThrow();
+    const attempt = await withNewOrderId((orderId) =>
+      db
+        .insertInto("payments")
+        .values({
+          attempt_key: attemptKey,
+          user_id: sub.user_id,
+          subscription_id: sub.id,
+          order_id: orderId,
+          amount: sub.amount,
+          status: "pending",
+        })
+        .returning(["id", "order_id", "status"])
+        .executeTakeFirstOrThrow(),
+    );
     return { attempt, declined: false };
   } catch (error) {
     const concurrent = (await attemptsForTry()).find((attempt) =>

@@ -8,7 +8,7 @@ import {
 import { db } from "@/lib/database";
 import {
   isPurchasableOneTimeYears,
-  newOrderId,
+  withNewOrderId,
   oneTimeAmount,
   oneTimeOrderName,
 } from "@/lib/toss";
@@ -66,8 +66,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            "일회성 결제 기간 중에는 정기 결제로만 전환할 수 있습니다.",
+          message: "일회성 결제 기간 중에는 정기 결제로만 전환할 수 있습니다.",
         },
         { status: 409 },
       );
@@ -82,19 +81,20 @@ export async function POST(request: NextRequest) {
         .execute();
     }
 
-    const orderId = newOrderId();
-
-    await db
-      .insertInto("payments")
-      .values({
-        attempt_key: `one_time:${years}:${orderId}`,
-        user_id: user.id,
-        subscription_id: null,
-        order_id: orderId,
-        amount,
-        status: "pending",
-      })
-      .execute();
+    const orderId = await withNewOrderId(async (orderId) => {
+      await db
+        .insertInto("payments")
+        .values({
+          attempt_key: `one_time:${years}:${orderId}`,
+          user_id: user.id,
+          subscription_id: null,
+          order_id: orderId,
+          amount,
+          status: "pending",
+        })
+        .execute();
+      return orderId;
+    });
 
     return NextResponse.json({
       success: true,

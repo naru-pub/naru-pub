@@ -493,8 +493,8 @@ export function addInterval(from: Date, interval: BillingInterval): Date {
 // 아니까, 자리를 바꿔 들으면 거기서 걸린다. 겹칠 수 있는 범위도 '그날
 // 하루'로 좁아져서 뒤의 여덟 자리만으로 충분하다. 하루 200건이면 겹칠
 // 확률이 하루 2×10^-4 — 십수 년에 한 번꼴이고, 그마저도 payments.order_id의
-// 유니크 인덱스와 Toss가 큰 소리로 거절한다. 결제가 잘못될 일은 없고 실패할
-// 뿐이다.
+// 유니크 인덱스가 거절하면 withNewOrderId가 새 번호로 다시 넣는다. 결제가
+// 잘못될 일도, 실패할 일도 없다.
 //
 // Toss는 6~64자의 [A-Za-z0-9-_]를 받으므로 하이픈까지 그대로 통과한다.
 // 하이픈은 보기 좋으라고만 있는 게 아니라, 지원 문의용 스프레드시트가 숫자로
@@ -514,4 +514,29 @@ export function newOrderId(now = new Date()): string {
   // likely — no bias from folding a random byte into a decimal range.
   const random = String(randomInt(0, 100_000_000)).padStart(8, "0");
   return `${date}-${random.slice(0, 4)}-${random.slice(4)}`;
+}
+
+// Inserts a payment row under a fresh order id, drawing another when the id is
+// already taken (payments_order_id_key). Anything else is thrown as is, so
+// callers still see their own attempt_key conflicts.
+const ORDER_ID_TRIES = 3;
+
+export async function withNewOrderId<T>(
+  insert: (orderId: string) => Promise<T>,
+): Promise<T> {
+  for (let tries = 1; ; tries++) {
+    try {
+      return await insert(newOrderId());
+    } catch (error) {
+      if (tries >= ORDER_ID_TRIES || !isOrderIdConflict(error)) throw error;
+    }
+  }
+}
+
+function isOrderIdConflict(error: unknown): boolean {
+  const { code, constraint } = (error ?? {}) as {
+    code?: string;
+    constraint?: string;
+  };
+  return code === "23505" && constraint === "payments_order_id_key";
 }

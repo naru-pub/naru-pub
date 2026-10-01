@@ -34,7 +34,7 @@ import {
   getPaymentByOrderId,
   isDefinitiveTossFailure,
   issueBillingKey,
-  newOrderId,
+  withNewOrderId,
   paymentProviderMetadata,
   PLAN_AMOUNTS,
   PLAN_ORDER_NAMES,
@@ -230,18 +230,20 @@ async function getOrCreateInitialChargeAttempt(opts: {
   const attemptNumber = Number(countRow?.count ?? 0) + 1;
 
   try {
-    return await db
-      .insertInto("payments")
-      .values({
-        attempt_key: `${prefix}${attemptNumber}`,
-        user_id: opts.userId,
-        subscription_id: opts.subscriptionId,
-        order_id: newOrderId(),
-        amount: opts.amount,
-        status: "pending",
-      })
-      .returning(["id", "order_id", "status"])
-      .executeTakeFirstOrThrow();
+    return await withNewOrderId((orderId) =>
+      db
+        .insertInto("payments")
+        .values({
+          attempt_key: `${prefix}${attemptNumber}`,
+          user_id: opts.userId,
+          subscription_id: opts.subscriptionId,
+          order_id: orderId,
+          amount: opts.amount,
+          status: "pending",
+        })
+        .returning(["id", "order_id", "status"])
+        .executeTakeFirstOrThrow(),
+    );
   } catch (error) {
     const concurrent = await db
       .selectFrom("payments")
