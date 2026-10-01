@@ -25,6 +25,7 @@ import {
   MAX_PAYMENT_RETRY_ATTEMPTS,
 } from "@/lib/subscriptions";
 import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
+import { renewalCutoff } from "@/lib/renewal-time";
 export { RENEWAL_HOUR_KST, renewalCutoff } from "@/lib/renewal-time";
 
 // Renewals are charged at 09:00 KST: the run then charges every subscription
@@ -389,6 +390,58 @@ export async function chargeDueSubscriptions(
   console.log(
     `[charge-subscriptions] ${due.length} subscription(s) due, ${busy} busy`,
   );
+}
+
+// The hourly renewal run: one renew_subscription payment job per plan due by
+// the last 09:00 KST (lib/payment-jobs), run right away. The dedupe key is the
+// plan and that day's cutoff, so a plan gets one try a day however often the
+// run comes. A job whose account is busy, or that fails with an error, is
+// tried again by the job queue within minutes instead of at the next run.
+export async function enqueueDueRenewals(now = new Date()): Promise<{
+  due: number;
+  jobs: Array<string | null>;
+}> {
+  const dueBy = renewalCutoff(now);
+  const due = (
+    await dueSubscriptions(now, { only: null, explicit: false, dueBy })
+  ).rows;
+  const jobs: Array<string | null> = [];
+  for (const sub of due) {
+    jobs.push(
+      await enqueueJob(
+        db,
+        { kind: "renew_subscription", subscriptionId: sub.id },
+        { dedupeKey: `renew:${sub.id}:${dueBy.toISOString()}` },
+      ),
+    );
+  }
+  return { due: due.length, jobs };
+}
+
+// A renew_subscription job: charges the plan if it is still due — read again
+// under its account's lock, by the same rules as the run that queued it.
+// Throws AccountBusyError when the account is busy, which the job queue
+// retries shortly without counting it.
+export async function renewSubscription(
+  subscriptionId: string,
+  now = new Date(),
+): Promise<void> {
+  const owner = await db
+    .selectFrom("subscriptions")
+    .select("user_id")
+    .where("id", "=", subscriptionId)
+    .executeTakeFirst();
+  if (!owner) return;
+  await withAccountLock(owner.user_id, { waitMs: 0 }, async () => {
+    const [sub] = (
+      await dueSubscriptions(now, {
+        only: [subscriptionId],
+        explicit: false,
+        dueBy: renewalCutoff(now),
+      })
+    ).rows;
+    if (sub) await chargeSubscription(sub, now, false);
+  });
 }
 
 type ChargeOutcome =

@@ -1,0 +1,43 @@
+name: payments-fuzz
+
+# The randomized payment tests (billing-db-chaos-payment.test.ts) at many more
+# seeds than each push runs, every night with seeds of its own. A failure
+# names its seed; rerun it locally with FUZZ_SEED=<seed>.
+on:
+  schedule:
+    # 03:00 KST.
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Seeds to try
+        default: "500"
+      steps:
+        description: Operations per seed
+        default: "100"
+
+jobs:
+  fuzz:
+    defaults:
+      run:
+        working-directory: control-plane
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Same pnpm as the Dockerfile.
+      - run: npm install --global pnpm@11.5.2
+      - run: pnpm install --frozen-lockfile
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-16
+      - run: pnpm test:payments:db src/lib/__tests__/billing-db-chaos
+        env:
+          NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
+          FUZZ_RUNS: ${{ inputs.runs || '500' }}
+          FUZZ_STEPS: ${{ inputs.steps || '100' }}
+          # New seeds every night: this run's number, in thousands.
+          FUZZ_FIRST_SEED: ${{ github.run_number }}000

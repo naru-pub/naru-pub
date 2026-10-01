@@ -269,6 +269,16 @@ export interface PasswordResetTokens {
   user_id: string;
 }
 
+export interface PaymentCronRuns {
+  exit_code: number | null;
+  finished_at: Timestamp;
+  id: Generated<string>;
+  output_tail: string | null;
+  script: string;
+  started_at: Timestamp;
+  timed_out: boolean;
+}
+
 export interface PaymentEvents {
   created_at: Generated<Timestamp>;
   emailed_at: Timestamp | null;
@@ -292,6 +302,18 @@ export interface PaymentJobs {
   locked_until: Timestamp | null;
   payload: unknown;
   run_at: Generated<Timestamp>;
+}
+
+export interface PaymentMails {
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  id: Generated<string>;
+  kind: string;
+  message_id: string | null;
+  payment_id: string | null;
+  recipient: string;
+  subscription_id: string | null;
+  user_id: string | null;
 }
 
 export interface Payments {
@@ -468,6 +490,17 @@ export interface TossWebhookDeliveries {
   transmission_id: string | null;
 }
 
+export interface TossWindowOutcomes {
+  card_registration_id: string | null;
+  code: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  message: string | null;
+  order_id: string | null;
+  user_id: string | null;
+  window: "billing_auth" | "payment";
+}
+
 export interface UserKeys {
   created_at: Generated<Timestamp>;
   key_type: string;
@@ -520,8 +553,10 @@ export interface DB {
   pageview_daily_stats: PageviewDailyStats;
   pageviews: Pageviews;
   password_reset_tokens: PasswordResetTokens;
+  payment_cron_runs: PaymentCronRuns;
   payment_events: PaymentEvents;
   payment_jobs: PaymentJobs;
+  payment_mails: PaymentMails;
   payment_transactions: PaymentTransactions;
   payments: Payments;
   remote_actors: RemoteActors;
@@ -536,6 +571,7 @@ export interface DB {
   subscriptions: Subscriptions;
   toss_calls: TossCalls;
   toss_webhook_deliveries: TossWebhookDeliveries;
+  toss_window_outcomes: TossWindowOutcomes;
   user_keys: UserKeys;
   users: Users;
 }

@@ -51,22 +51,13 @@ export async function recomputePaidTime(
   const current = await lockPaidTime(trx, userId);
   const ledger = await trx
     .selectFrom("payments")
-    .select([
-      "period_start",
-      "period_end",
-      "paid_at",
-      "amount",
-      "refunded_amount",
-    ])
+    .select(["period_end", "refunded_amount"])
     .where("user_id", "=", userId)
     .where("period_end", "is not", null)
     .execute();
   const recomputed = supporterUntilFromLedger(
     ledger.map((row) => ({
-      periodStart: row.period_start,
       periodEnd: row.period_end,
-      paidAt: row.paid_at,
-      amount: row.amount,
       refundedAmount: row.refunded_amount,
     })),
   );
@@ -95,54 +86,27 @@ export async function movePaidTimeForLab(
 }
 
 export type EntitlementLedgerRow = {
-  periodStart?: Date | string | null;
   periodEnd: Date | string | null;
-  paidAt?: Date | string | null;
-  amount: number;
   refundedAmount: number;
 };
 
-// supporter_until is where the periods the unrefunded payments bought end. A
-// refunded payment stops counting, so the time it granted goes back with the
-// money. 나루 does not offer partial refunds, so any refunded amount undoes the
-// whole purchase rather than a slice of it.
+// supporter_until is where the latest period an unrefunded payment bought
+// ends. A refunded payment stops counting, so the time it granted goes back
+// with the money. 나루 does not offer partial refunds, so any refunded amount
+// undoes the whole purchase rather than a slice of it.
 //
-// Purchases stack: one bought while time remained starts where that time ended.
-// So the ledger is replayed in order, and a period that was queued behind a
-// refunded one moves up — but never earlier than it was paid for, and never
-// later than it was recorded. A period that did not stack keeps its dates.
+// Periods keep the dates they were granted with. A refunded period with
+// another queued behind it (a one-time year bought during a paid month, then
+// the month refunded) is not taken back: the later period still ends where it
+// ends. That is at most one refunded period, and it keeps this from having to
+// work out what was queued behind what — which it once did, and got wrong.
 export function supporterUntilFromLedger(
   rows: EntitlementLedgerRow[],
 ): Date | null {
-  const periods = rows
-    .filter((row) => row.periodEnd)
-    .map((row) => ({
-      start: row.periodStart ? new Date(row.periodStart) : null,
-      end: new Date(row.periodEnd!),
-      paidAt: row.paidAt ? new Date(row.paidAt) : null,
-      refunded: row.refundedAmount > 0,
-    }))
-    .sort(
-      (a, b) =>
-        (a.start ?? a.end).getTime() - (b.start ?? b.end).getTime() ||
-        a.end.getTime() - b.end.getTime(),
-    );
-
-  let cursor: Date | null = null;
   let latest: Date | null = null;
-  for (const period of periods) {
-    if (period.refunded) continue;
-    let end = period.end;
-    if (period.start && period.paidAt) {
-      const earliest =
-        cursor && cursor > period.paidAt ? cursor : period.paidAt;
-      if (earliest < period.start) {
-        end = new Date(
-          period.end.getTime() - (period.start.getTime() - earliest.getTime()),
-        );
-      }
-    }
-    if (!cursor || end > cursor) cursor = end;
+  for (const row of rows) {
+    if (!row.periodEnd || row.refundedAmount > 0) continue;
+    const end = new Date(row.periodEnd);
     if (!latest || end > latest) latest = end;
   }
   return latest;

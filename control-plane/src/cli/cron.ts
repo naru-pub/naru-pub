@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import { resolve } from "path";
 import { Client } from "pg";
 import { TEMPLATE_PUBLISHED_CHANNEL } from "@/lib/board/preview";
-import { notePaymentEvent } from "@/lib/payment-events";
+import { notePaymentEvent, recordPaymentCronRun } from "@/lib/payment-events";
 
 const SCREENSHOT_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const SCREENSHOT_TIMEOUT = 10 * 60 * 1000; // 10 minutes
@@ -42,7 +42,12 @@ function runWithTimeout(
   script: string,
   timeout: number,
   scriptArgs: string[] = [],
-): Promise<{ success: boolean; code: number | null }> {
+): Promise<{
+  success: boolean;
+  code: number | null;
+  timedOut: boolean;
+  outputTail: string;
+}> {
   return new Promise((resolve) => {
     console.log(`[cron] Starting ${script}`);
 
@@ -60,14 +65,30 @@ function runWithTimeout(
       : ["--import", "tsx", `src/cli/${script}`, ...scriptArgs];
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
+    // Passed through to the container's log as before, and the last of it
+    // kept for the payment jobs' run records.
+    let outputTail = "";
+    const keep = (chunk: Buffer) => {
+      outputTail = (outputTail + chunk.toString("utf8")).slice(-4000);
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      process.stdout.write(chunk);
+      keep(chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      keep(chunk);
+    });
+    let timedOut = false;
 
     const timer = setTimeout(() => {
       console.log(
         `[cron] ${script} timed out after ${timeout / 1000}s, killing`,
       );
+      timedOut = true;
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 5000);
     }, timeout);
@@ -75,13 +96,13 @@ function runWithTimeout(
     child.on("close", (code) => {
       clearTimeout(timer);
       console.log(`[cron] ${script} exited with code ${code}`);
-      resolve({ success: code === 0, code });
+      resolve({ success: code === 0, code, timedOut, outputTail });
     });
 
     child.on("error", (err) => {
       clearTimeout(timer);
       console.error(`[cron] ${script} error:`, err);
-      resolve({ success: false, code: null });
+      resolve({ success: false, code: null, timedOut, outputTail });
     });
   });
 }
@@ -182,7 +203,24 @@ async function runPaymentJob(script: string, timeout: number) {
   }
   paymentJobsRunning.add(script);
   try {
-    const { success, code } = await runWithTimeout(script, timeout);
+    const startedAt = new Date();
+    const { success, code, timedOut, outputTail } = await runWithTimeout(
+      script,
+      timeout,
+    );
+    // The job queue runs every minute and prints only when it did something;
+    // its quiet runs are not worth a row each.
+    const quiet =
+      script === "run-payment-jobs.ts" && success && !outputTail.trim();
+    if (!quiet) {
+      await recordPaymentCronRun({
+        script,
+        startedAt,
+        exitCode: code,
+        timedOut,
+        outputTail,
+      });
+    }
     if (!success) {
       await notePaymentEvent({
         kind: "job_failed",

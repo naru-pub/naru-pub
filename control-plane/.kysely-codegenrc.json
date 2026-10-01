@@ -12,6 +12,7 @@
       "card_registrations.billing_interval": "\"month\" | \"year\" | null",
       "subscriptions.status": "import(\"./payment-states\").SubscriptionStatus",
       "payments.status": "import(\"./payment-states\").PaymentStatus",
+      "toss_window_outcomes.window": "\"billing_auth\" | \"payment\"",
       "payment_transactions.kind": "\"approval\" | \"cancel\"",
       "billing_keys.status": "ColumnType<\"active\" | \"retired\" | \"deleted\", \"active\" | \"retired\" | \"deleted\" | undefined>",
       "board_replies.path": "ColumnType<string[], never, never>",

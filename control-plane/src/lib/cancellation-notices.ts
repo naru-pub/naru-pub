@@ -37,6 +37,7 @@ export async function sendPaymentCanceledNotice(
       .selectFrom("payments")
       .innerJoin("users", "users.id", "payments.user_id")
       .select([
+        "payments.user_id",
         "payments.amount",
         "payments.refunded_amount",
         "payments.refunded_at",
@@ -61,6 +62,7 @@ export async function sendPaymentCanceledNotice(
       refundedAt: row.refunded_at ? new Date(row.refunded_at) : new Date(),
       supporterUntil: remainingAccess(row),
       subscriptionCanceled: opts.subscriptionCanceled,
+      ref: { userId: row.user_id, paymentId },
     });
   }
 }
@@ -76,6 +78,7 @@ export async function sendSubscriptionCanceledNotice(
       .selectFrom("subscriptions")
       .innerJoin("users", "users.id", "subscriptions.user_id")
       .select([
+        "subscriptions.user_id",
         "subscriptions.canceled_at",
         "users.email",
         "users.email_verified_at",
@@ -93,6 +96,7 @@ export async function sendSubscriptionCanceledNotice(
       reason,
       canceledAt: row.canceled_at ? new Date(row.canceled_at) : new Date(),
       supporterUntil: remainingAccess(row),
+      ref: { userId: row.user_id, subscriptionId },
     });
   }
 }

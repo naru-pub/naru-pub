@@ -45,11 +45,38 @@ function RenewalRetryNotice() {
   );
 }
 
-function paymentWindowError(error: unknown) {
+type TossWindow =
+  | { window: "billing_auth"; registrationId: string }
+  | { window: "payment"; orderId: string };
+
+// Keeps how a Toss window ended when it did not succeed
+// (api/account/payment-window): nothing else ever sees Toss's code for it.
+// Best effort; the supporter is told either way.
+function reportWindowOutcome(
+  tossWindow: TossWindow,
+  code: string,
+  message: string | null,
+) {
+  void fetch("/api/account/payment-window", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...tossWindow, code, message }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+function paymentWindowError(error: unknown, tossWindow: TossWindow | null) {
   const { code, message } = (error ?? {}) as {
     code?: unknown;
     message?: unknown;
   };
+  if (tossWindow && typeof code === "string") {
+    reportWindowOutcome(
+      tossWindow,
+      code,
+      typeof message === "string" ? message : null,
+    );
+  }
   if (typeof code === "string" && USER_CANCELED_CODES.has(code)) {
     toast(WINDOW_CLOSED_MESSAGE);
   } else if (typeof code === "string" && typeof message === "string") {
@@ -134,6 +161,18 @@ export default function SupportCard({
       // rejected card number is something the supporter can act on.
       const code = params.get("code");
       const message = params.get("message");
+      // The failUrl names the window; Toss adds code and message.
+      const registrationId = params.get("registration");
+      const orderId = params.get("orderId") ?? params.get("order");
+      if (code && registrationId) {
+        reportWindowOutcome(
+          { window: "billing_auth", registrationId },
+          code,
+          message,
+        );
+      } else if (code && orderId) {
+        reportWindowOutcome({ window: "payment", orderId }, code, message);
+      }
       if (code && USER_CANCELED_CODES.has(code)) {
         toast(WINDOW_CLOSED_MESSAGE);
       } else {
@@ -157,6 +196,7 @@ export default function SupportCard({
     failMessage: string,
   ) {
     setPending(true);
+    let tossWindow: TossWindow | null = null;
     try {
       const res = await fetch(prepareUrl, {
         method: "POST",
@@ -169,6 +209,10 @@ export default function SupportCard({
         setPending(false);
         return;
       }
+      tossWindow = {
+        window: "billing_auth",
+        registrationId: data.registrationId,
+      };
 
       if (!billingClientKey) {
         toast.error("결제 설정이 올바르지 않습니다.");
@@ -181,11 +225,11 @@ export default function SupportCard({
       await payment.requestBillingAuth({
         method: "CARD",
         successUrl: `${window.location.origin}/account/subscription/callback/${data.registrationId}`,
-        failUrl: `${window.location.origin}/support?support=failed`,
+        failUrl: `${window.location.origin}/support?support=failed&registration=${data.registrationId}`,
       });
       // requestBillingAuth redirects the browser; control resumes on the callback page.
     } catch (error) {
-      paymentWindowError(error);
+      paymentWindowError(error, tossWindow);
       setPending(false);
     }
   }
@@ -208,6 +252,7 @@ export default function SupportCard({
 
   async function donateOnce() {
     setPending(true);
+    let tossWindow: TossWindow | null = null;
     try {
       const res = await fetch("/api/account/donation/one-time/prepare", {
         method: "POST",
@@ -220,6 +265,7 @@ export default function SupportCard({
         setPending(false);
         return;
       }
+      tossWindow = { window: "payment", orderId: data.orderId };
 
       if (!paymentClientKey) {
         toast.error("결제 설정이 올바르지 않습니다.");
@@ -235,11 +281,11 @@ export default function SupportCard({
         orderId: data.orderId,
         orderName: data.orderName,
         successUrl: `${window.location.origin}/account/donation/callback`,
-        failUrl: `${window.location.origin}/support?support=failed`,
+        failUrl: `${window.location.origin}/support?support=failed&order=${encodeURIComponent(data.orderId)}`,
       });
       // requestPayment redirects the browser; control resumes on the callback page.
     } catch (error) {
-      paymentWindowError(error);
+      paymentWindowError(error, tossWindow);
       setPending(false);
     }
   }

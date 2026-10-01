@@ -33,10 +33,10 @@ export async function recordCancels(
   trx: Executor,
   opts: { paymentId: string; payment: TossPaymentResult; fallbackAt: Date },
 ): Promise<{ refundedAmount: number; refundedAt: Date | null }> {
-  const cancels = (opts.payment.cancels ?? []).filter(
-    (cancel) => cancel.cancelAmount > 0,
-  );
-  for (const [index, cancel] of cancels.entries()) {
+  // Numbered by place in Toss's whole list, as the migration that adds the
+  // ledger numbered the cancels it carried over.
+  for (const [index, cancel] of (opts.payment.cancels ?? []).entries()) {
+    if (!(cancel.cancelAmount > 0)) continue;
     const at = cancel.canceledAt ? new Date(cancel.canceledAt) : null;
     await trx
       .insertInto("payment_transactions")

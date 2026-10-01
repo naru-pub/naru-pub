@@ -547,13 +547,7 @@ export async function confirmSubscription(opts: {
   // The customerKey must belong to this user.
   const userRow = await db
     .selectFrom("users")
-    .select([
-      "email",
-      "email_verified_at",
-      "login_name",
-      "supporter_until",
-      "toss_customer_key",
-    ])
+    .select("toss_customer_key")
     .where("id", "=", userId)
     .executeTakeFirst();
   if (
@@ -617,10 +611,18 @@ export async function confirmSubscription(opts: {
       .select(["id", "billing_interval", "amount", "billing_key_id"])
       .where("id", "=", planId)
       .executeTakeFirstOrThrow();
+    // Paid time read now, under the lock: a refund or a one-time payment that
+    // committed while this waited for it decides whether the first charge is
+    // now or scheduled.
+    const paidTime = await db
+      .selectFrom("users")
+      .select("supporter_until")
+      .where("id", "=", userId)
+      .executeTakeFirstOrThrow();
     return confirmAdoptedSignup({
       sub: { ...plan, billing_key_id: plan.billing_key_id! },
       userId,
-      userRow,
+      userRow: paidTime,
     });
   });
 }

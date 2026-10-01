@@ -1,4 +1,6 @@
 import { renewalChargeAt } from "@/lib/renewal-time";
+// Keeps each renewal notice in payment_mails.
+import "@/lib/payment-mails";
 import { db } from "@/lib/database";
 import { sendSubscriptionRenewalNoticeEmail } from "@/lib/email";
 
@@ -15,6 +17,7 @@ async function main() {
     .innerJoin("users", "users.id", "subscriptions.user_id")
     .select([
       "subscriptions.id",
+      "subscriptions.user_id",
       "subscriptions.amount",
       "subscriptions.current_period_start",
       "subscriptions.next_billing_at",
@@ -54,6 +57,7 @@ async function main() {
         // When the renewal is actually charged: 09:00 KST on or after it
         // falls due.
         nextBillingAt: renewalChargeAt(sub.next_billing_at!),
+        ref: { userId: sub.user_id, subscriptionId: sub.id },
       });
 
       await db

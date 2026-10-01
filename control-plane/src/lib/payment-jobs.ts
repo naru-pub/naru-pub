@@ -15,6 +15,8 @@ import {
 } from "@/lib/email";
 import type { Executor } from "@/lib/entitlements";
 import { notePaymentEvent } from "@/lib/payment-events";
+// Keeps each mail sent from here in payment_mails.
+import "@/lib/payment-mails";
 
 // Work the payment code owes after a change, kept in payment_jobs (see the
 // migration that adds it): the mail a supporter is owed, a webhook's
@@ -51,7 +53,9 @@ export type PaymentJob =
       declinedAttempts?: number;
     }
   // A webhook's reconciliation, retried until Toss can be asked.
-  | { kind: "reconcile_payment"; paymentId: string };
+  | { kind: "reconcile_payment"; paymentId: string }
+  // A plan's renewal for the day (lib/subscription-renewals).
+  | { kind: "renew_subscription"; subscriptionId: string };
 
 export const MAX_ATTEMPTS = 8;
 const LOCK_FOR = "5 minutes";
@@ -213,6 +217,11 @@ async function handle(job: PaymentJob): Promise<void> {
       return sendGraceNotice(job.subscriptionId);
     case "past_due_notice":
       return sendPastDueNotice(job);
+    case "renew_subscription": {
+      // Imported here: renewals enqueue jobs themselves.
+      const { renewSubscription } = await import("@/lib/subscription-renewals");
+      return renewSubscription(job.subscriptionId);
+    }
     case "reconcile_payment": {
       // Imported here: reconciliation enqueues jobs itself.
       const { reconcilePayment } = await import("@/lib/payment-reconciliation");
@@ -232,6 +241,7 @@ async function sendThankYou(paymentId: string): Promise<void> {
     .selectFrom("payments")
     .innerJoin("users", "users.id", "payments.user_id")
     .select([
+      "payments.user_id",
       "payments.amount",
       "payments.attempt_key",
       "payments.period_end",
@@ -249,6 +259,7 @@ async function sendThankYou(paymentId: string): Promise<void> {
     kind: row.attempt_key?.startsWith("one_time:") ? "one_time" : "recurring",
     amount: row.amount,
     supporterUntil: new Date(row.period_end),
+    ref: { userId: row.user_id, paymentId },
   });
 }
 
@@ -260,6 +271,7 @@ async function sendGraceNotice(subscriptionId: string): Promise<void> {
     .selectFrom("subscriptions")
     .innerJoin("users", "users.id", "subscriptions.user_id")
     .select([
+      "subscriptions.user_id",
       "subscriptions.amount",
       "subscriptions.status",
       "subscriptions.current_period_end",
@@ -285,6 +297,7 @@ async function sendGraceNotice(subscriptionId: string): Promise<void> {
     loginName: row.login_name,
     amount: row.amount,
     graceEndsAt,
+    ref: { userId: row.user_id, subscriptionId },
   });
   await db
     .updateTable("subscriptions")
@@ -324,5 +337,6 @@ async function sendPastDueNotice(
       : entitlement.isSupporter
         ? entitlement.graceEndsAt
         : null,
+    ref: { userId: row.user_id, subscriptionId: job.subscriptionId },
   });
 }

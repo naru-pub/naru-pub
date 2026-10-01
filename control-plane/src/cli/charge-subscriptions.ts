@@ -1,13 +1,17 @@
-import {
-  chargeDueSubscriptions,
-  renewalCutoff,
-} from "@/lib/subscription-renewals";
+import { runJobs } from "@/lib/payment-jobs";
+import { enqueueDueRenewals } from "@/lib/subscription-renewals";
 
-// Hourly from cron.ts; charges what was due by the last 09:00 KST and has not
-// been tried in the last day (lib/subscription-renewals).
-const now = new Date();
-chargeDueSubscriptions(now, { dueBy: renewalCutoff(now) })
-  .then(() => process.exit(0))
+// Hourly from cron.ts: queues a renewal job for each plan due by the last
+// 09:00 KST and not tried in the last day, and runs them
+// (lib/subscription-renewals). What it cannot finish, the job queue retries.
+enqueueDueRenewals()
+  .then(async ({ due, jobs }) => {
+    await runJobs(jobs);
+    console.log(
+      `[charge-subscriptions] ${due} subscription(s) due, ${jobs.filter(Boolean).length} new renewal job(s)`,
+    );
+    process.exit(0);
+  })
   .catch((error) => {
     console.error("[charge-subscriptions] fatal:", error);
     process.exit(1);

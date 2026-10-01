@@ -25,6 +25,7 @@ jest.mock("@/lib/toss", () => {
   };
 });
 jest.mock("@/lib/email", () => ({
+  setPaymentMailRecorder: jest.fn(),
   sendSubscriptionPaymentGraceEmail: jest.fn(async () => {}),
   sendSubscriptionPastDueEmail: jest.fn(async () => {}),
   sendSupportThankYouEmail: jest.fn(async () => {}),
@@ -51,7 +52,7 @@ const {
   MAX_PAYMENT_RETRY_ATTEMPTS,
   scheduleSubscriptionStart,
 } = require("@/lib/subscriptions") as typeof import("@/lib/subscriptions");
-const { chargeDueSubscriptions } =
+const { chargeDueSubscriptions, enqueueDueRenewals } =
   require("@/lib/subscription-renewals") as typeof import("@/lib/subscription-renewals");
 const {
   AccountBusyError,
@@ -85,7 +86,7 @@ const { POST: oneTimeConfirmRoute } =
   require("@/app/(main)/api/account/donation/one-time/confirm/route") as typeof import("@/app/(main)/api/account/donation/one-time/confirm/route");
 const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
-const { enqueueJob, runDueJobs, MAX_ATTEMPTS } =
+const { enqueueJob, runDueJobs, runJobs, MAX_ATTEMPTS } =
   require("@/lib/payment-jobs") as typeof import("@/lib/payment-jobs");
 const {
   canMovePayment,
@@ -96,6 +97,16 @@ const {
 const { checkPaymentInvariants } =
   require("@/lib/payment-invariants") as typeof import("@/lib/payment-invariants");
 const { NextRequest } = require("next/server") as typeof import("next/server");
+const { POST: paymentWindowRoute } =
+  require("@/app/(main)/api/account/payment-window/route") as typeof import("@/app/(main)/api/account/payment-window/route");
+const { recordPaymentCronRun } =
+  require("@/lib/payment-events") as typeof import("@/lib/payment-events");
+// lib/payment-mails registered its recorder with the (mocked) mail module
+// when it was imported; kept before any test clears the mock.
+require("@/lib/payment-mails");
+const keepPaymentMail = email.setPaymentMailRecorder.mock.calls[0]?.[0] as
+  | ((record: import("@/lib/email").PaymentMailRecord) => Promise<void>)
+  | undefined;
 const auth = require("@/lib/auth") as jest.Mocked<typeof import("@/lib/auth")>;
 const { POST: cancelSubscriptionRoute } =
   require("@/app/(main)/api/account/subscription/cancel/route") as typeof import("@/app/(main)/api/account/subscription/cancel/route");
@@ -341,7 +352,7 @@ async function holdAccountLock(userId: string): Promise<() => Promise<void>> {
 
 integration("payments against the database", () => {
   beforeEach(async () => {
-    await sql`truncate users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, payment_jobs, toss_calls restart identity cascade`.execute(
+    await sql`truncate users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, payment_jobs, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`.execute(
       db,
     );
     jest.clearAllMocks();
@@ -730,7 +741,10 @@ integration("payments against the database", () => {
       expect(sub.next_billing_at).toBeNull();
     });
 
-    test("refunding a month pulls a stacked one-time year forward", async () => {
+    // Periods keep the dates they were granted with: a year queued behind a
+    // refunded month is not pulled forward (at most the one refunded period
+    // goes unrecovered), and the month's own end no longer counts.
+    test("refunding a month leaves a stacked one-time year where it is", async () => {
       const periodEnd = new Date(Date.now() + 20 * DAY);
       const userId = await makeUser();
       const subId = await makeSubscription(userId, { status: "incomplete" });
@@ -751,8 +765,7 @@ integration("payments against the database", () => {
         payment: tossPayment("month-order", 1000),
         paymentId: monthId,
       });
-      const beforeOneTime = new Date();
-      await applyOneTimePayment({
+      const year = await applyOneTimePayment({
         userId,
         amount: 12000,
         years: 1,
@@ -769,14 +782,8 @@ integration("payments against the database", () => {
         state: "refunded",
       });
 
-      // The year now runs from when it was bought, not from the refunded
-      // month's end.
-      const until = (await supporterUntil(userId))!;
-      const yearFromPurchase = new Date(beforeOneTime);
-      yearFromPurchase.setFullYear(yearFromPurchase.getFullYear() + 1);
-      expect(
-        Math.abs(until.getTime() - yearFromPurchase.getTime()),
-      ).toBeLessThan(2 * DAY);
+      expect(year.periodStart).toEqual(periodEnd);
+      expect(await supporterUntil(userId)).toEqual(year.periodEnd);
     });
   });
 
@@ -1106,6 +1113,98 @@ integration("payments against the database", () => {
     });
   });
 
+  describe("payment records", () => {
+    function reportWindow(userId: string | null, body: unknown) {
+      auth.validateRequest.mockResolvedValue(
+        (userId
+          ? { user: { id: userId }, session: {} }
+          : { user: null, session: null }) as Awaited<
+          ReturnType<typeof auth.validateRequest>
+        >,
+      );
+      return paymentWindowRoute(
+        new NextRequest("http://localhost/api/account/payment-window", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    }
+
+    test("a failed card window is kept once, and only for its own account", async () => {
+      const userId = await makeUser();
+      const prepared = await prepareSubscription({ userId, interval: "month" });
+      if (!prepared.ok) throw new Error(prepared.message);
+      const outcome = {
+        window: "billing_auth",
+        registrationId: prepared.registrationId,
+        code: "REJECT_CARD_COMPANY",
+        message: "카드사에서 거절했습니다.",
+      };
+
+      expect((await reportWindow(userId, outcome)).status).toBe(200);
+      expect((await reportWindow(userId, outcome)).status).toBe(200);
+      expect((await reportWindow(await makeUser(), outcome)).status).toBe(404);
+      expect(
+        (await reportWindow(userId, { ...outcome, registrationId: "nope" }))
+          .status,
+      ).toBe(404);
+
+      const rows = await db
+        .selectFrom("toss_window_outcomes")
+        .select(["user_id", "window", "code", "message"])
+        .execute();
+      expect(rows).toEqual([
+        {
+          user_id: userId,
+          window: "billing_auth",
+          code: "REJECT_CARD_COMPANY",
+          message: "카드사에서 거절했습니다.",
+        },
+      ]);
+    });
+
+    test("a payment mail is kept with what it was about", async () => {
+      const userId = await makeUser();
+      expect(keepPaymentMail).toBeDefined();
+      await keepPaymentMail!({
+        kind: "charge_receipt",
+        recipient: "payer@example.com",
+        ref: { userId },
+        messageId: "msg-1",
+        error: null,
+      });
+      const [row] = await db.selectFrom("payment_mails").selectAll().execute();
+      expect(row).toMatchObject({
+        kind: "charge_receipt",
+        user_id: userId,
+        recipient: "payer@example.com",
+        message_id: "msg-1",
+        error: null,
+      });
+    });
+
+    test("a payment cron run is kept with how it ended", async () => {
+      await recordPaymentCronRun({
+        script: "charge-subscriptions.ts",
+        startedAt: new Date(Date.now() - 1000),
+        exitCode: 0,
+        timedOut: false,
+        outputTail: "[charge-subscriptions] charged 2",
+      });
+      const [row] = await db
+        .selectFrom("payment_cron_runs")
+        .selectAll()
+        .execute();
+      expect(row).toMatchObject({
+        script: "charge-subscriptions.ts",
+        exit_code: 0,
+        timed_out: false,
+        output_tail: "[charge-subscriptions] charged 2",
+      });
+    });
+  });
+
   describe("the payment ledger", () => {
     async function transactions(paymentId: string) {
       return db
@@ -1179,6 +1278,53 @@ integration("payments against the database", () => {
         .executeTakeFirstOrThrow();
       expect(payment.refunded_amount).toBe(5000);
       expect(await checkPaymentInvariants()).toEqual({});
+    });
+
+    // A renewal whose answer was lost is granted when the reconciler learns
+    // of it, from then on; reconciling some other order that merely expired
+    // must not take that gap back.
+    test("an order that merely expired leaves paid time alone", async () => {
+      const periodEnd = new Date(Date.now() - 3 * DAY);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      const renewalId = await makePendingPayment({
+        userId,
+        subscriptionId: subId,
+        attemptKey: `subscription:${subId}:late:1`,
+        orderId: "late-renewal",
+        amount: 1000,
+      });
+      const oneTimeId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:left-behind",
+        orderId: "left-behind",
+        amount: 12000,
+      });
+      await db
+        .updateTable("payments")
+        .set({ created_at: new Date(Date.now() - DAY) })
+        .where("id", "=", oneTimeId)
+        .execute();
+      toss.getPaymentByOrderId.mockImplementation(async (orderId) => {
+        if (orderId === "late-renewal") {
+          return tossPayment("late-renewal", 1000, {
+            approvedAt: periodEnd.toISOString(),
+          });
+        }
+        return tossPayment(orderId, 12000, { status: "EXPIRED" });
+      });
+
+      await reconcilePayment(renewalId);
+      const granted = await supporterUntil(userId);
+      expect(granted!.getTime()).toBeGreaterThan(Date.now() + 25 * DAY);
+
+      await reconcilePayment(oneTimeId);
+      expect(await supporterUntil(userId)).toEqual(granted);
     });
 
     test("a recorded transaction cannot be changed", async () => {
@@ -2825,6 +2971,62 @@ integration("payments against the database", () => {
 
       expect(await reconcilePayment(paymentId)).toEqual({ state: "pending" });
       expect((await subscription(subId)).billing_key).toBe("signup-key");
+    });
+  });
+
+  describe("renewal jobs", () => {
+    async function duePlan() {
+      // Due well before the last 09:00 KST.
+      const periodEnd = new Date(Date.now() - 2 * DAY);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+      return { userId, subId };
+    }
+
+    test("a due plan is renewed once, however often the run comes", async () => {
+      const { subId } = await duePlan();
+
+      const first = await enqueueDueRenewals();
+      expect(first.due).toBe(1);
+      await runJobs(first.jobs);
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+      expect(
+        new Date((await subscription(subId)).current_period_end!) > new Date(),
+      ).toBe(true);
+
+      const again = await enqueueDueRenewals();
+      expect(again.jobs.filter(Boolean)).toEqual([]);
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+    });
+
+    test("a busy account's renewal is retried by the job queue", async () => {
+      const { userId } = await duePlan();
+      const release = await holdAccountLock(userId);
+
+      const { jobs } = await enqueueDueRenewals();
+      await runJobs(jobs);
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      const [job] = await db
+        .selectFrom("payment_jobs")
+        .select(["attempts", "done_at", "run_at"])
+        .where("kind", "=", "renew_subscription")
+        .execute();
+      expect(job).toMatchObject({ attempts: 0, done_at: null });
+
+      await release();
+      await db
+        .updateTable("payment_jobs")
+        .set({ run_at: new Date(Date.now() - 1000) })
+        .execute();
+      await runDueJobs();
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
     });
   });
 

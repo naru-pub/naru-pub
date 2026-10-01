@@ -253,6 +253,10 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
     case "advance": {
       const sub = await subscriptionOwner(input.subscriptionId);
       userId = sub.user_id;
+      // An ended plan has no next charge to move (the database refuses one).
+      if (!["active", "scheduled", "past_due"].includes(sub.status)) {
+        throw new LabError(`${sub.status} 구독은 시간을 옮길 수 없습니다.`);
+      }
       run = async () => {
         // Moves the subscription's clock, not the world's: the period ends
         // now, or ended a day past the grace period.

@@ -9,7 +9,8 @@ import type { TossPaymentResult } from "@/lib/toss";
 // charged twice for a period, every approved charge is recorded and granted,
 // no key is deleted while a plan uses it or charged after it was retired, and
 // the payment invariants hold. A failure prints its seed; FUZZ_SEED reruns
-// it, FUZZ_RUNS and FUZZ_STEPS run more.
+// it, FUZZ_RUNS and FUZZ_STEPS run more, from FUZZ_FIRST_SEED (the nightly
+// payments-fuzz workflow).
 
 type FakeOrder = {
   orderId: string;
@@ -191,6 +192,7 @@ jest.mock("@/lib/toss", () => {
   };
 });
 jest.mock("@/lib/email", () => ({
+  setPaymentMailRecorder: jest.fn(),
   sendSubscriptionPaymentGraceEmail: jest.fn(async () => {}),
   sendSubscriptionPastDueEmail: jest.fn(async () => {}),
   sendSupportThankYouEmail: jest.fn(async () => {}),
@@ -212,7 +214,7 @@ const { AccountBusyError, closeAccountLockPool } =
   require("@/lib/account-lock") as typeof import("@/lib/account-lock");
 const signup =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
-const { chargeDueSubscriptions } =
+const { chargeDueSubscriptions, enqueueDueRenewals } =
   require("@/lib/subscription-renewals") as typeof import("@/lib/subscription-renewals");
 const { reconcilePayment } =
   require("@/lib/payment-reconciliation") as typeof import("@/lib/payment-reconciliation");
@@ -220,7 +222,7 @@ const { refundPayment, RefundError } =
   require("@/lib/refunds") as typeof import("@/lib/refunds");
 const { deleteRetiredBillingKeys } =
   require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
-const { runDueJobs } =
+const { runDueJobs, runJobs } =
   require("@/lib/payment-jobs") as typeof import("@/lib/payment-jobs");
 const { checkPaymentInvariants } =
   require("@/lib/payment-invariants") as typeof import("@/lib/payment-invariants");
@@ -402,6 +404,23 @@ function operations(userId: string, pick: () => number): Op[] {
       },
     },
     {
+      name: "renewal run",
+      weight: 1.5,
+      run: async () => {
+        const plan = await currentPlan(userId);
+        if (!plan || !["active", "scheduled"].includes(plan.status)) return;
+        // Due before the last 09:00 KST, as the hourly run charges.
+        await db
+          .updateTable("subscriptions")
+          .set({ next_billing_at: new Date(Date.now() - 2 * 86_400_000) })
+          .where("id", "=", plan.id)
+          .where("status", "in", ["active", "scheduled"])
+          .execute();
+        const { jobs } = await enqueueDueRenewals();
+        return runJobs(jobs);
+      },
+    },
+    {
       name: "refund",
       weight: 1,
       run: async () => {
@@ -523,7 +542,7 @@ function operations(userId: string, pick: () => number): Op[] {
 }
 
 async function reset() {
-  await sql`truncate users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, payment_jobs, toss_calls restart identity cascade`.execute(
+  await sql`truncate users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, payment_jobs, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`.execute(
     db,
   );
   fake.orders.clear();
@@ -685,6 +704,38 @@ async function findProblems(): Promise<string[]> {
   const invariants = await checkPaymentInvariants();
   for (const [rule, ids] of Object.entries(invariants)) {
     problems.push(`invariant: ${rule} (${ids.join(", ")})`);
+    if (rule === "이용 기한이 결제 원장보다 짧음") {
+      for (const userId of ids) {
+        const user = await db
+          .selectFrom("users")
+          .select("supporter_until")
+          .where("id", "=", userId)
+          .executeTakeFirst();
+        const ledger = await db
+          .selectFrom("payments")
+          .select([
+            "attempt_key",
+            "status",
+            "period_start",
+            "period_end",
+            "paid_at",
+            "refunded_amount",
+          ])
+          .where("user_id", "=", userId)
+          .where("period_end", "is not", null)
+          .orderBy("period_start")
+          .execute();
+        const events = await db
+          .selectFrom("payment_events")
+          .select(["kind", "summary"])
+          .where("user_id", "=", userId)
+          .orderBy("id")
+          .execute();
+        problems.push(
+          `  supporter_until ${user?.supporter_until?.toISOString()}; ledger ${JSON.stringify(ledger)}; events ${JSON.stringify(events.map((e) => `${e.kind}: ${e.summary}`))}`,
+        );
+      }
+    }
   }
   return problems;
 }
@@ -744,7 +795,10 @@ integration("payments under random concurrent operations", () => {
   const steps = Number(process.env.FUZZ_STEPS ?? 40);
   const seeds = process.env.FUZZ_SEED
     ? [Number(process.env.FUZZ_SEED)]
-    : Array.from({ length: runs }, (_, i) => 1000 + i);
+    : Array.from(
+        { length: runs },
+        (_, i) => Number(process.env.FUZZ_FIRST_SEED ?? 1000) + i,
+      );
 
   for (const seed of seeds) {
     test(`seed ${seed}`, async () => {

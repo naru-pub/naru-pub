@@ -6,6 +6,56 @@ const transport = new ResendTransport({
   apiKey: process.env.RESEND_API_KEY!,
 });
 
+// What a payment mail is about, for its payment_mails record.
+export type PaymentMailRef = {
+  userId?: string | null;
+  paymentId?: string | null;
+  subscriptionId?: string | null;
+};
+
+export type PaymentMailRecord = {
+  kind: string;
+  recipient: string;
+  ref: PaymentMailRef;
+  messageId: string | null;
+  error: string | null;
+};
+
+// Set by lib/payment-mails.ts, which keeps each payment mail in the
+// database; email.ts itself stays free of it.
+let paymentMailRecorder: ((record: PaymentMailRecord) => Promise<void>) | null =
+  null;
+export function setPaymentMailRecorder(
+  recorder: (record: PaymentMailRecord) => Promise<void>,
+) {
+  paymentMailRecorder = recorder;
+}
+
+async function sendPaymentMail(
+  message: Parameters<typeof transport.send>[0],
+  kind: string,
+  recipient: string,
+  ref: PaymentMailRef = {},
+) {
+  let receipt: Awaited<ReturnType<typeof transport.send>> | null = null;
+  try {
+    receipt = await transport.send(message);
+    return receipt;
+  } finally {
+    await paymentMailRecorder?.({
+      kind,
+      recipient,
+      ref,
+      messageId: receipt?.successful ? receipt.messageId : null,
+      error: !receipt
+        ? "send threw"
+        : receipt.successful
+          ? null
+          : (receipt.errorMessages?.join(", ") ?? "send failed"),
+    });
+  }
+}
+
 // `next` is a page to continue to once verified (safeNextPath): /support when
 // the mail was asked for from the purchase page.
 export async function sendVerificationEmail(
@@ -227,6 +277,8 @@ function formatKrw(amount: number) {
 }
 
 export async function sendSubscriptionRenewalNoticeEmail(opts: {
+  // What the mail is about, for the payment_mails record.
+  ref?: PaymentMailRef;
   email: string;
   loginName: string;
   amount: number;
@@ -274,7 +326,12 @@ export async function sendSubscriptionRenewalNoticeEmail(opts: {
     tags: ["billing", "subscription-renewal"],
   });
 
-  const receipt = await transport.send(message);
+  const receipt = await sendPaymentMail(
+    message,
+    "renewal_notice",
+    opts.email,
+    opts.ref,
+  );
   if (!receipt.successful) {
     throw new Error(
       `Failed to send subscription renewal notice email: ${receipt.errorMessages?.join(", ")}`,
@@ -284,6 +341,8 @@ export async function sendSubscriptionRenewalNoticeEmail(opts: {
 }
 
 export async function sendSubscriptionPaymentGraceEmail(opts: {
+  // What the mail is about, for the payment_mails record.
+  ref?: PaymentMailRef;
   email: string;
   loginName: string;
   amount: number;
@@ -330,7 +389,12 @@ export async function sendSubscriptionPaymentGraceEmail(opts: {
     tags: ["billing", "payment-grace"],
   });
 
-  const receipt = await transport.send(message);
+  const receipt = await sendPaymentMail(
+    message,
+    "grace_notice",
+    opts.email,
+    opts.ref,
+  );
   if (!receipt.successful) {
     throw new Error(
       `Failed to send subscription payment grace email: ${receipt.errorMessages?.join(", ")}`,
@@ -340,6 +404,8 @@ export async function sendSubscriptionPaymentGraceEmail(opts: {
 }
 
 export async function sendSupportThankYouEmail(opts: {
+  // What the mail is about, for the payment_mails record.
+  ref?: PaymentMailRef;
   email: string;
   loginName: string;
   kind: "recurring" | "one_time";
@@ -389,7 +455,12 @@ export async function sendSupportThankYouEmail(opts: {
     tags: ["billing", "support-thank-you"],
   });
 
-  const receipt = await transport.send(message);
+  const receipt = await sendPaymentMail(
+    message,
+    "thank_you",
+    opts.email,
+    opts.ref,
+  );
   if (!receipt.successful) {
     throw new Error(
       `Failed to send support thank you email: ${receipt.errorMessages?.join(", ")}`,
@@ -402,6 +473,8 @@ export async function sendSupportThankYouEmail(opts: {
 // scheduled first charge, which the cron makes while nobody is watching. The
 // supporter's only other sign of it would be the card statement.
 export async function sendRecurringChargeReceiptEmail(opts: {
+  // What the mail is about, for the payment_mails record.
+  ref?: PaymentMailRef;
   email: string;
   loginName: string;
   amount: number;
@@ -462,7 +535,12 @@ export async function sendRecurringChargeReceiptEmail(opts: {
     tags: ["billing", "recurring-receipt"],
   });
 
-  const receipt = await transport.send(message);
+  const receipt = await sendPaymentMail(
+    message,
+    "charge_receipt",
+    opts.email,
+    opts.ref,
+  );
   if (!receipt.successful) {
     throw new Error(
       `Failed to send recurring charge receipt email: ${receipt.errorMessages?.join(", ")}`,
@@ -476,6 +554,8 @@ export async function sendRecurringChargeReceiptEmail(opts: {
 // dispute. Toss calls a refund a cancel (결제 취소), and so does the card
 // statement, so the mail does too.
 export async function sendPaymentCanceledEmail(opts: {
+  // What the mail is about, for the payment_mails record.
+  ref?: PaymentMailRef;
   email: string;
   loginName: string;
   amount: number;
@@ -541,7 +621,12 @@ export async function sendPaymentCanceledEmail(opts: {
     tags: ["billing", "payment-canceled"],
   });
 
-  const receipt = await transport.send(message);
+  const receipt = await sendPaymentMail(
+    message,
+    "payment_canceled",
+    opts.email,
+    opts.ref,
+  );
   if (!receipt.successful) {
     throw new Error(
       `Failed to send payment canceled email: ${receipt.errorMessages?.join(", ")}`,
@@ -565,6 +650,8 @@ export type SubscriptionCancelReason =
 // own cancel mail instead; this covers the refunds whose stop that mail
 // cannot report (see stopRecurringBilling in lib/refunds.ts).
 export async function sendSubscriptionCanceledEmail(opts: {
+  // What the mail is about, for the payment_mails record.
+  ref?: PaymentMailRef;
   email: string;
   loginName: string;
   reason: SubscriptionCancelReason;
@@ -628,7 +715,12 @@ export async function sendSubscriptionCanceledEmail(opts: {
     tags: ["billing", "subscription-canceled"],
   });
 
-  const receipt = await transport.send(message);
+  const receipt = await sendPaymentMail(
+    message,
+    "subscription_canceled",
+    opts.email,
+    opts.ref,
+  );
   if (!receipt.successful) {
     throw new Error(
       `Failed to send subscription canceled email: ${receipt.errorMessages?.join(", ")}`,
@@ -649,6 +741,8 @@ export type SubscriptionPastDueReason =
 // it. Paid access follows supporter_until and the grace window, not the
 // plan's status, so it may still run for a few days.
 export async function sendSubscriptionPastDueEmail(opts: {
+  // What the mail is about, for the payment_mails record.
+  ref?: PaymentMailRef;
   email: string;
   loginName: string;
   amount: number;
@@ -710,7 +804,12 @@ export async function sendSubscriptionPastDueEmail(opts: {
     tags: ["billing", "subscription-past-due"],
   });
 
-  const receipt = await transport.send(message);
+  const receipt = await sendPaymentMail(
+    message,
+    "past_due_notice",
+    opts.email,
+    opts.ref,
+  );
   if (!receipt.successful) {
     throw new Error(
       `Failed to send subscription past due email: ${receipt.errorMessages?.join(", ")}`,
@@ -730,6 +829,8 @@ function escapeHtml(value: string): string {
 // Payment and billing events for the operators, several to a message
 // (lib/payment-events.ts decides what goes together).
 export async function sendPaymentEventDigestEmail(opts: {
+  // What the mail is about, for the payment_mails record.
+  ref?: PaymentMailRef;
   to: string;
   subject: string;
   events: Array<{
@@ -790,7 +891,12 @@ export async function sendPaymentEventDigestEmail(opts: {
     tags: ["billing", "operator-digest"],
   });
 
-  const receipt = await transport.send(message);
+  const receipt = await sendPaymentMail(
+    message,
+    "operator_digest",
+    opts.to,
+    opts.ref,
+  );
   if (!receipt.successful) {
     throw new Error(
       `Failed to send payment event digest: ${receipt.errorMessages?.join(", ")}`,

@@ -242,8 +242,13 @@ async function reconcilePaymentCore(
           // this a chargeback bought a free supporter year: the money went back
           // and the entitlement stayed. Recomputed from the ledger rather than
           // subtracted, so a refund cannot disturb periods other payments paid
-          // for.
-          const recomputed = await recomputePaidTime(trx, payment.user_id);
+          // for. Only when this reconciliation found new refunded money: an
+          // order that simply failed or expired paid for nothing and changes
+          // nothing.
+          const newlyRefunded = refundedAmount > before.refunded_amount;
+          const recomputed = newlyRefunded
+            ? await recomputePaidTime(trx, payment.user_id)
+            : null;
 
           // A refund ends the billing relationship, not just this one charge:
           // the recurring plan the account had when the money went back must
@@ -258,7 +263,6 @@ async function reconcilePaymentCore(
           // brought the refund in — is theirs to keep. And not when an operator
           // gave the money back on purpose without ending the plan
           // (refund_keeps_plan), a duplicate charge say.
-          const newlyRefunded = refundedAmount > before.refunded_amount;
           let stopped: { id: string } | undefined;
           if (newlyRefunded && !before.refund_keeps_plan) {
             const refundedBy = refundedAt ?? new Date();

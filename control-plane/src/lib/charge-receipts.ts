@@ -14,6 +14,8 @@ export async function sendChargeReceipt(paymentId: string): Promise<void> {
       .innerJoin("users", "users.id", "payments.user_id")
       .leftJoin("subscriptions", "subscriptions.id", "payments.subscription_id")
       .select([
+        "payments.user_id",
+        "payments.subscription_id",
         "payments.amount",
         "payments.order_id",
         "payments.paid_at",
@@ -47,6 +49,11 @@ export async function sendChargeReceipt(paymentId: string): Promise<void> {
           ? new Date(row.next_billing_at)
           : null,
       receiptUrl: row.toss_receipt_url,
+      ref: {
+        userId: row.user_id,
+        paymentId,
+        subscriptionId: row.subscription_id,
+      },
     });
   }
 }

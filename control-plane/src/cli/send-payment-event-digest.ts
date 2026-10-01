@@ -1,7 +1,4 @@
-import {
-  prunePaymentLogs,
-  sendPaymentEventDigest,
-} from "@/lib/payment-events";
+import { prunePaymentLogs, sendPaymentEventDigest } from "@/lib/payment-events";
 
 // Mails pending payment events to the operators (production only) and keeps
 // the event and webhook-delivery logs bounded.
@@ -13,10 +10,8 @@ async function main() {
     );
   }
   const pruned = await prunePaymentLogs();
-  if (pruned.deliveries || pruned.events) {
-    console.log(
-      `[payment-event-digest] pruned ${pruned.deliveries} webhook deliveries, ${pruned.events} events`,
-    );
+  if (Object.values(pruned).some((count) => count > 0)) {
+    console.log(`[payment-event-digest] pruned ${JSON.stringify(pruned)}`);
   }
 }
 

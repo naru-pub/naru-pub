@@ -1,4 +1,6 @@
 import { db } from "@/lib/database";
+// Keeps the digest mail in payment_mails.
+import "@/lib/payment-mails";
 import { sendPaymentEventDigestEmail } from "@/lib/email";
 import type { Executor } from "@/lib/entitlements";
 import { isTossLiveMode, maskBody } from "@/lib/toss";
@@ -228,7 +230,7 @@ export async function recordWebhookDelivery(delivery: {
   }
 }
 
-// Webhook deliveries and Toss calls are the raw evidence of what Toss said and
+// Webhook deliveries, Toss calls and payment window outcomes are the raw evidence of what Toss said and
 // when — for a dispute or an audit — and carry some personal data (names,
 // masked card numbers), so they are kept as long as payment records must be
 // (전자상거래법: 5 years) and Toss answers lookups, and no longer.
@@ -266,9 +268,60 @@ export async function prunePaymentLogs(now = new Date()) {
       isTossLiveMode() ? eb("emailed_at", "is not", null) : eb.lit(true),
     )
     .executeTakeFirst();
+  const windows = await db
+    .deleteFrom("toss_window_outcomes")
+    .where(
+      "created_at",
+      "<",
+      new Date(now.getTime() - RAW_PAYMENT_LOG_RETENTION_DAYS * DAY_MS),
+    )
+    .executeTakeFirst();
+  // Mail and cron records answer support questions about the last year; the
+  // mail ones hold addresses.
+  const yearAgo = new Date(
+    now.getTime() - PAYMENT_EVENT_RETENTION_DAYS * DAY_MS,
+  );
+  const mails = await db
+    .deleteFrom("payment_mails")
+    .where("created_at", "<", yearAgo)
+    .executeTakeFirst();
+  const runs = await db
+    .deleteFrom("payment_cron_runs")
+    .where("started_at", "<", yearAgo)
+    .executeTakeFirst();
   return {
     deliveries: Number(deliveries.numDeletedRows ?? 0),
     tossCalls: Number(calls.numDeletedRows ?? 0),
+    windows: Number(windows.numDeletedRows ?? 0),
     events: Number(events.numDeletedRows ?? 0),
+    mails: Number(mails.numDeletedRows ?? 0),
+    cronRuns: Number(runs.numDeletedRows ?? 0),
   };
+}
+
+// One run of a payment cron job (cli/cron.ts), so "did the 09:00 renewal run,
+// and what did it do" has an answer after the container's log is gone. Best
+// effort: a run that cannot be recorded is still a run.
+export async function recordPaymentCronRun(run: {
+  script: string;
+  startedAt: Date;
+  exitCode: number | null;
+  timedOut: boolean;
+  outputTail: string;
+}): Promise<void> {
+  try {
+    await db
+      .insertInto("payment_cron_runs")
+      .values({
+        script: run.script,
+        started_at: run.startedAt,
+        finished_at: new Date(),
+        exit_code: run.exitCode,
+        timed_out: run.timedOut,
+        output_tail: run.outputTail.slice(-4000) || null,
+      })
+      .execute();
+  } catch (error) {
+    console.error("Payment cron run could not be recorded:", error);
+  }
 }

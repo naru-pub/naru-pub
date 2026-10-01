@@ -148,20 +148,15 @@ export async function checkPaymentInvariants(
   return found;
 }
 
-// Accounts whose supporter_until ends before what their unrefunded payments
-// paid for: paid time a supporter lost. (It may legitimately run later than
-// the ledger's replay — a charge granted after a delay starts its period at
-// the grant — so only the short side is a violation.)
+// Accounts whose supporter_until ends before the latest period an
+// unrefunded payment paid for: paid time a supporter lost.
 async function shortenedAccounts(): Promise<string[]> {
   const rows = await db
     .selectFrom("payments")
     .innerJoin("users", "users.id", "payments.user_id")
     .select([
       "payments.user_id",
-      "payments.period_start",
       "payments.period_end",
-      "payments.paid_at",
-      "payments.amount",
       "payments.refunded_amount",
       "users.supporter_until",
     ])
@@ -175,10 +170,7 @@ async function shortenedAccounts(): Promise<string[]> {
   for (const [userId, ledger] of byUser) {
     const expected = supporterUntilFromLedger(
       ledger.map((row) => ({
-        periodStart: row.period_start,
         periodEnd: row.period_end,
-        paidAt: row.paid_at,
-        amount: row.amount,
         refundedAmount: row.refunded_amount,
       })),
     );
