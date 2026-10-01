@@ -3896,6 +3896,17 @@ integration("payments against the database", () => {
       expect((await prepareOneTime(userId)).status).toBe(409);
     });
 
+    test("one-time prepare allows retries, but not a script's worth", async () => {
+      const userId = await makeUser();
+      for (let i = 1; i <= 9; i++) await pendingOneTime(userId, `try-${i}`);
+      // A tenth order is still a person retrying.
+      expect((await prepareOneTime(userId)).status).toBe(200);
+
+      toss.getPaymentByOrderId.mockClear();
+      expect((await prepareOneTime(userId)).status).toBe(429);
+      expect(toss.getPaymentByOrderId).not.toHaveBeenCalled();
+    });
+
     test("one-time confirm waits while a renewal is being charged", async () => {
       const userId = await makeUser();
       const subId = await makeSubscription(userId, { status: "active" });

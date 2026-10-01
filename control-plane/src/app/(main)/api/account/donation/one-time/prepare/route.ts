@@ -17,7 +17,11 @@ import { canStartOneTimePurchase } from "@/lib/support-purchases";
 import {
   settleOneTimeOrders,
   subscriptionChargeInFlight,
+  UNCONFIRMED_EXPIRY_MS,
 } from "@/lib/payment-reconciliation";
+
+// Unconfirmed one-time orders an account may have open at once.
+const MAX_PENDING_ONE_TIME_ORDERS = 10;
 import { settlePendingCharges } from "@/lib/subscription-signup";
 
 // One-time donation step 1: returns a server-generated orderId + the
@@ -62,6 +66,29 @@ export async function POST(request: NextRequest) {
       );
     }
     const amount = oneTimeAmount(years);
+
+    // Each prepare makes an order, and settling asks Toss about every pending
+    // one, so a script hammering this endpoint would multiply Toss calls and
+    // bury the operators in expired-order events. A person retrying after
+    // closing the payment window stays far below this; an order Toss never
+    // saw expires 45 minutes after it was made.
+    const recentOrders = await db
+      .selectFrom("payments")
+      .select(({ fn }) => fn.countAll().as("count"))
+      .where("user_id", "=", user.id)
+      .where("attempt_key", "like", "one_time:%")
+      .where("status", "=", "pending")
+      .where("created_at", ">", new Date(Date.now() - UNCONFIRMED_EXPIRY_MS))
+      .executeTakeFirst();
+    if (Number(recentOrders?.count ?? 0) >= MAX_PENDING_ONE_TIME_ORDERS) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "결제 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+        },
+        { status: 429 },
+      );
+    }
 
     // Settle what may still turn into paid time before deciding whether a
     // one-time purchase is allowed: an earlier one-time order the buyer
