@@ -3,6 +3,7 @@ import { assertSameOriginRequest } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
 import { recordPaymentEvent } from "@/lib/payment-events";
 
 // Cancels auto-renewal. Access (supporter_until) is left intact so the user
@@ -48,7 +49,9 @@ export async function POST(request: NextRequest) {
 
     const cancelingSchedule = sub.status === "scheduled";
     const billingKey = await db.transaction().execute(async (trx) => {
-      await trx
+      // Not again: a second click, or a refund that stopped the plan
+      // meanwhile, already did this and mailed about it.
+      const updated = await trx
         .updateTable("subscriptions")
         .set({
           status: cancelingSchedule ? "switched_to_one_time" : "canceled",
@@ -57,7 +60,9 @@ export async function POST(request: NextRequest) {
           updated_at: new Date(),
         })
         .where("id", "=", sub.id)
-        .execute();
+        .where("status", "not in", ["canceled", "switched_to_one_time"])
+        .executeTakeFirst();
+      if (Number(updated.numUpdatedRows ?? 0) === 0) return undefined;
       await recordPaymentEvent(trx, {
         kind: "subscription_canceled",
         userId: user.id,
@@ -68,7 +73,13 @@ export async function POST(request: NextRequest) {
       });
       return retireBillingKey(trx, { subscriptionId: sub.id });
     });
-    await deleteRetiredBillingKey(billingKey);
+    if (billingKey !== undefined) {
+      await deleteRetiredBillingKey(billingKey);
+      await sendSubscriptionCanceledNotice(
+        sub.id,
+        cancelingSchedule ? "user_schedule" : "user",
+      );
+    }
 
     return NextResponse.json({
       success: true,

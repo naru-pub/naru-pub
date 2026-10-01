@@ -9,6 +9,7 @@ import {
 } from "@/lib/toss";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { retireBillingKey } from "@/lib/billing-keys";
+import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
 import {
   notePaymentEvent,
   recordPaymentEvent,
@@ -88,10 +89,10 @@ export async function POST(request: NextRequest) {
       if (!isTrustedWebhookSource(sourceIp)) {
         return respond(200, `ignored: untrusted address ${sourceIp}`);
       }
-      const canceledId = await db.transaction().execute(async (trx) => {
+      const canceled = await db.transaction().execute(async (trx) => {
         const subscription = await trx
           .selectFrom("subscriptions")
-          .select(["id", "canceled_at", "user_id"])
+          .select(["id", "status", "canceled_at", "user_id"])
           .where("toss_billing_key", "=", event.billingKey)
           .forUpdate()
           .executeTakeFirst();
@@ -126,13 +127,27 @@ export async function POST(request: NextRequest) {
           .deleteFrom("retired_billing_keys")
           .where("billing_key", "=", event.billingKey)
           .execute();
-        return subscription?.id ?? null;
+        return subscription
+          ? {
+              id: subscription.id,
+              // A plan already stopped had its cancel mailed then.
+              newlyStopped: !["canceled", "switched_to_one_time"].includes(
+                subscription.status,
+              ),
+            }
+          : null;
       });
+      if (canceled?.newlyStopped) {
+        await sendSubscriptionCanceledNotice(
+          canceled.id,
+          "billing_key_deleted",
+        );
+      }
 
       return respond(
         200,
-        canceledId
-          ? `canceled subscription ${canceledId}`
+        canceled
+          ? `canceled subscription ${canceled.id}`
           : "no subscription holds this key (already retired)",
       );
     }

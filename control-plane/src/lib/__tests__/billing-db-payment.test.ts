@@ -27,7 +27,11 @@ jest.mock("@/lib/email", () => ({
   sendSupportThankYouEmail: jest.fn(async () => {}),
   sendRecurringChargeReceiptEmail: jest.fn(async () => {}),
   sendPaymentEventDigestEmail: jest.fn(async () => {}),
+  sendPaymentCanceledEmail: jest.fn(async () => {}),
+  sendSubscriptionCanceledEmail: jest.fn(async () => {}),
 }));
+
+jest.mock("@/lib/auth", () => ({ validateRequest: jest.fn() }));
 
 // Required after the mocks: this transform does not hoist jest.mock above
 // imports.
@@ -66,8 +70,10 @@ const { deleteUserRow } =
   require("@/lib/account-deletion") as typeof import("@/lib/account-deletion");
 const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/subscription-signup") as typeof import("@/lib/subscription-signup");
-const { NextRequest } =
-  require("next/server") as typeof import("next/server");
+const { NextRequest } = require("next/server") as typeof import("next/server");
+const auth = require("@/lib/auth") as jest.Mocked<typeof import("@/lib/auth")>;
+const { POST: cancelSubscriptionRoute } =
+  require("@/app/(main)/api/account/subscription/cancel/route") as typeof import("@/app/(main)/api/account/subscription/cancel/route");
 const { POST: tossWebhook } =
   require("@/app/(main)/api/webhooks/toss/route") as typeof import("@/app/(main)/api/webhooks/toss/route");
 
@@ -1027,6 +1033,222 @@ integration("payments against the database", () => {
     });
   });
 
+  describe("cancellation mail", () => {
+    async function paidOneTime(userId: string) {
+      const orderId = `mail-order-${userId}`;
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: `one_time:1:${orderId}`,
+        orderId,
+        amount: 12000,
+      });
+      await applyOneTimePayment({
+        userId,
+        amount: 12000,
+        years: 1,
+        payment: tossPayment(orderId, 12000),
+        paymentId,
+      });
+      return { orderId, paymentId };
+    }
+
+    function refundWebhook(orderId: string) {
+      return tossWebhook(
+        new NextRequest("http://localhost/api/webhooks/toss", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            eventType: "PAYMENT_STATUS_CHANGED",
+            createdAt: new Date().toISOString(),
+            data: { orderId, status: "CANCELED" },
+          }),
+        }),
+      );
+    }
+
+    function cancelRequest(userId: string) {
+      auth.validateRequest.mockResolvedValue({
+        user: { id: userId },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      return cancelSubscriptionRoute(
+        new NextRequest("http://localhost/api/account/subscription/cancel", {
+          method: "POST",
+        }),
+      );
+    }
+
+    test("a refund is mailed once, however many times it is seen", async () => {
+      const userId = await makeUser();
+      const { orderId, paymentId } = await paidOneTime(userId);
+      await makeSubscription(userId, { status: "active" });
+      const canceled = tossPayment(orderId, 12000, {
+        status: "CANCELED",
+        cancels: [
+          { cancelAmount: 12000, canceledAt: "2026-10-01T03:00:00+09:00" },
+        ],
+      });
+      toss.cancelPayment.mockResolvedValue(canceled);
+      toss.getPaymentByOrderId.mockResolvedValue(canceled);
+
+      await refundPayment({ paymentId, overridePolicy: false, reason: "test" });
+      await refundWebhook(orderId);
+      await reconcilePayment(paymentId);
+
+      expect(email.sendPaymentCanceledEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendPaymentCanceledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 12000,
+          refundedAmount: 12000,
+          orderId,
+          refundedAt: new Date("2026-10-01T03:00:00+09:00"),
+          supporterUntil: null,
+          subscriptionCanceled: true,
+        }),
+      );
+      // The refund mail says the plan stopped; no second mail for it.
+      expect(email.sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
+    });
+
+    // As when a refund's own reconciliation and the webhook it sets off run
+    // together.
+    test("two reconciliations that see one refund at once mail it once", async () => {
+      const userId = await makeUser();
+      const { orderId, paymentId } = await paidOneTime(userId);
+      // Both have read the payment before either records the refund.
+      let arrived = 0;
+      let release!: () => void;
+      const bothArrived = new Promise<void>((resolve) => (release = resolve));
+      toss.getPaymentByOrderId.mockImplementation(async () => {
+        arrived += 1;
+        if (arrived === 2) release();
+        await bothArrived;
+        return tossPayment(orderId, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        });
+      });
+
+      await Promise.all([
+        reconcilePayment(paymentId),
+        reconcilePayment(paymentId),
+      ]);
+
+      expect(arrived).toBe(2);
+      expect(email.sendPaymentCanceledEmail).toHaveBeenCalledTimes(1);
+    });
+
+    test("a plan a refund stops before the refund shows is mailed on its own", async () => {
+      const userId = await makeUser();
+      const { orderId, paymentId } = await paidOneTime(userId);
+      await makeSubscription(userId, { status: "active" });
+      toss.cancelPayment.mockResolvedValue(
+        tossPayment(orderId, 12000, { status: "CANCELED" }),
+      );
+      // Toss's lookup still shows the payment paid.
+      toss.getPaymentByOrderId.mockResolvedValue(tossPayment(orderId, 12000));
+
+      await refundPayment({ paymentId, overridePolicy: false, reason: "test" });
+
+      expect(email.sendPaymentCanceledEmail).not.toHaveBeenCalled();
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "refund" }),
+      );
+
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(orderId, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+      await reconcilePayment(paymentId);
+      expect(email.sendPaymentCanceledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ subscriptionCanceled: false }),
+      );
+    });
+
+    test("canceling a plan mails the paid time left, once", async () => {
+      const paidUntil = new Date(Date.now() + 20 * DAY);
+      const userId = await makeUser(paidUntil);
+      const subId = await makeSubscription(userId, { status: "active" });
+
+      expect((await cancelRequest(userId)).status).toBe(200);
+      expect((await cancelRequest(userId)).status).toBe(200);
+
+      expect((await subscription(subId)).status).toBe("canceled");
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: expect.stringMatching(/@example\.com$/),
+          reason: "user",
+          supporterUntil: paidUntil,
+        }),
+      );
+    });
+
+    test("calling off a scheduled plan says no charge was made", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "scheduled",
+        nextBillingAt: new Date(Date.now() + 5 * DAY),
+      });
+
+      await cancelRequest(userId);
+
+      expect((await subscription(subId)).status).toBe("switched_to_one_time");
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: "user_schedule",
+          supporterUntil: null,
+        }),
+      );
+    });
+
+    test("an unverified address is not mailed", async () => {
+      const userId = await makeUser();
+      await db
+        .updateTable("users")
+        .set({ email_verified_at: null })
+        .where("id", "=", userId)
+        .execute();
+      await makeSubscription(userId, { status: "active" });
+
+      await cancelRequest(userId);
+
+      expect(email.sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
+    });
+
+    test("BILLING_DELETED mails a plan it stops, not one already stopped", async () => {
+      process.env.TOSS_BILLING_SECRET_KEY = "test_sk_billing";
+      process.env.TOSS_PAYMENT_SECRET_KEY = "test_sk_payment";
+      const userId = await makeUser();
+      const activeId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "deleted-active",
+      });
+      await runLabAction({
+        action: "billing-deleted",
+        subscriptionId: activeId,
+      });
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "billing_key_deleted" }),
+      );
+
+      const otherId = await makeSubscription(await makeUser(), {
+        status: "canceled",
+        billingKey: "deleted-canceled",
+      });
+      await runLabAction({
+        action: "billing-deleted",
+        subscriptionId: otherId,
+      });
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("one-time payments left unconfirmed", () => {
     async function authenticated(createdMinutesAgo = 5) {
       const userId = await makeUser();
@@ -1211,7 +1433,10 @@ integration("payments against the database", () => {
       expect(reconciledMidCharge).toEqual({ state: "pending" });
       const all = await attempts(subId);
       expect(all).toHaveLength(1);
-      expect(all[0]).toMatchObject({ order_id: first.order_id, status: "done" });
+      expect(all[0]).toMatchObject({
+        order_id: first.order_id,
+        status: "done",
+      });
       expect((await supporterUntil(userId))! > periodEnd).toBe(true);
 
       // Nothing is left for a later run to charge again.
@@ -1930,9 +2155,9 @@ integration("payments against the database", () => {
       const lease = new Date();
       const { paymentId } = await abandoned(lease);
 
-      expect(
-        await reconcilePayment(paymentId, { leaseHeldAt: lease }),
-      ).toEqual({ state: "expired" });
+      expect(await reconcilePayment(paymentId, { leaseHeldAt: lease })).toEqual(
+        { state: "expired" },
+      );
     });
 
     test("an abandoned lease does not keep an order from expiring", async () => {

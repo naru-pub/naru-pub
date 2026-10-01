@@ -460,6 +460,172 @@ export async function sendRecurringChargeReceiptEmail(opts: {
   return receipt;
 }
 
+// Sent the first time 나루 sees a payment refunded, however it was refunded:
+// the supporter's own request, an operator, the Toss dashboard or a card
+// dispute. Toss calls a refund a cancel (결제 취소), and so does the card
+// statement, so the mail does too.
+export async function sendPaymentCanceledEmail(opts: {
+  email: string;
+  loginName: string;
+  amount: number;
+  refundedAmount: number;
+  orderId: string;
+  refundedAt: Date;
+  // Where paid access now ends; null when it has ended.
+  supporterUntil: Date | null;
+  // Whether this refund also stopped recurring billing.
+  subscriptionCanceled: boolean;
+}) {
+  const paymentsUrl = `${process.env.BASE_URL}/support/payments`;
+  const amountLabel = formatKrw(opts.amount);
+  const refundedLabel = formatKrw(opts.refundedAmount);
+  const refundedAtLabel = formatKoreanDateTime(opts.refundedAt);
+  const accessLine = opts.supporterUntil
+    ? `유료 기능은 ${formatKoreanDateTime(opts.supporterUntil)}까지 이용하실 수 있습니다.`
+    : "취소된 결제로 이용하시던 유료 기능은 종료되었습니다.";
+  const subscriptionLine = opts.subscriptionCanceled
+    ? "정기 결제도 함께 해지되어 더 이상 결제되지 않습니다."
+    : null;
+  const cardLine =
+    "카드 결제 취소는 카드사에 따라 반영까지 영업일 기준 3~7일이 걸릴 수 있습니다.";
+
+  const message = createMessage({
+    from: process.env.FROM_EMAIL || "noreply@naru.pub",
+    to: opts.email,
+    subject: "나루 결제가 취소되었습니다",
+    content: {
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>나루 결제 취소 안내</h2>
+          <p>${escapeHtml(opts.loginName)}님, 나루 결제가 취소되어 환불되었습니다.</p>
+          <p><strong>환불 금액:</strong> ${refundedLabel}${opts.refundedAmount < opts.amount ? ` (결제 금액 ${amountLabel} 중)` : ""}</p>
+          <p><strong>취소 일시:</strong> ${refundedAtLabel}</p>
+          <p><strong>주문번호:</strong> ${escapeHtml(opts.orderId)}</p>
+          <p>${accessLine}</p>
+          ${subscriptionLine ? `<p>${subscriptionLine}</p>` : ""}
+          <p>${cardLine}</p>
+          <p>
+            <a href="${paymentsUrl}" style="background-color: #007cba; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+              결제 내역 보기
+            </a>
+          </p>
+        </div>
+      `,
+      text: [
+        "나루 결제 취소 안내",
+        "",
+        `${opts.loginName}님, 나루 결제가 취소되어 환불되었습니다.`,
+        "",
+        `환불 금액: ${refundedLabel}${opts.refundedAmount < opts.amount ? ` (결제 금액 ${amountLabel} 중)` : ""}`,
+        `취소 일시: ${refundedAtLabel}`,
+        `주문번호: ${opts.orderId}`,
+        "",
+        accessLine,
+        ...(subscriptionLine ? [subscriptionLine] : []),
+        cardLine,
+        "",
+        `결제 내역: ${paymentsUrl}`,
+      ].join("\n"),
+    },
+    tags: ["billing", "payment-canceled"],
+  });
+
+  const receipt = await transport.send(message);
+  if (!receipt.successful) {
+    throw new Error(
+      `Failed to send payment canceled email: ${receipt.errorMessages?.join(", ")}`,
+    );
+  }
+  return receipt;
+}
+
+export type SubscriptionCancelReason =
+  // The supporter canceled an active (or past due) plan.
+  | "user"
+  // The supporter called off a plan whose first charge was still scheduled.
+  | "user_schedule"
+  // A refund stopped it.
+  | "refund"
+  // The card's billing key was deleted at Toss (BILLING_DELETED).
+  | "billing_key_deleted";
+
+// Sent when recurring billing stops, so the supporter has it in writing that
+// the card will not be charged again. A refund that stops it says so in its
+// own cancel mail instead; this covers the refunds whose stop that mail
+// cannot report (see stopRecurringBilling in lib/refunds.ts).
+export async function sendSubscriptionCanceledEmail(opts: {
+  email: string;
+  loginName: string;
+  reason: SubscriptionCancelReason;
+  canceledAt: Date;
+  // Where paid access ends; null when there is none left.
+  supporterUntil: Date | null;
+}) {
+  const paymentsUrl = `${process.env.BASE_URL}/support/payments`;
+  const canceledAtLabel = formatKoreanDateTime(opts.canceledAt);
+  const scheduled = opts.reason === "user_schedule";
+  const title = scheduled
+    ? "나루 정기 결제 예약 취소 안내"
+    : "나루 정기 결제 해지 안내";
+  const intro = {
+    user: "요청하신 대로 나루 정기 결제가 해지되었습니다.",
+    user_schedule:
+      "요청하신 대로 예약된 나루 정기 결제가 취소되었습니다. 첫 결제는 이루어지지 않습니다.",
+    refund: "결제 환불에 따라 나루 정기 결제가 해지되었습니다.",
+    billing_key_deleted:
+      "등록된 결제 카드가 결제사에서 삭제되어 나루 정기 결제가 해지되었습니다.",
+  }[opts.reason];
+  const accessLine = opts.supporterUntil
+    ? `이미 결제하신 기간이 끝나는 ${formatKoreanDateTime(opts.supporterUntil)}까지는 유료 기능을 계속 이용하실 수 있습니다.`
+    : null;
+  const closing =
+    "앞으로 등록된 카드로 결제되지 않습니다. 언제든 다시 결제하실 수 있습니다.";
+
+  const message = createMessage({
+    from: process.env.FROM_EMAIL || "noreply@naru.pub",
+    to: opts.email,
+    subject: scheduled
+      ? "나루 정기 결제 예약이 취소되었습니다"
+      : "나루 정기 결제가 해지되었습니다",
+    content: {
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>${title}</h2>
+          <p>${escapeHtml(opts.loginName)}님, ${intro}</p>
+          <p><strong>해지 일시:</strong> ${canceledAtLabel}</p>
+          ${accessLine ? `<p>${accessLine}</p>` : ""}
+          <p>${closing}</p>
+          <p>
+            <a href="${paymentsUrl}" style="background-color: #007cba; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+              결제 내역 보기
+            </a>
+          </p>
+        </div>
+      `,
+      text: [
+        title,
+        "",
+        `${opts.loginName}님, ${intro}`,
+        "",
+        `해지 일시: ${canceledAtLabel}`,
+        ...(accessLine ? [accessLine] : []),
+        closing,
+        "",
+        `결제 내역: ${paymentsUrl}`,
+      ].join("\n"),
+    },
+    tags: ["billing", "subscription-canceled"],
+  });
+
+  const receipt = await transport.send(message);
+  if (!receipt.successful) {
+    throw new Error(
+      `Failed to send subscription canceled email: ${receipt.errorMessages?.join(", ")}`,
+    );
+  }
+  return receipt;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

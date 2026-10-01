@@ -1,5 +1,6 @@
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import { sendSubscriptionCanceledNotice } from "@/lib/cancellation-notices";
 import {
   reconcilePayment,
   type ReconciliationResult,
@@ -92,7 +93,7 @@ export class RefundError extends Error {
 // Reconciliation stops the account's recurring plan when it first sees the
 // refund; this is for a cancel Toss accepted but the lookup does not show yet.
 async function stopRecurringBilling(userId: string): Promise<boolean> {
-  const { stopped, billingKey } = await db
+  const { stoppedId, billingKey } = await db
     .transaction()
     .execute(async (trx) => {
       const stopped = await trx
@@ -117,14 +118,17 @@ async function stopRecurringBilling(userId: string): Promise<boolean> {
         });
       }
       return {
-        stopped: stopped != null,
+        stoppedId: stopped?.id ?? null,
         billingKey: stopped
           ? await retireBillingKey(trx, { subscriptionId: stopped.id })
           : null,
       };
     });
   await deleteRetiredBillingKey(billingKey);
-  return stopped;
+  // The refund's own cancel mail went out before this stop, or goes out
+  // later without it, so it cannot say so: this one does.
+  if (stoppedId) await sendSubscriptionCanceledNotice(stoppedId, "refund");
+  return stoppedId != null;
 }
 
 export type RefundOutcome = {

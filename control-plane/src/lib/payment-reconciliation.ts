@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { sendPaymentCanceledNotice } from "@/lib/cancellation-notices";
 import { sendChargeReceipt } from "@/lib/charge-receipts";
 import { db } from "@/lib/database";
 import { sendSupportThankYouEmail } from "@/lib/email";
@@ -282,9 +283,18 @@ async function reconcilePaymentCore(
         payment.amount,
       );
 
-      const { retiredKey, subscriptionCanceled } = await db
+      const { retiredKey, subscriptionCanceled, newlyRefunded } = await db
         .transaction()
         .execute(async (trx) => {
+          // Read under a lock, so of two reconciliations that see the same
+          // refund — the refund call's own and the webhook it set off — only
+          // one finds it new.
+          const before = await trx
+            .selectFrom("payments")
+            .select("refunded_amount")
+            .where("id", "=", payment.id)
+            .forUpdate()
+            .executeTakeFirstOrThrow();
           await trx
             .updateTable("payments")
             .set({
@@ -356,7 +366,7 @@ async function reconcilePaymentCore(
           // whose cancel call got no answer stops it as well as one made
           // through refundPayment. Only then: a payment reconciled again later
           // must not cancel a plan the supporter started after the refund.
-          const newlyRefunded = refundedAmount > payment.refunded_amount;
+          const newlyRefunded = refundedAmount > before.refunded_amount;
           let stopped: { id: string } | undefined;
           if (newlyRefunded) {
             stopped = await trx
@@ -391,6 +401,7 @@ async function reconcilePaymentCore(
 
           if (stopped) {
             return {
+              newlyRefunded,
               subscriptionCanceled: true,
               retiredKey: await retireBillingKey(trx, {
                 subscriptionId: stopped.id,
@@ -399,6 +410,7 @@ async function reconcilePaymentCore(
           }
           if (initialAttempt && refundedAmount === 0) {
             return {
+              newlyRefunded,
               subscriptionCanceled: false,
               retiredKey: await retireUnusedSignupKey(
                 trx,
@@ -406,9 +418,16 @@ async function reconcilePaymentCore(
               ),
             };
           }
-          return { subscriptionCanceled: false, retiredKey: null };
+          return {
+            newlyRefunded,
+            subscriptionCanceled: false,
+            retiredKey: null,
+          };
         });
       if (!opts.deferKeyDeletion) await deleteRetiredBillingKey(retiredKey);
+      if (newlyRefunded) {
+        await sendPaymentCanceledNotice(payment.id, { subscriptionCanceled });
+      }
       if (status === "canceled" || status === "partial_canceled") {
         return {
           state: "refunded",
