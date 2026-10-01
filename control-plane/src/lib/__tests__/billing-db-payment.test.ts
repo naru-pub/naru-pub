@@ -54,6 +54,10 @@ const { runLabAction } =
   require("@/lib/billing-lab") as typeof import("@/lib/billing-lab");
 const { sendPaymentEventDigest } =
   require("@/lib/payment-events") as typeof import("@/lib/payment-events");
+const { PAYMENT_FILTERS, supporterCondition } =
+  require("@/app/(main)/admin/_components/metrics") as typeof import("@/app/(main)/admin/_components/metrics");
+const { getUserEntitlement } =
+  require("@/lib/entitlements") as typeof import("@/lib/entitlements");
 const { deleteRetiredBillingKeys, retireBillingKey } =
   require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
 const { deleteUserRow } =
@@ -1852,6 +1856,124 @@ integration("payments against the database", () => {
           events: 1,
         });
       });
+    });
+  });
+
+  // The /admin overview counts with these conditions and its detail pages
+  // list with them, so they must pick exactly the right rows.
+  describe("admin card definitions", () => {
+    async function payment(
+      orderId: string,
+      values: {
+        status: string;
+        paidDaysAgo?: number;
+        createdDaysAgo?: number;
+        refundedDaysAgo?: number;
+        error?: string;
+      },
+    ) {
+      const userId = await makeUser();
+      const id = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: `one_time:1:${orderId}`,
+        orderId,
+        amount: 12000,
+      });
+      const ago = (days?: number) =>
+        days === undefined ? null : new Date(Date.now() - days * DAY);
+      await db
+        .updateTable("payments")
+        .set({
+          status: values.status,
+          paid_at: ago(values.paidDaysAgo),
+          created_at: ago(values.createdDaysAgo ?? 0)!,
+          refunded_amount: values.refundedDaysAgo === undefined ? 0 : 12000,
+          refunded_at: ago(values.refundedDaysAgo),
+          reconciliation_error: values.error ?? null,
+        })
+        .where("id", "=", id)
+        .execute();
+    }
+
+    test("each payment filter selects exactly its rows", async () => {
+      await payment("paid-recent", { status: "done", paidDaysAgo: 3 });
+      await payment("paid-old", { status: "done", paidDaysAgo: 40 });
+      await payment("paid-then-refunded", {
+        status: "canceled",
+        paidDaysAgo: 10,
+        refundedDaysAgo: 2,
+      });
+      await payment("refunded-long-ago", {
+        status: "canceled",
+        paidDaysAgo: 90,
+        refundedDaysAgo: 60,
+      });
+      await payment("waiting", { status: "pending" });
+      await payment("waiting-broken", { status: "pending", error: "boom" });
+      await payment("done-broken", {
+        status: "done",
+        paidDaysAgo: 50,
+        error: "boom",
+      });
+      await payment("declined-recent", {
+        status: "aborted",
+        createdDaysAgo: 2,
+      });
+      await payment("failed-old", { status: "failed", createdDaysAgo: 20 });
+      await payment("abandoned", { status: "expired", createdDaysAgo: 1 });
+
+      const now = new Date();
+      const select = async (key: keyof typeof PAYMENT_FILTERS) =>
+        (
+          await db
+            .selectFrom("payments")
+            .select("order_id")
+            .where(PAYMENT_FILTERS[key].condition(now))
+            .orderBy("order_id")
+            .execute()
+        ).map((row) => row.order_id);
+
+      expect(await select("paid_30d")).toEqual([
+        "paid-recent",
+        "paid-then-refunded",
+      ]);
+      expect(await select("refunded_30d")).toEqual(["paid-then-refunded"]);
+      expect(await select("pending")).toEqual(["waiting", "waiting-broken"]);
+      expect(await select("errors")).toEqual(["done-broken", "waiting-broken"]);
+      expect(await select("failed_7d")).toEqual(["declined-recent"]);
+    });
+
+    test("the supporter count agrees with the entitlement rule", async () => {
+      const comp = await makeUser(null);
+      await db
+        .updateTable("users")
+        .set({ supporter_comp: true })
+        .where("id", "=", comp)
+        .execute();
+      const users = [
+        comp,
+        await makeUser(new Date(Date.now() + 10 * DAY)), // paid
+        await makeUser(new Date(Date.now() - 2 * DAY)), // in grace
+        await makeUser(new Date(Date.now() - 10 * DAY)), // lapsed
+        await makeUser(null), // never paid
+      ];
+
+      const counted = new Set(
+        (
+          await db
+            .selectFrom("users")
+            .select("id")
+            .where(supporterCondition(new Date()))
+            .execute()
+        ).map((row) => row.id),
+      );
+
+      for (const userId of users) {
+        const { isSupporter } = await getUserEntitlement(userId);
+        expect(counted.has(userId)).toBe(isSupporter);
+      }
+      expect(counted.size).toBe(3);
     });
   });
 });

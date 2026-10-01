@@ -32,11 +32,33 @@ const FAILURE_KINDS = new Set([
 export default async function PaymentEventsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ kind?: string }>;
+  searchParams: Promise<{ kind?: string; user?: string; unsent?: string }>;
 }) {
   await requireOperator();
-  const { kind } = await searchParams;
-  const filter = kind && kind in PAYMENT_EVENT_LABELS ? kind : null;
+  const params = await searchParams;
+  const filter =
+    params.kind && params.kind in PAYMENT_EVENT_LABELS ? params.kind : null;
+  const loginName = params.user?.trim() || null;
+  const unsent = params.unsent === "1";
+
+  // Filters combine; each link changes one and keeps the others.
+  const href = (
+    changes: Partial<{
+      kind: string | null;
+      user: string | null;
+      unsent: boolean;
+    }>,
+  ) => {
+    const next = new URLSearchParams();
+    const nextKind = "kind" in changes ? changes.kind : filter;
+    const nextUser = "user" in changes ? changes.user : loginName;
+    const nextUnsent = "unsent" in changes ? changes.unsent : unsent;
+    if (nextKind) next.set("kind", nextKind);
+    if (nextUser) next.set("user", nextUser);
+    if (nextUnsent) next.set("unsent", "1");
+    const query = next.toString();
+    return query ? `/admin/events?${query}` : "/admin/events";
+  };
 
   const events = await db
     .selectFrom("payment_events")
@@ -51,6 +73,10 @@ export default async function PaymentEventsPage({
       "users.login_name",
     ])
     .$if(filter !== null, (qb) => qb.where("payment_events.kind", "=", filter!))
+    .$if(loginName !== null, (qb) =>
+      qb.where("users.login_name", "=", loginName!),
+    )
+    .$if(unsent, (qb) => qb.where("payment_events.emailed_at", "is", null))
     .orderBy("payment_events.id", "desc")
     .limit(200)
     .execute();
@@ -68,7 +94,7 @@ export default async function PaymentEventsPage({
 
       <div className="flex flex-wrap gap-2 text-sm">
         <Link
-          href="/admin/events"
+          href={href({ kind: null })}
           className={filter === null ? "font-bold" : "text-muted-foreground"}
         >
           전체
@@ -76,12 +102,24 @@ export default async function PaymentEventsPage({
         {Object.entries(PAYMENT_EVENT_LABELS).map(([key, label]) => (
           <Link
             key={key}
-            href={`/admin/events?kind=${key}`}
+            href={href({ kind: key })}
             className={filter === key ? "font-bold" : "text-muted-foreground"}
           >
             {label}
           </Link>
         ))}
+        <span className="text-muted-foreground">|</span>
+        <Link
+          href={href({ unsent: !unsent })}
+          className={unsent ? "font-bold" : "text-muted-foreground"}
+        >
+          메일 대기만
+        </Link>
+        {loginName ? (
+          <Link href={href({ user: null })} className="font-bold">
+            계정 {loginName} ✕
+          </Link>
+        ) : null}
       </div>
 
       <div className="overflow-x-auto border-2 border-border bg-card">
@@ -102,7 +140,16 @@ export default async function PaymentEventsPage({
                   {formatDate(event.created_at)}
                 </TableCell>
                 <TableCell className="font-medium">
-                  {event.login_name ?? "-"}
+                  {event.login_name ? (
+                    <Link
+                      href={href({ user: event.login_name })}
+                      className="underline"
+                    >
+                      {event.login_name}
+                    </Link>
+                  ) : (
+                    "-"
+                  )}
                 </TableCell>
                 <TableCell>
                   <Badge

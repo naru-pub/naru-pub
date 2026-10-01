@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { sql } from "kysely";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { db } from "@/lib/database";
 import { FEATURE_LABELS } from "@/lib/entitlements";
@@ -14,13 +16,49 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDate, formatKrw } from "../_components/format";
+import {
+  isPaymentFilter,
+  PAYMENT_FILTERS,
+  type PaymentFilterKey,
+} from "../_components/metrics";
 import { ReconcilePaymentButton } from "../_components/ReconcilePaymentButton";
 import { requireOperator } from "../_components/requireOperator";
 
 export const metadata: Metadata = { title: "결제 · 운영 · 나루" };
 
-export default async function PaymentOperatorPage() {
+export default async function PaymentOperatorPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string }>;
+}) {
   await requireOperator();
+  const { filter: filterParam } = await searchParams;
+  const filter = isPaymentFilter(filterParam) ? filterParam : null;
+  const now = new Date();
+  const condition = filter ? PAYMENT_FILTERS[filter].condition(now) : null;
+
+  // Counted over every payment, not only the rows listed below.
+  const counts = await db
+    .selectFrom("payments")
+    .select(
+      (Object.keys(PAYMENT_FILTERS) as PaymentFilterKey[]).map((key) =>
+        sql<number>`count(*) filter (where ${PAYMENT_FILTERS[key].condition(now)})::int`.as(
+          key,
+        ),
+      ),
+    )
+    .executeTakeFirstOrThrow();
+  const totals = await db
+    .selectFrom("payments")
+    .select([
+      sql<number>`count(*)::int`.as("count"),
+      sql<number>`coalesce(sum(payments.amount), 0)::int`.as("amount"),
+      sql<number>`coalesce(sum(payments.refunded_amount), 0)::int`.as(
+        "refunded",
+      ),
+    ])
+    .$if(condition !== null, (qb) => qb.where(condition!))
+    .executeTakeFirstOrThrow();
 
   const payments = await db
     .selectFrom("payments")
@@ -40,6 +78,7 @@ export default async function PaymentOperatorPage() {
       "users.login_name",
       "subscriptions.status as subscription_status",
     ])
+    .$if(condition !== null, (qb) => qb.where(condition!))
     .orderBy("payments.created_at", "desc")
     .limit(200)
     .execute();
@@ -50,31 +89,40 @@ export default async function PaymentOperatorPage() {
     payments.map((payment) => payment.user_id),
   );
 
-  const pending = payments.filter((payment) => payment.status === "pending");
-  const errors = payments.filter((payment) => payment.reconciliation_error);
-  const failed = payments.filter((payment) =>
-    ["failed", "aborted", "expired"].includes(payment.status),
-  );
-
   return (
     <div className="space-y-6">
-      <p className="text-sm text-muted-foreground">
-        최근 결제 200건과 Toss 대사 상태입니다.
-      </p>
+      <div className="flex flex-wrap gap-2 text-sm">
+        <Link
+          href="/admin/payments"
+          className={`border-2 px-3 py-1 ${filter === null ? "border-primary font-bold" : "border-border text-muted-foreground"}`}
+        >
+          전체
+        </Link>
+        {(Object.keys(PAYMENT_FILTERS) as PaymentFilterKey[]).map((key) => (
+          <Link
+            key={key}
+            href={`/admin/payments?filter=${key}`}
+            className={`border-2 px-3 py-1 ${filter === key ? "border-primary font-bold" : "border-border text-muted-foreground"}`}
+          >
+            {PAYMENT_FILTERS[key].label} {counts[key]}
+          </Link>
+        ))}
+      </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="border-2 border-border bg-card p-4">
-          <div className="text-sm text-muted-foreground">대기 중</div>
-          <div className="text-2xl font-bold">{pending.length}</div>
-        </div>
-        <div className="border-2 border-border bg-card p-4">
-          <div className="text-sm text-muted-foreground">대사 오류</div>
-          <div className="text-2xl font-bold">{errors.length}</div>
-        </div>
-        <div className="border-2 border-border bg-card p-4">
-          <div className="text-sm text-muted-foreground">실패/만료</div>
-          <div className="text-2xl font-bold">{failed.length}</div>
-        </div>
+      <div className="space-y-1">
+        <h2 className="text-xl font-bold">
+          {filter ? PAYMENT_FILTERS[filter].label : "전체 결제"}
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {filter
+            ? PAYMENT_FILTERS[filter].description
+            : "모든 결제 기록과 Toss 대사 상태입니다."}{" "}
+          {totals.count}건 · 결제 {formatKrw(totals.amount)} · 환불{" "}
+          {formatKrw(totals.refunded)}
+          {totals.count > payments.length
+            ? ` · 최근 ${payments.length}건만 표시`
+            : ""}
+        </p>
       </div>
 
       <div className="overflow-x-auto border-2 border-border bg-card">

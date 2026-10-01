@@ -80,7 +80,7 @@ const BATCH_SIZE = 100;
 // reaches the attempt counts a stuck key piles up.)
 const RETRY_AFTER = "1 hour";
 const MAX_RETRY_AFTER = "1 day";
-const STUCK_AFTER_ATTEMPTS = 5;
+export const STUCK_AFTER_ATTEMPTS = 5;
 
 // Toss answers a key it no longer has with a not-found error. That key is as
 // deleted as it will ever be.

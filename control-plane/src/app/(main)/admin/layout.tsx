@@ -22,8 +22,11 @@ export default async function AdminLayout({
   const sections = [
     { href: "/admin", label: "개요" },
     { href: "/admin/payments", label: "결제" },
+    { href: "/admin/subscriptions", label: "정기 결제" },
+    { href: "/admin/supporters", label: "유료 이용자" },
     { href: "/admin/events", label: "결제 이벤트" },
     { href: "/admin/webhooks", label: "웹훅" },
+    { href: "/admin/billing-keys", label: "빌링키 삭제" },
     // The lab charges and refunds for real, so it exists only with test keys.
     ...(isTossTestMode() ? [{ href: "/admin/lab", label: "결제 실험실" }] : []),
     { href: "/admin/board", label: "게시판" },

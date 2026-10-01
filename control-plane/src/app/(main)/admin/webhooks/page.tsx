@@ -11,6 +11,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDate } from "../_components/format";
+import {
+  isWebhookWindow,
+  WEBHOOK_WINDOWS,
+  webhookWindowStart,
+  type WebhookWindow,
+} from "../_components/metrics";
 import { requireOperator } from "../_components/requireOperator";
 
 export const metadata: Metadata = { title: "웹훅 · 운영 · 나루" };
@@ -27,15 +33,35 @@ function prettyPayload(payload: string | null) {
 export default async function WebhookDeliveriesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ failed?: string }>;
+  searchParams: Promise<{ failed?: string; since?: string }>;
 }) {
   await requireOperator();
-  const onlyFailed = (await searchParams).failed === "1";
+  const params = await searchParams;
+  const onlyFailed = params.failed === "1";
+  const since: WebhookWindow | null = isWebhookWindow(params.since)
+    ? params.since
+    : null;
+  const href = (changes: {
+    failed?: boolean;
+    since?: WebhookWindow | null;
+  }) => {
+    const next = new URLSearchParams();
+    const nextFailed = changes.failed ?? onlyFailed;
+    const nextSince = "since" in changes ? changes.since : since;
+    if (nextFailed) next.set("failed", "1");
+    if (nextSince) next.set("since", nextSince);
+    const query = next.toString();
+    return query ? `/admin/webhooks?${query}` : "/admin/webhooks";
+  };
 
+  const receivedAfter = since ? webhookWindowStart(since) : null;
   const deliveries = await db
     .selectFrom("toss_webhook_deliveries")
     .selectAll()
     .$if(onlyFailed, (qb) => qb.where("http_status", ">=", 500))
+    .$if(receivedAfter !== null, (qb) =>
+      qb.where("received_at", ">=", receivedAfter!),
+    )
     .orderBy("id", "desc")
     .limit(200)
     .execute();
@@ -55,15 +81,25 @@ export default async function WebhookDeliveriesPage({
         </a>
         에 있습니다.
       </p>
-      <div className="flex gap-3 text-sm">
+      <div className="flex flex-wrap gap-3 text-sm">
         <Link
-          href="/admin/webhooks"
-          className={onlyFailed ? "text-muted-foreground" : "font-bold"}
+          href={href({ since: null })}
+          className={since === null ? "font-bold" : "text-muted-foreground"}
         >
-          전체
+          전체 기간
         </Link>
+        {(Object.keys(WEBHOOK_WINDOWS) as WebhookWindow[]).map((key) => (
+          <Link
+            key={key}
+            href={href({ since: key })}
+            className={since === key ? "font-bold" : "text-muted-foreground"}
+          >
+            {WEBHOOK_WINDOWS[key].label}
+          </Link>
+        ))}
+        <span className="text-muted-foreground">|</span>
         <Link
-          href="/admin/webhooks?failed=1"
+          href={href({ failed: !onlyFailed })}
           className={onlyFailed ? "font-bold" : "text-muted-foreground"}
         >
           재시도 요청(5xx)만

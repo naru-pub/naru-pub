@@ -9,12 +9,17 @@ import {
 } from "@/lib/payment-events";
 import { isTossLiveMode, isTossTestMode } from "@/lib/toss";
 import { Badge } from "@/components/ui/badge";
+import { STUCK_AFTER_ATTEMPTS } from "@/lib/billing-keys";
 import { formatDate, formatKrw } from "./_components/format";
+import {
+  PAYMENT_FILTERS,
+  supporterCondition,
+  WEBHOOK_WINDOWS,
+  webhookWindowStart,
+} from "./_components/metrics";
 import { requireOperator } from "./_components/requireOperator";
 
 export const metadata: Metadata = { title: "운영 · 나루" };
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 function Stat({
   label,
@@ -47,10 +52,10 @@ function Stat({
 
 export default async function AdminOverviewPage() {
   await requireOperator();
-  const now = Date.now();
-  const weekAgo = new Date(now - 7 * DAY_MS);
-  const monthAgo = new Date(now - 30 * DAY_MS);
-  const dayAgo = new Date(now - DAY_MS);
+  const now = new Date();
+  const f = PAYMENT_FILTERS;
+  const dayAgo = webhookWindowStart("24h", now);
+  const weekAgo = webhookWindowStart("7d", now);
 
   const [
     payments,
@@ -62,26 +67,30 @@ export default async function AdminOverviewPage() {
     recentEvents,
     recentDeliveries,
   ] = await Promise.all([
+    // Each card counts with the condition its detail page lists with.
     db
       .selectFrom("payments")
       .select([
-        sql<number>`count(*) filter (where status = 'pending')::int`.as(
+        sql<number>`count(*) filter (where ${f.paid_30d.condition(now)})::int`.as(
+          "paid30",
+        ),
+        sql<number>`coalesce(sum(payments.amount) filter (where ${f.paid_30d.condition(now)}), 0)::int`.as(
+          "paid30Amount",
+        ),
+        sql<number>`count(*) filter (where ${f.refunded_30d.condition(now)})::int`.as(
+          "refunded30",
+        ),
+        sql<number>`coalesce(sum(payments.refunded_amount) filter (where ${f.refunded_30d.condition(now)}), 0)::int`.as(
+          "refunded30Amount",
+        ),
+        sql<number>`count(*) filter (where ${f.pending.condition(now)})::int`.as(
           "pending",
         ),
-        sql<number>`count(*) filter (where reconciliation_error is not null and status in ('pending', 'done'))::int`.as(
+        sql<number>`count(*) filter (where ${f.errors.condition(now)})::int`.as(
           "errors",
         ),
-        sql<number>`count(*) filter (where status in ('failed', 'aborted') and created_at >= ${weekAgo})::int`.as(
-          "failedWeek",
-        ),
-        sql<number>`count(*) filter (where status = 'done' and paid_at >= ${monthAgo})::int`.as(
-          "paidMonth",
-        ),
-        sql<number>`coalesce(sum(amount) filter (where status = 'done' and paid_at >= ${monthAgo}), 0)::int`.as(
-          "paidMonthAmount",
-        ),
-        sql<number>`coalesce(sum(refunded_amount) filter (where refunded_at >= ${monthAgo}), 0)::int`.as(
-          "refundedMonthAmount",
+        sql<number>`count(*) filter (where ${f.failed_7d.condition(now)})::int`.as(
+          "failed7",
         ),
       ])
       .executeTakeFirstOrThrow(),
@@ -93,7 +102,7 @@ export default async function AdminOverviewPage() {
     db
       .selectFrom("users")
       .select(
-        sql<number>`count(*) filter (where supporter_comp or supporter_until > now())::int`.as(
+        sql<number>`count(*) filter (where ${supporterCondition(now)})::int`.as(
           "count",
         ),
       )
@@ -113,7 +122,7 @@ export default async function AdminOverviewPage() {
     db
       .selectFrom("payment_events")
       .select([
-        sql<number>`count(*) filter (where emailed_at is null and created_at >= ${weekAgo})::int`.as(
+        sql<number>`count(*) filter (where emailed_at is null)::int`.as(
           "unsent",
         ),
         sql<Date | null>`max(emailed_at)`.as("lastEmailed"),
@@ -123,7 +132,9 @@ export default async function AdminOverviewPage() {
       .selectFrom("retired_billing_keys")
       .select([
         sql<number>`count(*)::int`.as("queued"),
-        sql<number>`count(*) filter (where attempts >= 5)::int`.as("stuck"),
+        sql<number>`count(*) filter (where attempts >= ${STUCK_AFTER_ATTEMPTS})::int`.as(
+          "stuck",
+        ),
       ])
       .executeTakeFirstOrThrow(),
     db
@@ -171,30 +182,36 @@ export default async function AdminOverviewPage() {
 
       <section className="space-y-2">
         <h2 className="font-semibold">결제</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Stat
-            label="최근 30일 결제"
-            value={formatKrw(payments.paidMonthAmount)}
-            detail={`${payments.paidMonth}건 · 환불 ${formatKrw(payments.refundedMonthAmount)}`}
-            href="/admin/payments"
+            label={f.paid_30d.label}
+            value={formatKrw(payments.paid30Amount)}
+            detail={`${payments.paid30}건`}
+            href="/admin/payments?filter=paid_30d"
           />
           <Stat
-            label="대기 중"
+            label={f.refunded_30d.label}
+            value={formatKrw(payments.refunded30Amount)}
+            detail={`${payments.refunded30}건`}
+            href="/admin/payments?filter=refunded_30d"
+          />
+          <Stat
+            label={f.pending.label}
             value={payments.pending}
             detail="5분마다 Toss와 대사"
-            href="/admin/payments"
+            href="/admin/payments?filter=pending"
           />
           <Stat
-            label="대사 오류"
+            label={f.errors.label}
             value={payments.errors}
-            href="/admin/payments"
+            href="/admin/payments?filter=errors"
             alert={payments.errors > 0}
           />
           <Stat
-            label="최근 7일 실패"
-            value={payments.failedWeek}
+            label={f.failed_7d.label}
+            value={payments.failed7}
             detail="거절·실패한 주문"
-            href="/admin/events?kind=charge_failed"
+            href="/admin/payments?filter=failed_7d"
           />
         </div>
       </section>
@@ -205,26 +222,30 @@ export default async function AdminOverviewPage() {
           <Stat
             label="유료 이용 중"
             value={supporters.count}
-            detail="무료 제공 포함"
-            href="/admin/payments"
+            detail="무료 제공·결제 유예 포함"
+            href="/admin/supporters"
           />
           <Stat
-            label="정기 결제"
+            label="정기 결제 활성"
             value={byStatus.get("active") ?? 0}
             detail={`예약 ${byStatus.get("scheduled") ?? 0} · 가입 중 ${byStatus.get("incomplete") ?? 0}`}
-            href="/admin/payments"
+            href="/admin/subscriptions?status=active"
           />
           <Stat
             label="연체(past_due)"
             value={byStatus.get("past_due") ?? 0}
-            href="/admin/events?kind=past_due"
+            href="/admin/subscriptions?status=past_due"
             alert={(byStatus.get("past_due") ?? 0) > 0}
           />
           <Stat
             label="빌링키 삭제 대기"
             value={keys.queued}
-            detail={keys.stuck ? `${keys.stuck}개는 5번 넘게 실패` : undefined}
-            href="/admin/events?kind=key_deletion_stuck"
+            detail={
+              keys.stuck
+                ? `${keys.stuck}개는 ${STUCK_AFTER_ATTEMPTS}번 넘게 실패`
+                : undefined
+            }
+            href="/admin/billing-keys"
             alert={keys.stuck > 0}
           />
         </div>
@@ -234,27 +255,27 @@ export default async function AdminOverviewPage() {
         <h2 className="font-semibold">웹훅과 알림</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Stat
-            label="최근 24시간 웹훅"
+            label={`${WEBHOOK_WINDOWS["24h"].label} 웹훅`}
             value={webhooks.day}
             detail={
               webhooks.last
                 ? `마지막 ${formatDate(webhooks.last)}`
                 : "받은 적 없음"
             }
-            href="/admin/webhooks"
+            href="/admin/webhooks?since=24h"
           />
           <Stat
-            label="최근 7일 재시도 요청"
+            label={`${WEBHOOK_WINDOWS["7d"].label} 재시도 요청`}
             value={webhooks.failedWeek}
             detail="5xx로 답한 웹훅"
-            href="/admin/webhooks?failed=1"
+            href="/admin/webhooks?since=7d&failed=1"
             alert={webhooks.failedWeek > 0}
           />
           <Stat
             label="메일 대기 중 이벤트"
             value={live ? events.unsent : "-"}
             detail={live ? "몇 분 안에 한 통으로 발송" : "운영 환경에서만 발송"}
-            href="/admin/events"
+            href="/admin/events?unsent=1"
           />
         </div>
       </section>
