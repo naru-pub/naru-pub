@@ -93,6 +93,16 @@ function secretKey(flow: TossPaymentFlow): string | undefined {
     : process.env.TOSS_PAYMENT_SECRET_KEY;
 }
 
+// True only when Toss keys are configured and every one is a live key
+// (live_…): the environment where real money moves, i.e. production.
+export function isTossLiveMode(): boolean {
+  const keys = [
+    process.env.TOSS_BILLING_SECRET_KEY,
+    process.env.TOSS_PAYMENT_SECRET_KEY,
+  ].filter((key): key is string => Boolean(key));
+  return keys.length > 0 && keys.every((key) => key.startsWith("live_"));
+}
+
 // True only when every configured Toss key is a test key (test_…), so nothing
 // done here can move real money. The billing lab exists only then.
 export function isTossTestMode(): boolean {
@@ -150,7 +160,7 @@ export function maskSecret(value: string): string {
 
 const MASKED_FIELDS = new Set(["billingKey", "secret", "authKey"]);
 
-function maskBody(value: unknown): unknown {
+export function maskBody(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(maskBody);
   if (value && typeof value === "object") {
     return Object.fromEntries(

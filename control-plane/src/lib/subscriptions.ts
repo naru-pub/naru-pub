@@ -1,6 +1,7 @@
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import type { Executor } from "@/lib/entitlements";
+import { kstDate, recordPaymentEvent, won } from "@/lib/payment-events";
 import {
   addInterval,
   addMonths,
@@ -162,6 +163,13 @@ export async function applyOneTimePayment(opts: {
       const retiredKey = switched
         ? await retireBillingKey(trx, { subscriptionId: switched.id })
         : null;
+      await recordPaymentEvent(trx, {
+        kind: "charge_succeeded",
+        userId: opts.userId,
+        paymentId: opts.paymentId,
+        subscriptionId: switched?.id,
+        summary: `한 번만 결제 ${won(opts.amount)} (${opts.years}년) · ${kstDate(periodEnd)}까지${switched ? " · 정기 결제는 한 번만 결제로 전환" : ""}`,
+      });
       return { periodStart, periodEnd, retiredKey };
     });
   await deleteRetiredBillingKey(retiredKey);
@@ -297,6 +305,19 @@ export async function applySuccessfulCharge(opts: {
       .set({ supporter_until: periodEnd })
       .where("id", "=", opts.userId)
       .execute();
+    await recordPaymentEvent(trx, {
+      kind: "charge_succeeded",
+      userId: opts.userId,
+      paymentId: opts.paymentId,
+      subscriptionId: opts.subscriptionId,
+      summary: `정기 결제 ${won(opts.amount)} (${opts.interval === "month" ? "월간" : "연간"}) · ${kstDate(periodEnd)}까지${
+        stopped
+          ? ` · 구독은 ${subscription.status} 그대로`
+          : renewable
+            ? ""
+            : " · 빌링키가 없어 자동 갱신은 하지 않음"
+      }`,
+    });
     return { periodStart, periodEnd };
   });
 }

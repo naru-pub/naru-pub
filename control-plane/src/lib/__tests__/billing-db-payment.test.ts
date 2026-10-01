@@ -24,6 +24,7 @@ jest.mock("@/lib/toss", () => {
 jest.mock("@/lib/email", () => ({
   sendSubscriptionPaymentGraceEmail: jest.fn(async () => {}),
   sendSupportThankYouEmail: jest.fn(async () => {}),
+  sendPaymentEventDigestEmail: jest.fn(async () => {}),
 }));
 
 // Required after the mocks: this transform does not hoist jest.mock above
@@ -51,6 +52,8 @@ const { syncPaymentRefunds } =
   require("@/lib/refund-sync") as typeof import("@/lib/refund-sync");
 const { runLabAction } =
   require("@/lib/billing-lab") as typeof import("@/lib/billing-lab");
+const { sendPaymentEventDigest } =
+  require("@/lib/payment-events") as typeof import("@/lib/payment-events");
 const { deleteRetiredBillingKeys, retireBillingKey } =
   require("@/lib/billing-keys") as typeof import("@/lib/billing-keys");
 const { deleteUserRow } =
@@ -174,7 +177,7 @@ async function supporterUntil(userId: number) {
 
 integration("payments against the database", () => {
   beforeEach(async () => {
-    await sql`truncate users, subscriptions, payments, retired_billing_keys restart identity cascade`.execute(
+    await sql`truncate users, subscriptions, payments, retired_billing_keys, payment_events, toss_webhook_deliveries restart identity cascade`.execute(
       db,
     );
     jest.clearAllMocks();
@@ -1650,6 +1653,205 @@ integration("payments against the database", () => {
         billing_key: null,
       });
       expect(result.after!.retiredKeys).toEqual([]);
+    });
+  });
+
+  describe("payment events", () => {
+    function events() {
+      return db
+        .selectFrom("payment_events")
+        .select(["kind", "summary", "emailed_at", "created_at"])
+        .orderBy("id")
+        .execute();
+    }
+
+    async function dueSubscription() {
+      const periodEnd = new Date(Date.now() - 60 * 1000);
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      return { userId, subId };
+    }
+
+    test("a renewal records one success", async () => {
+      await dueSubscription();
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+
+      await chargeDueSubscriptions();
+
+      expect(await events()).toEqual([
+        expect.objectContaining({
+          kind: "charge_succeeded",
+          summary: expect.stringContaining("정기 결제 1,000원 (월간)"),
+        }),
+      ]);
+    });
+
+    test("a decline that ends the retries records the failure and past_due", async () => {
+      const { subId } = await dueSubscription();
+      await db
+        .updateTable("subscriptions")
+        .set({ failed_charge_count: 3 })
+        .where("id", "=", subId)
+        .execute();
+      toss.chargeBillingKey.mockRejectedValue(
+        new toss.TossApiError("한도초과", 403, "REJECT_CARD_PAYMENT"),
+      );
+
+      await chargeDueSubscriptions();
+
+      expect((await events()).map((event) => event.kind)).toEqual([
+        "charge_failed",
+        "past_due",
+      ]);
+      expect((await events())[0].summary).toContain("(4/4회): 한도초과");
+    });
+
+    test("a refund is recorded once, however often it is reconciled", async () => {
+      const userId = await makeUser(new Date(Date.now() + 300 * DAY));
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:refund-event",
+        orderId: "refund-event",
+        amount: 12000,
+      });
+      await db
+        .updateTable("payments")
+        .set({
+          status: "done",
+          paid_at: new Date(),
+          period_start: new Date(),
+          period_end: new Date(Date.now() + 300 * DAY),
+        })
+        .where("id", "=", paymentId)
+        .execute();
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("refund-event", 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+
+      await reconcilePayment(paymentId);
+      await reconcilePayment(paymentId);
+
+      expect((await events()).map((event) => event.kind)).toEqual(["refunded"]);
+    });
+
+    test("BILLING_DELETED is stored as a delivery and recorded as an event", async () => {
+      process.env.TOSS_BILLING_SECRET_KEY = "test_sk_billing";
+      process.env.TOSS_PAYMENT_SECRET_KEY = "test_sk_payment";
+      const userId = await makeUser(new Date(Date.now() + 10 * DAY));
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "event-key-0001",
+      });
+
+      await runLabAction({ action: "billing-deleted", subscriptionId: subId });
+
+      expect((await events()).map((event) => event.kind)).toEqual([
+        "billing_key_deleted",
+      ]);
+      const [delivery] = await db
+        .selectFrom("toss_webhook_deliveries")
+        .selectAll()
+        .execute();
+      expect(delivery).toMatchObject({
+        event_type: "BILLING_DELETED",
+        subject: "even••••0001",
+        http_status: 200,
+        outcome: `canceled subscription ${subId}`,
+      });
+      expect(delivery.payload).not.toContain("event-key-0001");
+    });
+
+    describe("the operator digest", () => {
+      async function eventAt(secondsAgo: number, summary: string) {
+        await db
+          .insertInto("payment_events")
+          .values({
+            kind: "charge_succeeded",
+            summary,
+            created_at: new Date(Date.now() - secondsAgo * 1000),
+          })
+          .execute();
+      }
+
+      test("is not sent outside production", async () => {
+        await eventAt(600, "a");
+        expect(await sendPaymentEventDigest({ enabled: false })).toEqual({
+          state: "disabled",
+        });
+        expect(email.sendPaymentEventDigestEmail).not.toHaveBeenCalled();
+      });
+
+      test("waits while events are still arriving", async () => {
+        await eventAt(300, "first");
+        await eventAt(30, "second");
+
+        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+          state: "waiting",
+          pending: 2,
+        });
+        expect(email.sendPaymentEventDigestEmail).not.toHaveBeenCalled();
+      });
+
+      test("merges everything pending into one email, once", async () => {
+        await eventAt(400, "first");
+        await eventAt(300, "second");
+        await eventAt(200, "third");
+
+        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+          state: "sent",
+          events: 3,
+        });
+        expect(email.sendPaymentEventDigestEmail).toHaveBeenCalledTimes(1);
+        const [message] = email.sendPaymentEventDigestEmail.mock.calls[0];
+        expect(message.to).toBe("hello@naru.pub");
+        expect(message.subject).toBe("[나루 결제] 3건: 결제 완료 3");
+        expect(message.events.map((event) => event.summary)).toEqual([
+          "first",
+          "second",
+          "third",
+        ]);
+
+        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+          state: "idle",
+        });
+        expect(email.sendPaymentEventDigestEmail).toHaveBeenCalledTimes(1);
+      });
+
+      test("does not hold events back forever while they keep coming", async () => {
+        await eventAt(20 * 60, "long ago");
+        await eventAt(10, "just now");
+
+        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+          state: "sent",
+          events: 2,
+        });
+      });
+
+      test("a failed send keeps the events for the next run", async () => {
+        await eventAt(300, "kept");
+        email.sendPaymentEventDigestEmail.mockRejectedValueOnce(
+          new Error("resend down"),
+        );
+
+        await expect(sendPaymentEventDigest({ enabled: true })).rejects.toThrow(
+          "resend down",
+        );
+        expect((await events())[0].emailed_at).toBeNull();
+        expect(await sendPaymentEventDigest({ enabled: true })).toEqual({
+          state: "sent",
+          events: 1,
+        });
+      });
     });
   });
 });

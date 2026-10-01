@@ -14,6 +14,7 @@ import {
   retireUnusedSignupKey,
 } from "@/lib/subscriptions";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import { recordPaymentEvent, won } from "@/lib/payment-events";
 
 const UNCONFIRMED_EXPIRY_MS = 30 * 60 * 1000;
 
@@ -130,12 +131,21 @@ async function reconcilePaymentCore(
           UNCONFIRMED_EXPIRY_MS
       ) {
         const retiredKey = await db.transaction().execute(async (trx) => {
-          await trx
+          const expired = await trx
             .updateTable("payments")
             .set({ status: "expired" })
             .where("id", "=", payment.id)
             .where("status", "=", "pending")
-            .execute();
+            .executeTakeFirst();
+          if (Number(expired.numUpdatedRows ?? 0) > 0) {
+            await recordPaymentEvent(trx, {
+              kind: "order_expired",
+              userId: payment.user_id,
+              paymentId: payment.id,
+              subscriptionId: payment.subscription_id,
+              summary: `주문 ${payment.order_id} (${won(payment.amount)})이 Toss에 없어 만료 처리${initialAttempt ? " · 가입에 등록한 카드는 폐기" : ""}`,
+            });
+          }
           return initialAttempt
             ? retireUnusedSignupKey(trx, payment.subscription_id!)
             : null;
@@ -248,6 +258,24 @@ async function reconcilePaymentCore(
             .set({ supporter_until: recomputed })
             .where("id", "=", payment.user_id)
             .execute();
+        }
+
+        if (refundedAmount > payment.refunded_amount) {
+          await recordPaymentEvent(trx, {
+            kind: "refunded",
+            userId: payment.user_id,
+            paymentId: payment.id,
+            subscriptionId: payment.subscription_id,
+            summary: `환불 ${won(refundedAmount)} / ${won(payment.amount)} (주문 ${payment.order_id}) · 이용 기한은 ${recomputed ? recomputed.toISOString().slice(0, 10) : "없음"}으로 다시 계산${payment.subscription_id ? " · 정기 결제 취소" : ""}`,
+          });
+        } else if (status !== payment.status && refundedAmount === 0) {
+          await recordPaymentEvent(trx, {
+            kind: status === "expired" ? "order_expired" : "charge_failed",
+            userId: payment.user_id,
+            paymentId: payment.id,
+            subscriptionId: payment.subscription_id,
+            summary: `주문 ${payment.order_id} (${won(payment.amount)}): Toss 상태 ${tossPayment.status}`,
+          });
         }
 
         if (refundedAmount > 0 && payment.subscription_id) {

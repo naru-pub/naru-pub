@@ -10,6 +10,7 @@ import {
   PLAN_ORDER_NAMES,
   TossApiError,
 } from "@/lib/toss";
+import { notePaymentEvent, recordPaymentEvent, won } from "@/lib/payment-events";
 import {
   addPaymentGrace,
   applySuccessfulCharge,
@@ -231,7 +232,7 @@ async function markAttemptFailed(opts: {
 
     // A cancel, refund or one-time switch that landed mid-charge wins: its
     // status must not be overwritten back to active or past_due.
-    await trx
+    const updated = await trx
       .updateTable("subscriptions")
       .set({
         failed_charge_count: opts.failures,
@@ -240,7 +241,27 @@ async function markAttemptFailed(opts: {
       })
       .where("id", "=", opts.sub.id)
       .where("status", "in", ["active", "scheduled"])
-      .execute();
+      .executeTakeFirst();
+    const reason =
+      opts.error instanceof Error ? opts.error.message : String(opts.error);
+    await recordPaymentEvent(trx, {
+      kind: "charge_failed",
+      userId: opts.sub.user_id,
+      paymentId: opts.attempt.id,
+      subscriptionId: opts.sub.id,
+      summary: `갱신 결제 실패 ${won(opts.sub.amount)} (${opts.failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}회): ${reason}`,
+    });
+    if (
+      Number(updated.numUpdatedRows ?? 0) > 0 &&
+      opts.nextStatus === "past_due"
+    ) {
+      await recordPaymentEvent(trx, {
+        kind: "past_due",
+        userId: opts.sub.user_id,
+        subscriptionId: opts.sub.id,
+        summary: `재시도 한도나 유예 기간에 도달해 연체(past_due)로 전환`,
+      });
+    }
     await trx
       .updateTable("subscriptions")
       .set({ charging_started_at: null })
@@ -304,12 +325,20 @@ async function sendGraceNoticeIfNeeded(sub: DueSubscription, now: Date) {
 async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
   if (!sub.current_period_end) return;
   if (addPaymentGrace(new Date(sub.current_period_end)) > now) return;
-  await db
+  const updated = await db
     .updateTable("subscriptions")
     .set({ status: "past_due", updated_at: now })
     .where("id", "=", sub.id)
     .where("status", "in", ["active", "scheduled"])
-    .execute();
+    .executeTakeFirst();
+  if (Number(updated.numUpdatedRows ?? 0) > 0) {
+    await notePaymentEvent({
+      kind: "past_due",
+      userId: sub.user_id,
+      subscriptionId: sub.id,
+      summary: "유예 기간이 끝났는데 갱신 결제 결과가 아직 불분명해 연체(past_due)로 전환",
+    });
+  }
   console.error(
     `[charge-subscriptions] user ${sub.user_id}: grace period over with the charge still unresolved -> past_due`,
   );
@@ -421,6 +450,13 @@ async function chargeClaimedSubscriptions(due: DueSubscription[], now: Date) {
         // Toss may have completed the request. Preserve the attempt so the
         // next run reconciles the same order instead of charging a new one.
         await releaseLease(sub);
+        await notePaymentEvent({
+          kind: "charge_unresolved",
+          userId: sub.user_id,
+          paymentId: attempt.id,
+          subscriptionId: sub.id,
+          summary: `갱신 결제 ${won(sub.amount)} 결과 불분명, 같은 주문(${attempt.order_id})으로 다시 확인 예정: ${err instanceof Error ? err.message : String(err)}`,
+        });
         await markPastDueAfterGrace(sub, now);
         console.error(
           `[charge-subscriptions] user ${sub.user_id}: ambiguous charge result; will reconcile ${attempt.order_id}: ${err}`,

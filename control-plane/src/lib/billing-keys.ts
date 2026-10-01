@@ -1,7 +1,8 @@
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
-import { deleteBillingKey, TossApiError } from "@/lib/toss";
+import { notePaymentEvent } from "@/lib/payment-events";
+import { deleteBillingKey, maskSecret, TossApiError } from "@/lib/toss";
 
 // Every way a billing key leaves subscriptions.toss_billing_key goes through
 // retireBillingKey: a cancel, a refund, a one-time switch, a new card, an
@@ -147,6 +148,12 @@ async function deleteQueuedKey(
         .where("id", "=", row.id)
         .execute();
       const attempts = row.attempts + 1;
+      if (attempts === STUCK_AFTER_ATTEMPTS) {
+        await notePaymentEvent({
+          kind: "key_deletion_stuck",
+          summary: `빌링키 ${maskSecret(row.billing_key)} 삭제가 ${attempts}번 실패: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`,
+        });
+      }
       console.error(
         attempts >= STUCK_AFTER_ATTEMPTS
           ? `[delete-retired-billing-keys] key ${row.id}: STUCK, deletion failed ${attempts} times`

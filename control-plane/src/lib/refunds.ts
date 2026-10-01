@@ -1,6 +1,7 @@
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
+import { recordPaymentEvent } from "@/lib/payment-events";
 import { cancelPayment, paymentFlowForRecord, TossApiError } from "@/lib/toss";
 
 // 판매 정책의 환불 조건: 결제일로부터 7일 안에는 이유를 묻지 않고 전액 환불.
@@ -106,6 +107,14 @@ async function stopRecurringBilling(userId: number): Promise<boolean> {
         .where("status", "not in", ["canceled", "switched_to_one_time"])
         .returning("id")
         .executeTakeFirst();
+      if (stopped) {
+        await recordPaymentEvent(trx, {
+          kind: "subscription_canceled",
+          userId,
+          subscriptionId: stopped.id,
+          summary: "환불에 따라 정기 결제도 취소",
+        });
+      }
       return {
         stopped: stopped != null,
         billingKey: stopped

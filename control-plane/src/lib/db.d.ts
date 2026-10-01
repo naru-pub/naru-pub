@@ -181,6 +181,31 @@ export interface Subscriptions {
   updated_at: Generated<Timestamp>;
 }
 
+export interface PaymentEvents {
+  id: Generated<number>;
+  created_at: Generated<Timestamp>;
+  kind: string;
+  user_id: number | null;
+  payment_id: number | null;
+  subscription_id: number | null;
+  summary: string;
+  emailed_at: Timestamp | null;
+}
+
+export interface TossWebhookDeliveries {
+  id: Generated<number>;
+  received_at: Generated<Timestamp>;
+  event_type: string;
+  transmission_id: string | null;
+  retried_count: number | null;
+  subject: string | null;
+  toss_status: string | null;
+  outcome: string;
+  http_status: number;
+  duration_ms: number;
+  payload: string | null;
+}
+
 export interface RetiredBillingKeys {
   id: Generated<number>;
   billing_key: string;
@@ -451,12 +476,14 @@ export interface DB {
   pageview_daily_stats: PageviewDailyStats;
   pageviews: Pageviews;
   password_reset_tokens: PasswordResetTokens;
+  payment_events: PaymentEvents;
   payments: Payments;
   remote_actors: RemoteActors;
   retired_billing_keys: RetiredBillingKeys;
   sessions: Sessions;
   subscriptions: Subscriptions;
   supporter_feature_uses: SupporterFeatureUses;
+  toss_webhook_deliveries: TossWebhookDeliveries;
   user_keys: UserKeys;
   users: Users;
 }

@@ -21,6 +21,9 @@ const PAYMENT_RECONCILIATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const PAYMENT_RECONCILIATION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 const BILLING_KEY_DELETION_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const BILLING_KEY_DELETION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+// Every minute, so a digest goes out soon after events stop arriving.
+const PAYMENT_EVENT_DIGEST_INTERVAL = 60 * 1000; // 1 minute
+const PAYMENT_EVENT_DIGEST_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 // One Toss lookup per paid payment in the lookback window.
 const PAYMENT_REFUND_SYNC_TIMEOUT = 60 * 60 * 1000; // 60 minutes
 const EXPIRED_CUSTOM_DOMAIN_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
@@ -182,6 +185,13 @@ async function runBillingKeyDeletion() {
   );
 }
 
+async function runPaymentEventDigest() {
+  await runWithTimeout(
+    "send-payment-event-digest.ts",
+    PAYMENT_EVENT_DIGEST_TIMEOUT,
+  );
+}
+
 async function runPaymentRefundSync() {
   await runWithTimeout("sync-payment-refunds.ts", PAYMENT_REFUND_SYNC_TIMEOUT);
 }
@@ -258,6 +268,9 @@ async function main() {
   console.log("[cron] Scheduling billing key deletion every 5 minutes");
   setInterval(runBillingKeyDeletion, BILLING_KEY_DELETION_INTERVAL);
   setTimeout(runBillingKeyDeletion, 55 * 1000);
+
+  console.log("[cron] Scheduling payment event digest every minute");
+  setInterval(runPaymentEventDigest, PAYMENT_EVENT_DIGEST_INTERVAL);
 
   // Run expired GitHub deployment cleanup every 15 minutes
   console.log("[cron] Scheduling GitHub deployment cleanup every 15 minutes");

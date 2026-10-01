@@ -10,6 +10,12 @@ import {
 import { sendSupportThankYouEmail } from "@/lib/email";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import {
+  kstDate,
+  notePaymentEvent,
+  recordPaymentEvent,
+  won,
+} from "@/lib/payment-events";
+import {
   canStartRecurringPurchase,
   scheduledRecurringStart,
 } from "@/lib/support-purchases";
@@ -290,8 +296,11 @@ async function stillConfirmable(subscriptionId: number, billingKey: string) {
 
 // A first charge that failed for good ends this signup's use of its key.
 async function failFirstCharge(opts: {
+  userId: number;
   subscriptionId: number;
   paymentId: number;
+  amount: number;
+  reason: string;
   set: Updateable<DB["payments"]>;
 }) {
   const retired = await db.transaction().execute(async (trx) => {
@@ -301,6 +310,13 @@ async function failFirstCharge(opts: {
       .where("id", "=", opts.paymentId)
       .where("status", "=", "pending")
       .execute();
+    await recordPaymentEvent(trx, {
+      kind: "charge_failed",
+      userId: opts.userId,
+      paymentId: opts.paymentId,
+      subscriptionId: opts.subscriptionId,
+      summary: `정기 결제 첫 결제 실패 ${won(opts.amount)}: ${opts.reason} · 등록한 카드는 폐기`,
+    });
     return retireUnusedSignupKey(trx, opts.subscriptionId, {
       ownsLease: true,
     });
@@ -457,6 +473,12 @@ async function confirmClaimedSubscription(opts: {
     if (!(await scheduleSubscriptionStart(sub.id, scheduledStart, now))) {
       return fail(409, SIGNUP_CHANGED_MESSAGE);
     }
+    await notePaymentEvent({
+      kind: "subscription_scheduled",
+      userId,
+      subscriptionId: sub.id,
+      summary: `정기 결제 ${won(sub.amount)} (${interval === "month" ? "월간" : "연간"}) 등록, 남은 기간 뒤 ${kstDate(scheduledStart)}에 첫 결제`,
+    });
     return {
       ok: true,
       scheduled: true,
@@ -504,14 +526,24 @@ async function confirmClaimedSubscription(opts: {
     // Keep the attempt pending, and the key with it, so the next callback or
     // the reconciler settles this orderId.
     if (!isDefinitiveTossFailure(err)) {
+      await notePaymentEvent({
+        kind: "charge_unresolved",
+        userId,
+        paymentId: attempt.id,
+        subscriptionId: sub.id,
+        summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): ${err instanceof Error ? err.message : String(err)}`,
+      });
       return fail(
         503,
         "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
       );
     }
     await failFirstCharge({
+      userId,
       subscriptionId: sub.id,
       paymentId: attempt.id,
+      amount: sub.amount,
+      reason: `${err.code ?? err.status} ${err.message}`,
       set: { raw: JSON.stringify({ error: err.message }) },
     });
     return fail(402, err.message);
@@ -519,8 +551,11 @@ async function confirmClaimedSubscription(opts: {
 
   if (payment.status !== "DONE") {
     await failFirstCharge({
+      userId,
       subscriptionId: sub.id,
       paymentId: attempt.id,
+      amount: sub.amount,
+      reason: `Toss 상태 ${payment.status}`,
       set: {
         ...paymentProviderMetadata(payment, "billing"),
         toss_payment_key: payment.paymentKey,

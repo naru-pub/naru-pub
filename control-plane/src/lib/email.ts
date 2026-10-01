@@ -386,3 +386,83 @@ export async function sendSupportThankYouEmail(opts: {
   }
   return receipt;
 }
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// Payment and billing events for the operators, several to a message
+// (lib/payment-events.ts decides what goes together).
+export async function sendPaymentEventDigestEmail(opts: {
+  to: string;
+  subject: string;
+  events: Array<{
+    createdAt: Date;
+    loginName: string | null;
+    kind: string;
+    summary: string;
+  }>;
+}) {
+  const adminUrl = `${process.env.BASE_URL}/admin`;
+  const rows = opts.events.map((event) => ({
+    when: formatKoreanDateTime(event.createdAt),
+    who: event.loginName ?? "(삭제된 계정)",
+    kind: event.kind,
+    summary: event.summary,
+  }));
+
+  const message = createMessage({
+    from: process.env.FROM_EMAIL || "noreply@naru.pub",
+    to: opts.to,
+    subject: opts.subject,
+    content: {
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 760px; margin: 0 auto;">
+          <h2>${escapeHtml(opts.subject)}</h2>
+          <table style="border-collapse: collapse; width: 100%; font-size: 14px;">
+            <tr style="text-align: left; border-bottom: 1px solid #ccc;">
+              <th style="padding: 4px 8px;">시각</th>
+              <th style="padding: 4px 8px;">계정</th>
+              <th style="padding: 4px 8px;">이벤트</th>
+              <th style="padding: 4px 8px;">내용</th>
+            </tr>
+            ${rows
+              .map(
+                (row) => `
+            <tr style="border-bottom: 1px solid #eee; vertical-align: top;">
+              <td style="padding: 4px 8px; white-space: nowrap;">${escapeHtml(row.when)}</td>
+              <td style="padding: 4px 8px;">${escapeHtml(row.who)}</td>
+              <td style="padding: 4px 8px; white-space: nowrap;">${escapeHtml(row.kind)}</td>
+              <td style="padding: 4px 8px;">${escapeHtml(row.summary)}</td>
+            </tr>`,
+              )
+              .join("")}
+          </table>
+          <p><a href="${adminUrl}">결제 운영 페이지에서 보기</a></p>
+        </div>
+      `,
+      text: [
+        opts.subject,
+        "",
+        ...rows.map(
+          (row) => `${row.when}  ${row.who}  [${row.kind}]  ${row.summary}`,
+        ),
+        "",
+        adminUrl,
+      ].join("\n"),
+    },
+    tags: ["billing", "operator-digest"],
+  });
+
+  const receipt = await transport.send(message);
+  if (!receipt.successful) {
+    throw new Error(
+      `Failed to send payment event digest: ${receipt.errorMessages?.join(", ")}`,
+    );
+  }
+  return receipt;
+}

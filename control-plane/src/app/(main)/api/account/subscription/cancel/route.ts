@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import { recordPaymentEvent } from "@/lib/payment-events";
 
 // Cancels auto-renewal. Access (supporter_until) is left intact so the user
 // keeps the feature through the already-paid period; the renewal cron skips
@@ -47,6 +48,14 @@ export async function POST(_request: NextRequest) {
         })
         .where("id", "=", sub.id)
         .execute();
+      await recordPaymentEvent(trx, {
+        kind: "subscription_canceled",
+        userId: user.id,
+        subscriptionId: sub.id,
+        summary: cancelingSchedule
+          ? "사용자가 예약된 정기 결제를 취소"
+          : `사용자가 정기 결제를 취소 (${sub.status}에서), 결제한 기간은 유지`,
+      });
       return retireBillingKey(trx, { subscriptionId: sub.id });
     });
     await deleteRetiredBillingKey(billingKey);

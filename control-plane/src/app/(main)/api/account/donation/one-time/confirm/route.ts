@@ -11,6 +11,7 @@ import {
   TossApiError,
 } from "@/lib/toss";
 import { applyOneTimePayment } from "@/lib/subscriptions";
+import { notePaymentEvent, won } from "@/lib/payment-events";
 
 // One-time donation step 2: confirms the payment with Toss and grants the
 // purchased years of supporter access. Entitlement is derived from the
@@ -86,6 +87,12 @@ export async function POST(request: NextRequest) {
     } catch (err) {
       // A transport failure may follow a successful approval. Keep the order
       // pending and retry safely with the same idempotency key.
+      await notePaymentEvent({
+        kind: isDefinitiveTossFailure(err) ? "charge_failed" : "charge_unresolved",
+        userId: user.id,
+        paymentId: pendingPayment.id,
+        summary: `한 번만 결제 ${won(pendingPayment.amount)} 승인 ${isDefinitiveTossFailure(err) ? "실패" : "결과 불분명"}: ${err instanceof TossApiError ? `${err.code ?? err.status} ${err.message}` : String(err)}`,
+      });
       if (isDefinitiveTossFailure(err)) {
         await db
           .updateTable("payments")
@@ -125,6 +132,12 @@ export async function POST(request: NextRequest) {
         .where("id", "=", pendingPayment.id)
         .where("status", "=", "pending")
         .execute();
+      await notePaymentEvent({
+        kind: "charge_failed",
+        userId: user.id,
+        paymentId: pendingPayment.id,
+        summary: `한 번만 결제 ${won(pendingPayment.amount)}: Toss 상태 ${payment.status}, 금액 ${payment.totalAmount}`,
+      });
       return NextResponse.json(
         { success: false, message: "결제가 올바르게 완료되지 않았습니다." },
         { status: 402 },

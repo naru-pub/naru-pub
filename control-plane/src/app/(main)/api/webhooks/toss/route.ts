@@ -10,6 +10,11 @@ import {
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { retireBillingKey } from "@/lib/billing-keys";
 import {
+  notePaymentEvent,
+  recordPaymentEvent,
+  recordWebhookDelivery,
+} from "@/lib/payment-events";
+import {
   formatWebhookLog,
   isTrustedWebhookSource,
   parseTossWebhook,
@@ -29,7 +34,8 @@ function eventTypeOf(body: unknown): string {
 
 // General Toss payment webhooks are not signed. Treat the payload only as a
 // notification and retrieve the authoritative payment before changing state.
-// Every delivery is logged as one line saying what it was and what 나루 did.
+// Every delivery is logged as one line saying what it was and what 나루 did,
+// and stored (toss_webhook_deliveries) for /admin.
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
   const delivery: Delivery = {
@@ -42,15 +48,18 @@ export async function POST(request: NextRequest) {
     tossStatus: null,
     outcome: "",
   };
-  const respond = (httpStatus: number, outcome: string) => {
+  let payload: unknown = undefined;
+  const respond = async (httpStatus: number, outcome: string) => {
     delivery.outcome = outcome;
-    const line = formatWebhookLog({
+    const entry = {
       ...delivery,
       httpStatus,
       durationMs: Date.now() - startedAt,
-    });
+    };
+    const line = formatWebhookLog(entry);
     if (httpStatus >= 500) console.error(line);
     else console.log(line);
+    await recordWebhookDelivery({ ...entry, payload });
     return NextResponse.json(
       { received: httpStatus < 500 },
       { status: httpStatus },
@@ -63,8 +72,10 @@ export async function POST(request: NextRequest) {
     body = JSON.parse(rawBody || "null");
   } catch {
     // Malformed payloads are not worth a retry.
+    payload = rawBody.slice(0, 2000);
     return respond(200, "ignored: malformed JSON");
   }
+  payload = body;
   delivery.eventType = eventTypeOf(body);
 
   try {
@@ -80,7 +91,7 @@ export async function POST(request: NextRequest) {
       const canceledId = await db.transaction().execute(async (trx) => {
         const subscription = await trx
           .selectFrom("subscriptions")
-          .select(["id", "canceled_at"])
+          .select(["id", "canceled_at", "user_id"])
           .where("toss_billing_key", "=", event.billingKey)
           .forUpdate()
           .executeTakeFirst();
@@ -102,6 +113,12 @@ export async function POST(request: NextRequest) {
             { subscriptionId: subscription.id },
             { deletedAtToss: true },
           );
+          await recordPaymentEvent(trx, {
+            kind: "billing_key_deleted",
+            userId: subscription.user_id,
+            subscriptionId: subscription.id,
+            summary: `Toss에서 빌링키가 삭제됨 (BILLING_DELETED) → 정기 결제 취소`,
+          });
         }
         // Toss already deleted this key, so it has nothing left to retire,
         // including a copy queued before this event arrived.
@@ -129,7 +146,15 @@ export async function POST(request: NextRequest) {
 
     const ledger = await db
       .selectFrom("payments")
-      .select(["id", "amount", "attempt_key", "toss_flow", "toss_mid"])
+      .select([
+        "id",
+        "amount",
+        "attempt_key",
+        "toss_flow",
+        "toss_mid",
+        "user_id",
+        "subscription_id",
+      ])
       .where("order_id", "=", orderId)
       .executeTakeFirst();
     if (!ledger) return respond(200, "ignored: unknown order");
@@ -183,6 +208,15 @@ export async function POST(request: NextRequest) {
         .where("id", "=", ledger.id)
         .where("status", "=", "pending")
         .executeTakeFirst();
+      if (Number(failed.numUpdatedRows ?? 0) > 0) {
+        await notePaymentEvent({
+          kind: action.status === "expired" ? "order_expired" : "charge_failed",
+          userId: ledger.user_id,
+          paymentId: ledger.id,
+          subscriptionId: ledger.subscription_id,
+          summary: `주문 ${orderId} (${ledger.amount.toLocaleString("ko-KR")}원): 웹훅으로 Toss 상태 ${payment.status} 확인`,
+        });
+      }
       return respond(
         200,
         Number(failed.numUpdatedRows ?? 0) > 0
