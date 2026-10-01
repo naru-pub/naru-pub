@@ -1019,9 +1019,11 @@ integration("payments against the database", () => {
 
       expect(await reconcilePayment(paymentId)).toEqual({ state: "done" });
 
+      // Not the order id: the callback's first confirm used that key, and
+      // Toss would only replay its answer.
       expect(toss.confirmPayment).toHaveBeenCalledWith(
         { paymentKey: `pk-${orderId}`, orderId, amount: 12000 },
-        orderId,
+        expect.stringMatching(new RegExp(`^${orderId}:.+`)),
       );
       expect(await status(paymentId)).toBe("done");
       expect((await supporterUntil(userId))! > new Date()).toBe(true);
@@ -1127,6 +1129,50 @@ integration("payments against the database", () => {
       const lastCharge = toss.chargeBillingKey.mock.calls.at(-1)![0];
       expect(lastCharge.orderId).toBe(second.order_id);
       expect(lastCharge.idempotencyKey).toBe(second.order_id);
+    });
+
+    // Toss was down: the charge ended ambiguously and the reconciler could not
+    // look the order up, so it outlived the expiry window still pending. Once
+    // Toss is back, the cron charges it while the reconciler, finding no such
+    // order yet, would expire it.
+    test("an order being charged is not expired under the charge", async () => {
+      const { userId, subId, periodEnd } = await dueSubscription();
+      toss.chargeBillingKey.mockRejectedValueOnce(
+        new toss.TossApiError("server error", 500),
+      );
+      await chargeDueSubscriptions();
+      const [first] = await attempts(subId);
+      const paymentId = (
+        await db
+          .selectFrom("payments")
+          .select("id")
+          .where("order_id", "=", first.order_id)
+          .executeTakeFirstOrThrow()
+      ).id;
+      await db
+        .updateTable("payments")
+        .set({ created_at: new Date(Date.now() - DAY) })
+        .where("id", "=", paymentId)
+        .execute();
+
+      let reconciledMidCharge: unknown;
+      toss.chargeBillingKey.mockImplementation(async (params) => {
+        reconciledMidCharge = await reconcilePayment(paymentId);
+        return tossPayment(params.orderId, params.amount);
+      });
+
+      await chargeDueSubscriptions();
+
+      expect(reconciledMidCharge).toEqual({ state: "pending" });
+      const all = await attempts(subId);
+      expect(all).toHaveLength(1);
+      expect(all[0]).toMatchObject({ order_id: first.order_id, status: "done" });
+      expect((await supporterUntil(userId))! > periodEnd).toBe(true);
+
+      // Nothing is left for a later run to charge again.
+      toss.chargeBillingKey.mockClear();
+      await chargeDueSubscriptions();
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
     });
 
     test("a pending order is retried with the same order and key", async () => {
@@ -1781,12 +1827,29 @@ integration("payments against the database", () => {
       expect((await subscription(subId)).toss_billing_key).toBeNull();
     });
 
-    test("a signup still confirming keeps its key", async () => {
+    test("a signup still confirming keeps its key and its order", async () => {
       const { subId, paymentId } = await abandoned(new Date());
 
-      await reconcilePayment(paymentId);
+      // The confirm holding the lease may be charging this very order, which
+      // Toss has not recorded yet.
+      expect(await reconcilePayment(paymentId)).toEqual({ state: "pending" });
 
       expect((await subscription(subId)).toss_billing_key).toBe("signup-key");
+    });
+
+    test("the lease's own holder can expire an order Toss never saw", async () => {
+      const lease = new Date();
+      const { paymentId } = await abandoned(lease);
+
+      expect(
+        await reconcilePayment(paymentId, { leaseHeldAt: lease }),
+      ).toEqual({ state: "expired" });
+    });
+
+    test("an abandoned lease does not keep an order from expiring", async () => {
+      const { paymentId } = await abandoned(new Date(Date.now() - DAY));
+
+      expect(await reconcilePayment(paymentId)).toEqual({ state: "expired" });
     });
   });
 

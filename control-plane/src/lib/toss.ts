@@ -77,11 +77,14 @@ export class TossApiError extends Error {
 
 // 4xx answers that say nothing about the card: a temporary fault at Toss
 // (PROVIDER_ERROR: "잠시 후 다시 시도"), a request for this order already in
-// flight or already approved, or 나루's own keys being wrong. Counting one of
-// these as a decline would fail a payment Toss may have approved, or count a
-// misconfigured key against every subscriber's card.
+// flight or already approved, or 나루's own keys or requests being wrong — a
+// billing charge's customerKey that is not the one the key was issued for, a
+// malformed body. Counting one of these as a decline would fail a payment Toss
+// may have approved, or count a bug of 나루's against every subscriber's card.
 // https://docs.tosspayments.com/reference/error-codes
 const NOT_A_DECLINE_CODES = new Set([
+  "INVALID_REQUEST",
+  "NOT_MATCHES_CUSTOMER_KEY",
   "PROVIDER_ERROR",
   "ALREADY_PROCESSING_REQUEST",
   "ALREADY_PROCESSED_PAYMENT",

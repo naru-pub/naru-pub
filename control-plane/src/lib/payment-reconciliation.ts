@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { sendChargeReceipt } from "@/lib/charge-receipts";
 import { db } from "@/lib/database";
 import { sendSupportThankYouEmail } from "@/lib/email";
@@ -12,9 +13,11 @@ import {
   TossApiError,
   TossPaymentResult,
 } from "@/lib/toss";
+import type { Executor } from "@/lib/entitlements";
 import {
   applyOneTimePayment,
   applySuccessfulCharge,
+  CHARGE_LEASE_MINUTES,
   retireUnusedSignupKey,
 } from "@/lib/subscriptions";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
@@ -112,8 +115,48 @@ export type ReconciliationResult =
     }
   | { state: "expired" };
 
+// A charge holds its subscription's lease from before it picks the order to
+// charge until Toss has answered, and Toss knows nothing of the order until
+// then. An order that is not at Toss while the lease is held may be the one
+// being charged right now: expiring it would let that charge land on a row
+// nothing grants or looks at again, and the next try would charge a new order
+// — the card twice. The subscription row is locked, after the payment's (the
+// order applySuccessfulCharge takes them in), so a claim committed after the
+// lookup is seen here, and one still to come waits for this expiry and then
+// finds the order expired. A caller holding the lease itself (leaseHeldAt) is
+// not charging anything while it reconciles.
+async function chargeInFlight(
+  trx: Executor,
+  paymentId: string,
+  subscriptionId: string,
+  leaseHeldAt: Date | null,
+): Promise<boolean> {
+  await trx
+    .selectFrom("payments")
+    .select("id")
+    .where("id", "=", paymentId)
+    .forUpdate()
+    .execute();
+  const row = await trx
+    .selectFrom("subscriptions")
+    .select("charging_started_at")
+    .where("id", "=", subscriptionId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!row?.charging_started_at) return false;
+  const leasedAt = new Date(row.charging_started_at).getTime();
+  if (leaseHeldAt && leasedAt === leaseHeldAt.getTime()) return false;
+  return leasedAt > Date.now() - CHARGE_LEASE_MINUTES * 60 * 1000;
+}
+
+export type ReconcileOptions = {
+  // The charge lease the caller holds on the payment's subscription, if any.
+  leaseHeldAt?: Date | null;
+};
+
 async function reconcilePaymentCore(
   paymentId: string,
+  opts: ReconcileOptions,
 ): Promise<ReconciliationResult> {
   const payment = await db
     .selectFrom("payments")
@@ -145,7 +188,18 @@ async function reconcilePaymentCore(
         Date.now() - new Date(payment.created_at).getTime() >
           UNCONFIRMED_EXPIRY_MS
       ) {
-        const retiredKey = await db.transaction().execute(async (trx) => {
+        const outcome = await db.transaction().execute(async (trx) => {
+          if (
+            payment.subscription_id &&
+            (await chargeInFlight(
+              trx,
+              payment.id,
+              payment.subscription_id,
+              opts.leaseHeldAt ?? null,
+            ))
+          ) {
+            return { inFlight: true as const, retiredKey: null };
+          }
           const expired = await trx
             .updateTable("payments")
             .set({ status: "expired" })
@@ -161,11 +215,15 @@ async function reconcilePaymentCore(
               summary: `주문 ${payment.order_id} (${won(payment.amount)})이 Toss에 없어 만료 처리${initialAttempt ? " · 가입에 등록한 카드는 폐기" : ""}`,
             });
           }
-          return initialAttempt
-            ? retireUnusedSignupKey(trx, payment.subscription_id!)
-            : null;
+          return {
+            inFlight: false as const,
+            retiredKey: initialAttempt
+              ? await retireUnusedSignupKey(trx, payment.subscription_id!)
+              : null,
+          };
         });
-        await deleteRetiredBillingKey(retiredKey);
+        if (outcome.inFlight) return { state: "pending" };
+        await deleteRetiredBillingKey(outcome.retiredKey);
         return { state: "expired" };
       }
       return { state: "pending" };
@@ -417,10 +475,16 @@ async function reconcilePaymentCore(
 // A one-time payment the buyer authenticated but nobody confirmed: they
 // closed the tab before the callback ran, or its confirm failed in a way that
 // left the payment open. Toss expires it 10 minutes after authentication, so
-// the reconciler confirms it itself, for the amount recorded at prepare —
-// under the order's own idempotency key, the one the callback uses, so the two
-// can never both approve it. Anything but an approval leaves the payment as
-// Toss reported it, to be settled when Toss moves it on.
+// the reconciler confirms it itself, for the amount recorded at prepare.
+//
+// Under a key of its own, not the order id the callback's first confirm used:
+// Toss keys idempotency on the key, the secret key, the URL and the method, so
+// that key would only replay the callback's answer — an error, or the payment
+// would not still be IN_PROGRESS — until the 10 minutes ran out. A new key
+// cannot approve the payment twice: Toss refuses a second approval
+// (ALREADY_PROCESSED_PAYMENT), and one still running (ALREADY_PROCESSING_
+// REQUEST). Anything but an approval leaves the payment as Toss reported it,
+// to be settled when Toss moves it on.
 async function confirmAuthenticatedPayment(
   payment: { id: string; order_id: string; amount: number },
   inProgress: TossPaymentResult,
@@ -432,7 +496,7 @@ async function confirmAuthenticatedPayment(
         orderId: payment.order_id,
         amount: payment.amount,
       },
-      payment.order_id,
+      `${payment.order_id}:${randomUUID()}`,
     );
     if (
       confirmed.orderId === payment.order_id &&
@@ -474,9 +538,10 @@ async function sendOneTimeThankYou(
 
 export async function reconcilePayment(
   paymentId: string,
+  opts: ReconcileOptions = {},
 ): Promise<ReconciliationResult> {
   try {
-    const result = await reconcilePaymentCore(paymentId);
+    const result = await reconcilePaymentCore(paymentId, opts);
     await db
       .updateTable("payments")
       .set({ last_reconciled_at: new Date(), reconciliation_error: null })

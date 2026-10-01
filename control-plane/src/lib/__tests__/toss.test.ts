@@ -235,6 +235,8 @@ describe("Toss payment requests", () => {
     [400, "ALREADY_PROCESSED_PAYMENT", false],
     [403, "FORBIDDEN_REQUEST", false],
     [401, "UNAUTHORIZED_KEY", false],
+    [400, "INVALID_REQUEST", false],
+    [400, "NOT_MATCHES_CUSTOMER_KEY", false],
     [429, "TOO_MANY_REQUESTS", false],
   ])("classifies HTTP %i %s", (status, code, definitive) => {
     expect(

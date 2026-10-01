@@ -84,8 +84,13 @@ const STALE_REGISTRATION_MESSAGE =
 // Settles the subscription's orders whose outcome is still unknown. A new card
 // must not start while one of them might yet turn out charged: the pending
 // order's id and idempotency key belong to the old card and amount, and a late
-// success has to land on the subscription first.
-async function settlePendingCharges(subscriptionId: string): Promise<boolean> {
+// success has to land on the subscription first. A caller holding the
+// subscription's charge lease passes it, so its own lease does not keep an
+// order Toss never saw from expiring.
+async function settlePendingCharges(
+  subscriptionId: string,
+  leaseHeldAt: Date | null = null,
+): Promise<boolean> {
   const pending = await db
     .selectFrom("payments")
     .select("id")
@@ -94,7 +99,7 @@ async function settlePendingCharges(subscriptionId: string): Promise<boolean> {
     .execute();
   for (const payment of pending) {
     try {
-      await reconcilePayment(payment.id);
+      await reconcilePayment(payment.id, { leaseHeldAt });
     } catch (error) {
       console.error(
         `Subscription prepare: reconciling payment ${payment.id} failed`,
@@ -800,7 +805,7 @@ async function swapClaimedCard(opts: {
 }): Promise<ConfirmOutcome> {
   const { subscriptionId, leasedAt, registrationId, authKey, customerKey } =
     opts;
-  if (!(await settlePendingCharges(subscriptionId))) {
+  if (!(await settlePendingCharges(subscriptionId, leasedAt))) {
     return fail(409, PREVIOUS_CHARGE_PENDING_MESSAGE);
   }
 
