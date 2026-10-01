@@ -1,10 +1,14 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/database";
-import { deleteRetiredBillingKeys } from "@/lib/billing-keys";
+import { chargeableKey, deleteRetiredBillingKeys } from "@/lib/billing-keys";
 import { reconcilePayment } from "@/lib/payment-reconciliation";
 import { refundPayment } from "@/lib/refunds";
 import { chargeDueSubscriptions } from "@/lib/subscription-renewals";
-import { PAYMENT_GRACE_DAYS } from "@/lib/subscriptions";
+import {
+  isCurrentPlan,
+  PAYMENT_GRACE_DAYS,
+  plansOf,
+} from "@/lib/subscriptions";
 import {
   deleteBillingKey,
   isTossTestMode,
@@ -69,14 +73,6 @@ export type LabResult = {
 
 export class LabError extends Error {}
 
-function withoutKey<T extends { toss_billing_key: string | null }>(
-  row: T,
-): Omit<T, "toss_billing_key"> {
-  const rest: Partial<T> = { ...row };
-  delete rest.toss_billing_key;
-  return rest as Omit<T, "toss_billing_key">;
-}
-
 function plain(row: Record<string, unknown>): Row {
   return Object.fromEntries(
     Object.entries(row).map(([key, value]) => [
@@ -96,14 +92,14 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
     .select(["id", "login_name", "supporter_comp", "supporter_until"])
     .where("id", "=", userId)
     .executeTakeFirst();
-  const subscription = await db
-    .selectFrom("subscriptions")
+  const subscription = await plansOf(db, userId)
+    .leftJoin("billing_keys", "billing_keys.id", "subscriptions.billing_key_id")
     .select([
-      "id",
-      "status",
+      "subscriptions.id",
+      "subscriptions.status",
       "billing_interval",
       "amount",
-      "toss_billing_key",
+      "billing_keys.key_hint as billing_key",
       "current_period_start",
       "current_period_end",
       "next_billing_at",
@@ -112,7 +108,6 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
       "renewal_notice_sent_at",
       "payment_grace_notice_sent_at",
     ])
-    .where("user_id", "=", userId)
     .executeTakeFirst();
   const payments = await db
     .selectFrom("payments")
@@ -134,26 +129,24 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
     .orderBy("id", "desc")
     .limit(12)
     .execute();
-  // The queue is not tied to a user; in a test environment it is short.
   const retiredKeys = await db
-    .selectFrom("retired_billing_keys")
-    .select(["id", "billing_key", "attempts", "last_error"])
+    .selectFrom("billing_keys")
+    .select([
+      "id",
+      "key_hint as billing_key",
+      "status",
+      "delete_attempts as attempts",
+      "delete_last_error as last_error",
+    ])
+    .where("user_id", "=", userId)
+    .where("status", "=", "retired")
     .orderBy("id", "desc")
     .limit(10)
     .execute();
 
   return {
     user: user ? plain(user) : null,
-    subscription: subscription
-      ? plain({
-          ...withoutKey(subscription),
-          // Shown masked, under a name of its own: this is a display, not a
-          // write to the column (billing-key-writes-payment.test.ts).
-          billing_key: subscription.toss_billing_key
-            ? maskSecret(subscription.toss_billing_key)
-            : null,
-        })
-      : null,
+    subscription: subscription ? plain(subscription) : null,
     payments: payments.map((payment) =>
       plain({
         ...payment,
@@ -162,16 +155,14 @@ export async function labSnapshot(userId: string): Promise<LabSnapshot> {
           : null,
       }),
     ),
-    retiredKeys: retiredKeys.map((row) =>
-      plain({ ...row, billing_key: maskSecret(row.billing_key) }),
-    ),
+    retiredKeys: retiredKeys.map((row) => plain(row)),
   };
 }
 
 async function subscriptionOwner(subscriptionId: string) {
   const row = await db
     .selectFrom("subscriptions")
-    .select(["user_id", "status", "toss_billing_key", "current_period_end"])
+    .select(["user_id", "status", "billing_key_id", "current_period_end"])
     .where("id", "=", subscriptionId)
     .executeTakeFirst();
   if (!row) throw new LabError("구독을 찾을 수 없습니다.");
@@ -230,7 +221,7 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
           `${sub.status} 구독은 갱신 대상이 아닙니다 (active 또는 scheduled만).`,
         );
       }
-      if (!sub.toss_billing_key) {
+      if (!sub.billing_key_id) {
         throw new LabError("빌링키가 없는 구독입니다.");
       }
       run = async () => {
@@ -320,7 +311,8 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
     case "billing-deleted": {
       const sub = await subscriptionOwner(input.subscriptionId);
       userId = sub.user_id;
-      const billingKey = sub.toss_billing_key;
+      const billingKey = (await chargeableKey(db, input.subscriptionId))
+        ?.billingKey;
       if (!billingKey) throw new LabError("빌링키가 없는 구독입니다.");
       run = async () => {
         // As when the card is removed outside 나루: the key is deleted at
@@ -385,7 +377,9 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
 export async function labAccounts() {
   const rows = await db
     .selectFrom("users")
-    .leftJoin("subscriptions", "subscriptions.user_id", "users.id")
+    .leftJoin("subscriptions", (join) =>
+      join.onRef("subscriptions.user_id", "=", "users.id").on(isCurrentPlan),
+    )
     .select([
       "users.id as userId",
       "users.login_name as loginName",

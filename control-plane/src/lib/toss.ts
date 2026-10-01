@@ -367,6 +367,9 @@ async function sendTossRequest<T>(
 export type TossBillingKeyResult = {
   billingKey: string;
   customerKey: string;
+  // The card, masked by Toss (e.g. "43301234****123*").
+  cardCompany?: string | null;
+  cardNumber?: string | null;
 };
 
 // Exchanges the authKey from requestBillingAuth for a reusable billing key.

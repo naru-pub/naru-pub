@@ -1,8 +1,13 @@
 import { withAccountLock } from "@/lib/account-lock";
-import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
+import {
+  deleteRetiredBillingKey,
+  retireBillingKey,
+  retireUserBillingKeys,
+} from "@/lib/billing-keys";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import { recordPaymentEvent } from "@/lib/payment-events";
+import { plansOf } from "@/lib/subscriptions";
 import {
   reconcilePayment,
   settleOneTimeOrders,
@@ -57,10 +62,8 @@ export async function settleChargesBeforeDeletion(
       if (!(await settleOneTimeOrders(userId))) return false;
 
       const retiredKey = await db.transaction().execute(async (trx) => {
-        const subscription = await trx
-          .selectFrom("subscriptions")
+        const subscription = await plansOf(trx, userId)
           .select(["id", "status"])
-          .where("user_id", "=", userId)
           .forUpdate()
           .executeTakeFirst();
         if (!subscription) return null;
@@ -105,7 +108,7 @@ export async function settleChargesBeforeDeletion(
 export async function deleteUserRow(
   trx: Executor,
   userId: string,
-): Promise<string | null> {
+): Promise<string[]> {
   await trx
     .selectFrom("payments")
     .select("id")
@@ -124,7 +127,7 @@ export async function deleteUserRow(
     .where("user_id", "=", userId)
     .forUpdate()
     .execute();
-  const billingKey = await retireBillingKey(trx, { userId });
+  const retired = await retireUserBillingKeys(trx, userId);
   await trx.deleteFrom("users").where("id", "=", userId).execute();
-  return billingKey;
+  return retired;
 }

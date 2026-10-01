@@ -8,7 +8,8 @@ import {
   TossApiError,
   tossSecretKeys,
 } from "@/lib/toss";
-import { retireBillingKey } from "@/lib/billing-keys";
+import { markDeletedAtToss, retireBillingKey } from "@/lib/billing-keys";
+import { hashBillingKey } from "@/lib/billing-key-crypto";
 import { withAccountLock } from "@/lib/account-lock";
 import { lookupOrder } from "@/lib/toss-gateway";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
@@ -107,17 +108,18 @@ export async function POST(request: NextRequest) {
       }
       // Under the owner's account lock (lib/account-lock): no charge or card
       // change on that plan runs while it is canceled.
-      const holder = await db
-        .selectFrom("subscriptions")
-        .select("user_id")
-        .where("toss_billing_key", "=", event.billingKey)
+      const key = await db
+        .selectFrom("billing_keys")
+        .select(["id", "user_id"])
+        .where("key_hash", "=", hashBillingKey(event.billingKey))
         .executeTakeFirst();
       const cancelPlan = () =>
         db.transaction().execute(async (trx) => {
+          if (!key) return null;
           const subscription = await trx
             .selectFrom("subscriptions")
             .select(["id", "status", "canceled_at", "user_id"])
-            .where("toss_billing_key", "=", event.billingKey)
+            .where("billing_key_id", "=", key.id)
             .forUpdate()
             .executeTakeFirst();
 
@@ -146,11 +148,8 @@ export async function POST(request: NextRequest) {
             });
           }
           // Toss already deleted this key, so it has nothing left to retire,
-          // including a copy queued before this event arrived.
-          await trx
-            .deleteFrom("retired_billing_keys")
-            .where("billing_key", "=", event.billingKey)
-            .execute();
+          // including a key retired before this event arrived.
+          await markDeletedAtToss(trx, key.id);
           // A plan already stopped had its cancel mailed then.
           const newlyStopped =
             subscription &&
@@ -171,8 +170,8 @@ export async function POST(request: NextRequest) {
               : null,
           };
         });
-      const canceled = holder
-        ? await withAccountLock(holder.user_id, { waitMs: 5000 }, cancelPlan)
+      const canceled = key?.user_id
+        ? await withAccountLock(key.user_id, { waitMs: 5000 }, cancelPlan)
         : await cancelPlan();
       await runJobs([canceled?.noticeJob ?? null]);
 

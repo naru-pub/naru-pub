@@ -1,5 +1,5 @@
+import { sql } from "kysely";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
-import { randomUUID } from "crypto";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import type { Executor } from "@/lib/entitlements";
@@ -39,6 +39,24 @@ const SWITCHABLE_SUBSCRIPTION_STATUSES = [
   "scheduled",
   "past_due",
 ];
+
+// An account's plans, newest first. The newest is its current plan: a new
+// one is only started after the live one (at most one, by a unique index)
+// has ended.
+export function plansOf(executor: Executor, userId: string) {
+  return executor
+    .selectFrom("subscriptions")
+    .where("subscriptions.user_id", "=", userId)
+    .orderBy("subscriptions.id", "desc");
+}
+
+// A join condition that keeps, of the subscriptions joined to users, only
+// each account's current plan — for a query that lists accounts.
+export const isCurrentPlan = sql<boolean>`subscriptions.id = (
+  select current_plan.id from subscriptions current_plan
+  where current_plan.user_id = users.id
+  order by current_plan.id desc limit 1
+)`;
 
 export function addPaymentGrace(until: Date): Date {
   const graceEndsAt = new Date(until);
@@ -212,19 +230,24 @@ export async function applyOneTimePayment(opts: {
       // boundary that now belongs to the prepaid period. Only a plan that
       // existed when the payment was approved: an old one-time order granted
       // late (recoverOrphanedCharge) must not end a plan started since.
-      const switched = await trx
-        .updateTable("subscriptions")
-        .set({
-          status: "switched_to_one_time",
-          next_billing_at: null,
-          canceled_at: now,
-          updated_at: now,
-        })
-        .where("user_id", "=", opts.userId)
-        .where("status", "in", SWITCHABLE_SUBSCRIPTION_STATUSES)
-        .where("plan_started_at", "<=", paidAt)
-        .returning("id")
+      const currentPlan = await plansOf(trx, opts.userId)
+        .select("id")
         .executeTakeFirst();
+      const switched = currentPlan
+        ? await trx
+            .updateTable("subscriptions")
+            .set({
+              status: "switched_to_one_time",
+              next_billing_at: null,
+              canceled_at: now,
+              updated_at: now,
+            })
+            .where("id", "=", currentPlan.id)
+            .where("status", "in", SWITCHABLE_SUBSCRIPTION_STATUSES)
+            .where("created_at", "<=", paidAt)
+            .returning("id")
+            .executeTakeFirst()
+        : undefined;
       const retiredKey = switched
         ? await retireBillingKey(trx, { subscriptionId: switched.id })
         : null;
@@ -316,7 +339,7 @@ export async function applySuccessfulCharge(opts: {
         .executeTakeFirstOrThrow();
       const subscription = await trx
         .selectFrom("subscriptions")
-        .select(["status", "toss_billing_key"])
+        .select(["status", "billing_key_id"])
         .where("id", "=", opts.subscriptionId)
         .forUpdate()
         .executeTakeFirstOrThrow();
@@ -365,15 +388,14 @@ export async function applySuccessfulCharge(opts: {
           .execute();
       }
 
-      // Without a billing key there is nothing to renew with: a late renewal
-      // reconciled after the supporter began registering a new card lands on
-      // an incomplete subscription whose old key is gone. Marking that active
-      // would make the new card's confirm report "already subscribed" and never
-      // store the new key, so the status is left for the confirm to settle.
+      // Without a billing key there is nothing to renew with: a signup whose
+      // first charge was declined, then approved after all, has given its key
+      // up. It gets its period, but is not marked active with nothing to
+      // charge.
       const stopped = STOPPED_SUBSCRIPTION_STATUSES.includes(
         subscription.status,
       );
-      const renewable = !stopped && subscription.toss_billing_key != null;
+      const renewable = !stopped && subscription.billing_key_id != null;
       await trx
         .updateTable("subscriptions")
         .set({
@@ -452,11 +474,13 @@ export async function scheduleSubscriptionStart(
   return Number(result.numUpdatedRows ?? 0) > 0;
 }
 
-// A subscription still incomplete holds a key only for the signup under way.
-// Once that signup's first charge has failed for good, the key has nothing
-// left to charge and is retired, rather than kept in plain text until the
-// supporter happens to start over. Callers hold the account lock, so no
-// confirm of that signup is running meanwhile.
+// A plan still incomplete holds a key only for the signup under way. Once
+// that signup's first charge has failed for good, the key has nothing left to
+// charge and is retired, rather than kept until the supporter happens to start
+// over. The plan stays incomplete, keyless: its registration is spent — a
+// reopened callback finds it so and asks to start over — and the next signup
+// ends it. Callers hold the account lock, so no confirm of that signup is
+// running meanwhile.
 export async function retireUnusedSignupKey(
   trx: Executor,
   subscriptionId: string,
@@ -468,18 +492,5 @@ export async function retireUnusedSignupKey(
     .forUpdate()
     .executeTakeFirst();
   if (!row || row.status !== "incomplete") return null;
-  const retired = await retireBillingKey(trx, { subscriptionId });
-  // The signup is over: its callback, reopened, would get the same key back
-  // from Toss — the issue call's idempotency key comes from the authKey and
-  // replays for 15 days — and store and charge a card just retired. A new
-  // registration id makes that callback stale; the supporter starts over with
-  // a fresh prepare, as a failed first charge already asks them to.
-  if (retired) {
-    await trx
-      .updateTable("subscriptions")
-      .set({ card_registration_id: randomUUID() })
-      .where("id", "=", subscriptionId)
-      .execute();
-  }
-  return retired;
+  return retireBillingKey(trx, { subscriptionId });
 }

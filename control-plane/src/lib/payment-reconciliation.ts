@@ -357,7 +357,7 @@ async function reconcilePaymentCore(
               })
               .where("user_id", "=", payment.user_id)
               .where("status", "not in", ["canceled", "switched_to_one_time"])
-              .where("plan_started_at", "<=", refundedBy)
+              .where("created_at", "<=", refundedBy)
               .returning("id")
               .executeTakeFirst();
           }

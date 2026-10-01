@@ -30,6 +30,24 @@ export interface Activities {
   user_id: string;
 }
 
+export interface BillingKeys {
+  card_company: string | null;
+  card_number: string | null;
+  created_at: Generated<Timestamp>;
+  customer_key: string;
+  delete_attempts: Generated<number>;
+  delete_last_attempted_at: Timestamp | null;
+  delete_last_error: string | null;
+  deleted_at: Timestamp | null;
+  id: Generated<string>;
+  key_ciphertext: string | null;
+  key_hash: string;
+  key_hint: string;
+  retired_at: Timestamp | null;
+  status: ColumnType<"active" | "retired" | "deleted", "active" | "retired" | "deleted" | undefined>;
+  user_id: string | null;
+}
+
 export interface BoardNotifications {
   created_at: Generated<Timestamp>;
   id: Generated<string>;
@@ -118,6 +136,17 @@ export interface BoardTemplateVersions {
   source_path: string;
   template_id: string;
   version: number;
+}
+
+export interface CardRegistrations {
+  billing_interval: "month" | "year" | null;
+  billing_key_id: string | null;
+  completed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  kind: "signup" | "card_change";
+  subscription_id: string | null;
+  user_id: string;
 }
 
 export interface CustomDomains {
@@ -309,15 +338,6 @@ export interface RemoteActors {
   shared_inbox_iri: string | null;
 }
 
-export interface RetiredBillingKeys {
-  attempts: Generated<number>;
-  billing_key: string;
-  id: Generated<string>;
-  last_attempted_at: Timestamp | null;
-  last_error: string | null;
-  retired_at: Generated<Timestamp>;
-}
-
 export interface Sessions {
   expires_at: Timestamp;
   id: string;
@@ -393,10 +413,8 @@ export interface SiteDataRateLimits {
 export interface Subscriptions {
   amount: number;
   billing_interval: string;
+  billing_key_id: string | null;
   canceled_at: Timestamp | null;
-  card_registration_id: string | null;
-  card_registration_interval: "month" | "year" | null;
-  card_registration_kind: "signup" | "card_change" | null;
   created_at: Generated<Timestamp>;
   current_period_end: Timestamp | null;
   current_period_start: Timestamp | null;
@@ -405,11 +423,8 @@ export interface Subscriptions {
   next_billing_at: Timestamp | null;
   payment_grace_notice_sent_at: Timestamp | null;
   plan: Generated<string>;
-  plan_started_at: Generated<Timestamp>;
   renewal_notice_sent_at: Timestamp | null;
   status: string;
-  toss_billing_key: string | null;
-  toss_customer_key: string;
   updated_at: Generated<Timestamp>;
   user_id: string;
 }
@@ -475,6 +490,7 @@ export interface Users {
 export interface DB {
   account_deletion_tokens: AccountDeletionTokens;
   activities: Activities;
+  billing_keys: BillingKeys;
   board_notifications: BoardNotifications;
   board_post_likes: BoardPostLikes;
   board_posts: BoardPosts;
@@ -484,6 +500,7 @@ export interface DB {
   board_template_files: BoardTemplateFiles;
   board_template_versions: BoardTemplateVersions;
   board_templates: BoardTemplates;
+  card_registrations: CardRegistrations;
   custom_domains: CustomDomains;
   edit_daily_stats: EditDailyStats;
   email_verification_tokens: EmailVerificationTokens;
@@ -499,7 +516,6 @@ export interface DB {
   payment_jobs: PaymentJobs;
   payments: Payments;
   remote_actors: RemoteActors;
-  retired_billing_keys: RetiredBillingKeys;
   sessions: Sessions;
   site_data_access_tokens: SiteDataAccessTokens;
   site_data_auth_codes: SiteDataAuthCodes;

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/lib/database";
-import { addPaymentGrace } from "@/lib/subscriptions";
+import { addPaymentGrace, isCurrentPlan } from "@/lib/subscriptions";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -26,7 +26,9 @@ export default async function SupportersPage() {
 
   const supporters = await db
     .selectFrom("users")
-    .leftJoin("subscriptions", "subscriptions.user_id", "users.id")
+    .leftJoin("subscriptions", (join) =>
+      join.onRef("subscriptions.user_id", "=", "users.id").on(isCurrentPlan),
+    )
     .select([
       "users.id",
       "users.login_name",

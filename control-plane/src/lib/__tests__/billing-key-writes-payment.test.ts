@@ -2,15 +2,14 @@ import { describe, expect, test } from "@jest/globals";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join, relative } from "path";
 
-// Billing keys stay chargeable as long as their card and are stored in plain
-// text, so a key
-// that leaves subscriptions.toss_billing_key must be queued for deletion at
-// Toss first (lib/billing-keys.ts, retireBillingKey). Deleting a user cascades
-// to the subscription and takes the key with it, so that goes through
-// lib/account-deletion.ts. Nothing in the database enforces either; these
-// checks keep a new code path from quietly dropping a key.
+// Billing keys stay chargeable as long as their card, so a key that leaves
+// its plan (subscriptions.billing_key_id) must be retired for deletion at
+// Toss (lib/billing-keys.ts, retireBillingKey), and the billing_keys rows are
+// written only there. Deleting a user goes through lib/account-deletion.ts,
+// which retires the account's keys first. Nothing in the database enforces
+// these; the checks keep a new code path from quietly dropping a key.
 const SRC = join(__dirname, "..", "..");
-const STORES_KEY = /toss_billing_key\s*:\s*(?!null\b|string\b)[A-Za-z_$]/;
+const STORES_KEY = /billing_key_id\s*:\s*(?!null\b|string\b)[A-Za-z_$]/;
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -32,17 +31,26 @@ function offenders(pattern: RegExp, allowed: string[]): string[] {
 }
 
 describe("billing keys are only dropped through retireBillingKey", () => {
-  test("nothing else clears or replaces toss_billing_key", () => {
+  test("nothing else clears billing_key_id", () => {
     expect(
-      offenders(/toss_billing_key\s*(:\s*null|=\s*null)/i, [
+      offenders(/billing_key_id\s*(:\s*null|=\s*null)/i, [
         "lib/billing-keys.ts",
       ]),
     ).toEqual([]);
   });
 
-  // Setting a key is allowed only where a subscription has none — the
-  // subscribe confirm stores the key Toss just issued — or right after
-  // retiring the old one, as a card change does.
+  test("nothing else writes billing_keys", () => {
+    expect(
+      offenders(
+        /(insertInto|updateTable|deleteFrom)\(\s*["']billing_keys["']\s*\)/,
+        ["lib/billing-keys.ts"],
+      ),
+    ).toEqual([]);
+  });
+
+  // Giving a plan a key is allowed only as it starts — the subscribe confirm
+  // creates it with the key Toss just issued — or right after retiring the
+  // old one, as a card change does.
   test("only confirm stores a new key", () => {
     expect(
       offenders(STORES_KEY, [
@@ -62,9 +70,12 @@ describe("billing keys are only dropped through retireBillingKey", () => {
 
   test("the checks see the code they guard", () => {
     // A wrong path or pattern would make the tests above pass vacuously.
-    expect(offenders(/toss_billing_key\s*:\s*null/, []).length).toBeGreaterThan(
+    expect(offenders(/billing_key_id\s*:\s*null/, []).length).toBeGreaterThan(
       0,
     );
+    expect(offenders(/insertInto\(\s*["']billing_keys["']\s*\)/, [])).toEqual([
+      "lib/billing-keys.ts",
+    ]);
     expect(offenders(STORES_KEY, [])).toEqual(["lib/subscription-signup.ts"]);
     expect(offenders(/deleteFrom\(\s*["']users["']\s*\)/, [])).toEqual([
       "lib/account-deletion.ts",

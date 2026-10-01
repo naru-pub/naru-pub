@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { db } from "@/lib/database";
 import { STUCK_AFTER_ATTEMPTS } from "@/lib/billing-keys";
-import { maskSecret } from "@/lib/toss";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -20,17 +19,18 @@ export default async function RetiredBillingKeysPage() {
   await requireOperator();
 
   const keys = await db
-    .selectFrom("retired_billing_keys")
+    .selectFrom("billing_keys")
     .select([
       "id",
-      "billing_key",
+      "key_hint",
       "retired_at",
-      "attempts",
-      "last_attempted_at",
-      "last_error",
+      "delete_attempts as attempts",
+      "delete_last_attempted_at as last_attempted_at",
+      "delete_last_error as last_error",
     ])
-    .orderBy("attempts", "desc")
-    .orderBy("id", "asc")
+    .where("status", "=", "retired")
+    .orderBy("delete_attempts", "desc")
+    .orderBy("retired_at", "asc")
     .execute();
 
   return (
@@ -40,7 +40,8 @@ export default async function RetiredBillingKeysPage() {
         <p className="text-sm text-muted-foreground">
           더 쓰지 않게 됐지만 Toss에서 아직 지우지 못한 빌링키입니다. 5분마다
           다시 시도하고, 실패하면 한 시간부터 두 배씩(최대 하루) 간격을
-          늘립니다. Toss가 삭제를 확인하면 행이 사라집니다. {keys.length}개.
+          늘립니다. Toss가 삭제를 확인하면 암호화된 키를 지우고 목록에서
+          빠집니다. {keys.length}개.
         </p>
       </div>
 
@@ -59,7 +60,7 @@ export default async function RetiredBillingKeysPage() {
             {keys.map((key) => (
               <TableRow key={key.id}>
                 <TableCell className="font-mono text-xs">
-                  {maskSecret(key.billing_key)}
+                  {key.key_hint}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {formatDate(key.retired_at)}

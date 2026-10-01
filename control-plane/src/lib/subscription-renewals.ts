@@ -13,6 +13,7 @@ import {
   TossPaymentResult,
 } from "@/lib/toss";
 import { chargeOrder } from "@/lib/toss-gateway";
+import { decryptBillingKey } from "@/lib/billing-key-crypto";
 import {
   notePaymentEvent,
   recordPaymentEvent,
@@ -42,8 +43,9 @@ type DueSubscription = {
   status: string;
   billing_interval: string;
   amount: number;
-  toss_billing_key: string;
-  toss_customer_key: string;
+  // The plan's key, encrypted (lib/billing-key-crypto), and its customerKey.
+  key_ciphertext: string;
+  customer_key: string;
   current_period_end: Date | string | null;
   payment_grace_notice_sent_at: Date | string | null;
   failed_charge_count: number;
@@ -97,14 +99,14 @@ function dueSubscriptions(
       s.status,
       s.billing_interval,
       s.amount,
-      s.toss_billing_key,
-      s.toss_customer_key,
+      k.key_ciphertext,
+      k.customer_key,
       s.current_period_end,
       s.payment_grace_notice_sent_at,
       s.failed_charge_count
     FROM subscriptions s
+    JOIN billing_keys k ON k.id = s.billing_key_id AND k.status = 'active'
     WHERE s.status IN ('active', 'scheduled')
-      AND s.toss_billing_key IS NOT NULL
       AND s.next_billing_at <= ${opts.dueBy}
       -- A lifetime comp is never charged, whatever plan it still has.
       AND NOT EXISTS (
@@ -421,8 +423,8 @@ async function chargeAttempt(
     };
   }
   const outcome = await chargeOrder({
-    billingKey: sub.toss_billing_key,
-    customerKey: sub.toss_customer_key,
+    billingKey: decryptBillingKey(sub.key_ciphertext),
+    customerKey: sub.customer_key,
     amount: sub.amount,
     orderId: attempt.order_id,
     orderName: PLAN_ORDER_NAMES[sub.billing_interval as BillingInterval],

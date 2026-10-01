@@ -10,7 +10,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // A signup abandoned with its card registered — the supporter left after the
 // key was stored, or the confirm process died before its first charge — keeps
-// a chargeable key in plain text, and nothing else retires it until the
+// a chargeable key, and nothing else retires it until the
 // supporter starts over. After a day with nothing pending it is retired; a
 // later signup registers a card again anyway. Run by the key-deletion job.
 export async function retireAbandonedSignupKeys(
@@ -20,7 +20,7 @@ export async function retireAbandonedSignupKeys(
     .selectFrom("subscriptions as s")
     .select(["s.id", "s.user_id"])
     .where("s.status", "=", "incomplete")
-    .where("s.toss_billing_key", "is not", null)
+    .where("s.billing_key_id", "is not", null)
     .where("s.updated_at", "<", new Date(now.getTime() - DAY_MS))
     .where(({ not, exists, selectFrom }) =>
       not(
@@ -81,7 +81,7 @@ export async function checkPaymentInvariants(
         .selectFrom("subscriptions")
         .select("id")
         .where("status", "in", ["canceled", "switched_to_one_time"])
-        .where("toss_billing_key", "is not", null),
+        .where("billing_key_id", "is not", null),
     ),
   );
   note(
@@ -91,7 +91,7 @@ export async function checkPaymentInvariants(
         .selectFrom("subscriptions")
         .select("id")
         .where("status", "in", ["active", "scheduled"])
-        .where("toss_billing_key", "is", null),
+        .where("billing_key_id", "is", null),
     ),
   );
   note(
@@ -135,12 +135,32 @@ export async function checkPaymentInvariants(
     ),
   );
   note(
-    "삭제 대기열의 빌링키를 정기 결제가 쓰고 있음",
+    "폐기되거나 삭제된 빌링키를 정기 결제가 쓰고 있음",
     await ids(
       db
-        .selectFrom("retired_billing_keys as r")
-        .innerJoin("subscriptions as s", "s.toss_billing_key", "r.billing_key")
+        .selectFrom("billing_keys as k")
+        .innerJoin("subscriptions as s", "s.billing_key_id", "k.id")
+        .where("k.status", "!=", "active")
         .select("s.id"),
+    ),
+  );
+  note(
+    "아무 정기 결제도 쓰지 않는 활성 빌링키",
+    await ids(
+      db
+        .selectFrom("billing_keys as k")
+        .select("k.id")
+        .where("k.status", "=", "active")
+        .where("k.created_at", "<", new Date(now.getTime() - DAY_MS))
+        .where(({ not, exists, selectFrom }) =>
+          not(
+            exists(
+              selectFrom("subscriptions as s")
+                .select("s.id")
+                .whereRef("s.billing_key_id", "=", "k.id"),
+            ),
+          ),
+        ),
     ),
   );
   note("이용 기한이 결제 원장보다 짧음", await shortenedAccounts());

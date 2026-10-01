@@ -4,6 +4,7 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey, retireBillingKey } from "@/lib/billing-keys";
 import { enqueueJob, runJobs } from "@/lib/payment-jobs";
+import { plansOf } from "@/lib/subscriptions";
 import { recordPaymentEvent } from "@/lib/payment-events";
 import { AccountBusyError, withAccountLock } from "@/lib/account-lock";
 
@@ -32,44 +33,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const sub = await db
-      .selectFrom("subscriptions")
-      .select(["id", "status"])
-      .where("user_id", "=", user.id)
-      .executeTakeFirst();
-
-    if (!sub) {
-      return NextResponse.json(
-        { success: false, message: "결제 정보가 없습니다." },
-        { status: 404 },
-      );
-    }
-    if (["canceled", "switched_to_one_time"].includes(sub.status)) {
-      return NextResponse.json({
-        success: true,
-        message: "활성화된 정기 결제가 없습니다.",
-      });
-    }
-
     // Under the account lock (lib/account-lock), so no renewal is charging
-    // the plan meanwhile; the status is read again under the row lock: a
-    // scheduled plan that was just charged is active now, and ending it is a
-    // cancel, not the withdrawal of a schedule that never charged.
+    // the plan meanwhile, and the plan is looked up only once it is held: a
+    // signup confirming meanwhile may be starting the very plan this click
+    // means to cancel, and a scheduled plan that was just charged is active
+    // now — ending it is a cancel, not the withdrawal of a schedule that
+    // never charged.
     let result;
     try {
       result = await withAccountLock(user.id, { waitMs: 10_000 }, () =>
         db.transaction().execute(async (trx) => {
-          const current = await trx
-            .selectFrom("subscriptions")
-            .select("status")
-            .where("id", "=", sub.id)
+          const current = await plansOf(trx, user.id)
+            .select(["id", "status"])
             .forUpdate()
-            .executeTakeFirstOrThrow();
+            .executeTakeFirst();
+          if (!current) return { found: false as const };
           // Not again: a second click, or a refund that stopped the plan
           // meanwhile, already did this and mailed about it.
           if (["canceled", "switched_to_one_time"].includes(current.status)) {
-            return undefined;
+            return { found: true as const, stopped: null };
           }
+          const sub = current;
           const cancelingSchedule = current.status === "scheduled";
           await trx
             .updateTable("subscriptions")
@@ -90,18 +74,23 @@ export async function POST(request: NextRequest) {
               : `사용자가 정기 결제를 취소 (${current.status}에서), 결제한 기간은 유지`,
           });
           return {
-            cancelingSchedule,
-            wasPastDue: current.status === "past_due",
-            billingKey: await retireBillingKey(trx, { subscriptionId: sub.id }),
-            noticeJob: await enqueueJob(
-              trx,
-              {
-                kind: "subscription_canceled",
+            found: true as const,
+            stopped: {
+              cancelingSchedule,
+              wasPastDue: current.status === "past_due",
+              billingKey: await retireBillingKey(trx, {
                 subscriptionId: sub.id,
-                reason: cancelingSchedule ? "user_schedule" : "user",
-              },
-              { dedupeKey: `subscription_canceled:${sub.id}` },
-            ),
+              }),
+              noticeJob: await enqueueJob(
+                trx,
+                {
+                  kind: "subscription_canceled",
+                  subscriptionId: sub.id,
+                  reason: cancelingSchedule ? "user_schedule" : "user",
+                },
+                { dedupeKey: `subscription_canceled:${sub.id}` },
+              ),
+            },
           };
         }),
       );
@@ -117,13 +106,22 @@ export async function POST(request: NextRequest) {
       }
       throw error;
     }
-    const wasPastDue = result?.wasPastDue ?? false;
-    const cancelingSchedule = result?.cancelingSchedule ?? false;
-    const billingKey = result === undefined ? undefined : result.billingKey;
-    if (billingKey !== undefined) {
-      await deleteRetiredBillingKey(billingKey);
-      await runJobs([result?.noticeJob ?? null]);
+    if (!result.found) {
+      return NextResponse.json(
+        { success: false, message: "결제 정보가 없습니다." },
+        { status: 404 },
+      );
     }
+    const stopped = result.stopped;
+    if (!stopped) {
+      return NextResponse.json({
+        success: true,
+        message: "활성화된 정기 결제가 없습니다.",
+      });
+    }
+    const { wasPastDue, cancelingSchedule } = stopped;
+    await deleteRetiredBillingKey(stopped.billingKey);
+    await runJobs([stopped.noticeJob]);
 
     return NextResponse.json({
       success: true,

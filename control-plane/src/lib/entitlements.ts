@@ -1,7 +1,7 @@
 import type { Kysely } from "kysely";
 import { db } from "@/lib/database";
 import type { DB } from "@/lib/db";
-import { addPaymentGrace } from "@/lib/subscriptions";
+import { addPaymentGrace, isCurrentPlan } from "@/lib/subscriptions";
 
 /**
  * Callers already inside a transaction must pass their own `tx`. Reaching for
@@ -59,7 +59,9 @@ export async function getUserEntitlement(
 ): Promise<UserEntitlement> {
   const row = await executor
     .selectFrom("users")
-    .leftJoin("subscriptions", "subscriptions.user_id", "users.id")
+    .leftJoin("subscriptions", (join) =>
+      join.onRef("subscriptions.user_id", "=", "users.id").on(isCurrentPlan),
+    )
     .select([
       "users.supporter_comp as comp",
       "users.supporter_until as supporterUntil",

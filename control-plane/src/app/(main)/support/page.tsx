@@ -7,6 +7,7 @@ import { SupportPerks } from "@/components/SupportPerks";
 import { SupportPolicy } from "@/components/SupportPolicy";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
+import { plansOf } from "@/lib/subscriptions";
 import { getUserEntitlement } from "@/lib/entitlements";
 import { hasVerifiedEmail } from "@/lib/support";
 import { ONE_TIME_YEAR_AMOUNT, PLAN_AMOUNTS } from "@/lib/toss";
@@ -28,8 +29,8 @@ function SignedOutSupportCard() {
       </CardHeader>
       <CardContent className="p-6 space-y-4">
         <p className="text-sm text-muted-foreground">
-          나루는 유료 서비스로 운영되는 작은 인디웹 서비스입니다. 결제하시면 아래
-          유료 기능을 쓰실 수 있습니다 🌱
+          나루는 유료 서비스로 운영되는 작은 인디웹 서비스입니다. 결제하시면
+          아래 유료 기능을 쓰실 수 있습니다 🌱
         </p>
 
         <div className="space-y-2">
@@ -68,8 +69,8 @@ function SignedOutSupportCard() {
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          유료 기능은 나루 계정에서 결제할 수 있습니다. 결제 수단은 신용·체크카드이며, 결제
-          창은 토스페이먼츠를 통해 열립니다.
+          유료 기능은 나루 계정에서 결제할 수 있습니다. 결제 수단은
+          신용·체크카드이며, 결제 창은 토스페이먼츠를 통해 열립니다.
         </p>
       </CardContent>
     </Card>
@@ -92,10 +93,8 @@ export default async function SupportPage() {
   }
 
   const entitlement = await getUserEntitlement(user.id);
-  const subscriptionRow = await db
-    .selectFrom("subscriptions")
+  const subscriptionRow = await plansOf(db, user.id)
     .select(["status", "billing_interval", "next_billing_at"])
-    .where("user_id", "=", user.id)
     .executeTakeFirst();
   const subscription = subscriptionRow
     ? {

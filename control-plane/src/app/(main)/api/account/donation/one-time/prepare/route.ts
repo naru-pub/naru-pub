@@ -7,6 +7,7 @@ import {
   hasVerifiedEmail,
 } from "@/lib/support";
 import { db } from "@/lib/database";
+import { plansOf } from "@/lib/subscriptions";
 import {
   isPurchasableOneTimeYears,
   withNewOrderId,
@@ -109,17 +110,9 @@ export async function POST(request: NextRequest) {
             { status: 409 },
           );
         }
-        const existingSubscription = await db
-          .selectFrom("subscriptions")
-          .select("id")
-          .where("user_id", "=", user.id)
-          .executeTakeFirst();
         // A subscription charge that may yet succeed would land beside this
         // purchase — the same check a new signup makes.
-        if (
-          existingSubscription &&
-          !(await settlePendingCharges(existingSubscription.id))
-        ) {
+        if (!(await settlePendingCharges(user.id))) {
           return NextResponse.json(
             {
               success: false,
@@ -136,10 +129,8 @@ export async function POST(request: NextRequest) {
           .select(["supporter_comp", "supporter_until", "toss_customer_key"])
           .where("id", "=", user.id)
           .executeTakeFirst();
-        const subscription = await db
-          .selectFrom("subscriptions")
+        const subscription = await plansOf(db, user.id)
           .select("status")
-          .where("user_id", "=", user.id)
           .executeTakeFirst();
         if (
           !canStartOneTimePurchase({

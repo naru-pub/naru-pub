@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
-import { maskSecret } from "@/lib/toss";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -41,12 +40,15 @@ export default async function SubscriptionsPage({
   const subscriptions = await db
     .selectFrom("subscriptions")
     .innerJoin("users", "users.id", "subscriptions.user_id")
+    .leftJoin("billing_keys", "billing_keys.id", "subscriptions.billing_key_id")
     .select([
       "subscriptions.id",
       "subscriptions.status",
       "subscriptions.billing_interval",
       "subscriptions.amount",
-      "subscriptions.toss_billing_key",
+      "billing_keys.key_hint",
+      "billing_keys.card_company",
+      "billing_keys.card_number",
       "subscriptions.current_period_end",
       "subscriptions.next_billing_at",
       "subscriptions.failed_charge_count",
@@ -148,8 +150,10 @@ export default async function SubscriptionsPage({
                 </TableCell>
                 <TableCell>{sub.failed_charge_count || "-"}</TableCell>
                 <TableCell className="font-mono text-xs">
-                  {sub.toss_billing_key
-                    ? maskSecret(sub.toss_billing_key)
+                  {sub.key_hint
+                    ? [sub.card_company, sub.card_number ?? sub.key_hint]
+                        .filter(Boolean)
+                        .join(" ")
                     : "-"}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">

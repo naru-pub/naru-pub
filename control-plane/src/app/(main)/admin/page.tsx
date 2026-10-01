@@ -135,10 +135,11 @@ export default async function AdminOverviewPage() {
       ])
       .executeTakeFirstOrThrow(),
     db
-      .selectFrom("retired_billing_keys")
+      .selectFrom("billing_keys")
+      .where("status", "=", "retired")
       .select([
         sql<number>`count(*)::int`.as("queued"),
-        sql<number>`count(*) filter (where attempts >= ${STUCK_AFTER_ATTEMPTS})::int`.as(
+        sql<number>`count(*) filter (where delete_attempts >= ${STUCK_AFTER_ATTEMPTS})::int`.as(
           "stuck",
         ),
       ])

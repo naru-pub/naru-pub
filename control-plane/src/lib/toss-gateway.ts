@@ -89,7 +89,10 @@ function readOrder(
   order: { orderId: string; amount: number },
   error: unknown,
 ): OrderOutcome {
-  if (payment.orderId !== order.orderId || payment.totalAmount !== order.amount) {
+  if (
+    payment.orderId !== order.orderId ||
+    payment.totalAmount !== order.amount
+  ) {
     return {
       kind: "unknown",
       error,
@@ -222,7 +225,12 @@ export async function confirmOrder(opts: {
 }
 
 export type IssueOutcome =
-  | { kind: "issued"; billingKey: string }
+  | {
+      kind: "issued";
+      billingKey: string;
+      cardCompany: string | null;
+      cardNumber: string | null;
+    }
   // The authKey was refused on its merits (expired, used, card refused): the
   // supporter starts over.
   | { kind: "refused"; error: TossApiError }
@@ -235,9 +243,12 @@ export async function issueKey(
   customerKey: string,
 ): Promise<IssueOutcome> {
   try {
+    const issued = await issueBillingKey(authKey, customerKey);
     return {
       kind: "issued",
-      billingKey: (await issueBillingKey(authKey, customerKey)).billingKey,
+      billingKey: issued.billingKey,
+      cardCompany: issued.cardCompany ?? null,
+      cardNumber: issued.cardNumber ?? null,
     };
   } catch (error) {
     return isDefinitiveTossFailure(error)
