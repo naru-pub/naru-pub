@@ -553,6 +553,48 @@ export function paymentFlowForRecord(
     : paymentFlowForAttempt(attemptKey);
 }
 
+// The MID each flow's secret key belongs to (TOSS_BILLING_MID,
+// TOSS_PAYMENT_MID), or null when not configured. Toss keeps a payment or a
+// billing key under the MID that made it, and only that MID's secret key can
+// look it up, cancel it or charge it: after a key swap — test keys to live —
+// the old ones are out of reach, and a call about them only fails.
+export function configuredMid(flow: TossPaymentFlow): string | null {
+  const mid =
+    flow === "billing"
+      ? process.env.TOSS_BILLING_MID
+      : process.env.TOSS_PAYMENT_MID;
+  return mid?.trim() || null;
+}
+
+export class OtherMidError extends Error {
+  constructor(
+    public readonly mid: string,
+    public readonly current: string,
+  ) {
+    super(
+      `Toss MID ${mid}에서 이루어진 결제라 지금의 키(MID ${current})로는 조회·취소할 수 없습니다.`,
+    );
+    this.name = "OtherMidError";
+  }
+}
+
+// The error a Toss call about this payment would come to, or null when it can
+// be made: Toss recorded it under another MID than its flow's key. A payment
+// Toss has not answered for (toss_mid null), or a flow with no MID
+// configured, is not held back.
+export function paymentOfOtherMid(payment: {
+  toss_mid: string | null;
+  toss_flow: string | null;
+  attempt_key: string | null;
+}): OtherMidError | null {
+  const current = configuredMid(
+    paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
+  );
+  return current && payment.toss_mid && payment.toss_mid !== current
+    ? new OtherMidError(payment.toss_mid, current)
+    : null;
+}
+
 export function paymentProviderMetadata(
   payment: TossPaymentResult,
   flow: TossPaymentFlow,

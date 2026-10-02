@@ -108,7 +108,7 @@ cron이 돌리는 작업마다(1분마다 도는 것부터 매일 한 번 도는
 테스트 키에서 라이브 키로 바꾼 뒤, 일반 공개 전에 운영자 계정과 실제 카드로 한 번씩 해 보고 기록을 확인합니다. 카드 정보 입력과 결제는 사람이 직접 합니다.
 
 0. 테스트 데이터 정리(키를 바꾸기 **전에**, 테스트 키가 들어 있는 동안): 테스트 카드로 만든 정기 결제·빌링키·이용 기간은 어느 키에서 왔는지 기록되지 않아, 그대로 두면 라이브 키로 바꾼 뒤 오전 9시 갱신이 테스트 빌링키를 라이브 키로 청구하려다 실패해 구독자에게 결제 실패 메일을 보냅니다. 테스트 정기 결제를 끝내고 그 키를 지우고, 테스트로 받은 이용 기간을 어떻게 할지 정합니다.
-1. 키: `TOSS_BILLING_MID`를 라이브 자동결제 MID로 바꾸고(바꾸지 않으면 갱신이 청구되지 않고 'MID 불일치'로 알립니다), 네 키(`TOSS_BILLING_*`, `TOSS_PAYMENT_*`)가 모두 `live_`인지 `/admin` 개요의 모드 표시('라이브')로 확인합니다. 결제 실험실은 라이브에서 사라져야 합니다.
+1. 키: `TOSS_BILLING_MID`와 `TOSS_PAYMENT_MID`를 라이브 자동결제·한 번만 결제 MID로 바꾸고(바꾸지 않으면 갱신이 청구되지 않고 'MID 불일치'로 알립니다), 네 키(`TOSS_BILLING_*`, `TOSS_PAYMENT_*`)가 모두 `live_`인지 `/admin` 개요의 모드 표시('라이브')로 확인합니다. 결제 실험실은 라이브에서 사라져야 합니다.
 2. 웹훅: 두 라이브 MID에 위 '웹훅 등록'대로 등록합니다. 서버의 `SITE_DATA_TRUST_CLOUDFLARE_IP=1`도 확인합니다 — 없으면 `BILLING_DELETED`의 보낸 IP를 확인하지 못해 그 웹훅을 무시합니다.
    - API 버전: 개발자센터에서 두 라이브 키의 API 버전을 확인합니다. 나루는 2024-06-01부터의 응답(카드 정보는 `card.issuerCode`·`card.number`)과 그 이전 응답을 모두 읽습니다.
    - API 키 접근 정책: 두 라이브 시크릿 키를 서버 IP에서만 쓸 수 있게 등록합니다(Toss 보안 체크리스트, 오픈 후 한 달 안 권장).
@@ -159,6 +159,7 @@ cron이 돌리는 작업마다(1분마다 도는 것부터 매일 한 번 도는
 - `TOSS_BILLING_CLIENT_KEY` / `TOSS_PAYMENT_CLIENT_KEY`: 서버에서 읽어 클라이언트로 전달하는 공개 키.
 - `TOSS_BILLING_SECRET_KEY` / `TOSS_PAYMENT_SECRET_KEY`: 서버 전용 시크릿 키.
 - `TOSS_BILLING_MID`: `TOSS_BILLING_SECRET_KEY`의 상점아이디(MID). 빌링키는 발급한 MID로만 청구되므로, 갱신은 빌링키에 기록된 MID(`billing_keys.toss_mid`, 발급 응답의 `mId`)가 이 값과 다르면 청구하지 않고 '빌링키 MID 불일치' 실패 이벤트를 하루 한 번 남깁니다 — 카드 거절로 세지도, 구독자에게 실패 메일을 보내지도 않습니다. 라이브 키에서는 이 값이 없으면 아무 갱신도 청구하지 않습니다. 테스트 키에서는 없으면 확인하지 않습니다.
+- `TOSS_PAYMENT_MID`: `TOSS_PAYMENT_SECRET_KEY`의 상점아이디(MID). Toss는 결제를 그 결제를 만든 MID 아래에 두고 그 MID의 키로만 조회·취소하게 하므로, 결제에 기록된 MID(`payments.toss_mid`)가 그 결제 흐름의 MID(`TOSS_BILLING_MID`/`TOSS_PAYMENT_MID`)와 다르면 대사·환불·복구·웹훅은 Toss를 부르지 않습니다 — 대사는 이유를 `reconciliation_error`에 적고 확인한 것으로 세어 환불 동기화가 매번 다시 보지 않게 하고, 환불은 409로 거절하며 `/support/payments`에는 환불 버튼 대신 사유를 보여 줍니다. 아직 Toss가 답하지 않은 결제(`toss_mid` 없음)와 MID를 설정하지 않은 흐름은 막지 않습니다.
 - `CRON_HEARTBEAT_URL`(선택): cron이 1분마다 GET으로 부르는 외부 감시 주소(healthchecks.io 같은 서비스). 서버 전체가 멈춘 것은 서버 안의 어떤 프로세스도 알릴 수 없으므로, 그 서비스가 신호가 끊기면 알려 줍니다.
 - `RESEND_API_KEY` / `FROM_EMAIL` / `BASE_URL`: 결제 갱신/실패 안내 메일 발송에 사용합니다.
 - `OPERATOR_DISCORD_WEBHOOK_URL`: 운영자 알림(결제 이벤트, 작업 실패, 예약 작업 멈춤)을 올리는 Discord 웹훅. 누구든 이 주소로 채널에 글을 올릴 수 있으니 서버 환경에만 둡니다. 없으면 알리지 않습니다.

@@ -3,6 +3,7 @@ import { db } from "@/lib/database";
 import {
   maskSecret,
   paymentFlowForRecord,
+  paymentOfOtherMid,
   paymentProviderMetadata,
   tossSecretKeys,
 } from "@/lib/payments/toss";
@@ -192,6 +193,10 @@ export async function POST(request: NextRequest) {
       .where("order_id", "=", orderId)
       .executeTakeFirst();
     if (!ledger) return respond(200, "ignored: unknown order");
+    // A delivery from a MID whose key 나루 no longer holds (the test MID
+    // after the switch to live): its lookup could only fail.
+    const otherMid = paymentOfOtherMid(ledger);
+    if (otherMid) return respond(200, `ignored: ${otherMid.message}`);
 
     const found = await lookupOrder(
       orderId,

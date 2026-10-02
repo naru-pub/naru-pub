@@ -4,6 +4,7 @@ import { notePaymentEvent, won } from "@/lib/payments/payment-events";
 import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
 import {
   listTransactions,
+  OtherMidError,
   tossSecretKeys,
   type TossTransaction,
 } from "@/lib/payments/toss";
@@ -151,7 +152,10 @@ export async function checkTossTransactions(now = new Date()): Promise<{
     try {
       await reconcilePayment(id, { waitMs: 0 });
     } catch (error) {
-      if (!(error instanceof AccountBusyError)) {
+      if (
+        !(error instanceof AccountBusyError) &&
+        !(error instanceof OtherMidError)
+      ) {
         console.error(`[toss-transactions] reconciling ${id} failed`, error);
       }
     }

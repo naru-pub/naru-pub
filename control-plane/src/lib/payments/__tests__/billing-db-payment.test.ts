@@ -77,7 +77,7 @@ const {
 const { Client: PgClient } = require("pg") as typeof import("pg");
 const { reconcilePayment, recoverOrphanedCharge } =
   require("@/lib/payments/payment-reconciliation") as typeof import("@/lib/payments/payment-reconciliation");
-const { refundPayment } =
+const { refundEligibility, refundPayment } =
   require("@/lib/payments/refunds") as typeof import("@/lib/payments/refunds");
 const { syncPaymentRefunds } =
   require("@/lib/payments/refund-sync") as typeof import("@/lib/payments/refund-sync");
@@ -1776,6 +1776,48 @@ integration("payments against the database", () => {
       await expect(
         refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
       ).rejects.toMatchObject({ name: "RefundError", status: 503 });
+    });
+
+    test("a payment of another MID is neither looked up nor canceled", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      await db
+        .updateTable("payments")
+        .set({ toss_mid: "tvivarepublica", last_reconciled_at: null })
+        .where("id", "=", paymentId)
+        .execute();
+      process.env.TOSS_PAYMENT_MID = "live-mid";
+      try {
+        await expect(
+          refundPayment({ paymentId, overridePolicy: true, reason: "test" }),
+        ).rejects.toMatchObject({ name: "RefundError", status: 409 });
+        await expect(reconcilePayment(paymentId)).rejects.toBeInstanceOf(
+          toss.OtherMidError,
+        );
+        expect(toss.cancelPayment).not.toHaveBeenCalled();
+        expect(toss.getPaymentByOrderId).not.toHaveBeenCalled();
+
+        // Counted as checked, so the refund sweep does not come back to it
+        // every run.
+        const row = await db
+          .selectFrom("payments")
+          .select(["status", "last_reconciled_at", "reconciliation_error"])
+          .where("id", "=", paymentId)
+          .executeTakeFirstOrThrow();
+        expect(row.status).toBe("done");
+        expect(row.last_reconciled_at).not.toBeNull();
+        expect(row.reconciliation_error).toContain("tvivarepublica");
+        expect(
+          refundEligibility({
+            status: "done",
+            paidAt: new Date(),
+            refundedAmount: 0,
+            otherMid: true,
+          }),
+        ).toMatchObject({ eligible: false, reason: "other_mid" });
+      } finally {
+        delete process.env.TOSS_PAYMENT_MID;
+      }
     });
 
     test("a refund Toss is already making is not reported as failed", async () => {

@@ -3,6 +3,7 @@ import { db } from "@/lib/database";
 import { AccountBusyError } from "@/lib/payments/account-lock";
 import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
 import { REFUND_WINDOW_DAYS } from "@/lib/payments/refunds";
+import { OtherMidError } from "@/lib/payments/toss";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -146,6 +147,9 @@ export async function syncPaymentRefunds(
           result.checked -= 1;
           continue;
         }
+        // Another MID's payment: nothing this key can learn of it, and
+        // reconciliation already counted it as checked.
+        if (error instanceof OtherMidError) continue;
         result.failed += 1;
         console.error(
           `[sync-payment-refunds] payment ${payment.id}: sync failed`,

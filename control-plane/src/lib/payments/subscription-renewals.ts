@@ -9,6 +9,7 @@ import { sql } from "kysely";
 import {
   BillingInterval,
   chargeBillingKey,
+  configuredMid,
   describeTossError,
   getPaymentByOrderId,
   isTossLiveMode,
@@ -543,7 +544,7 @@ async function leaveUnresolved(
 // supporter a failure that is 나루's. TOSS_BILLING_MID names the MID of
 // TOSS_BILLING_SECRET_KEY; live mode charges nothing without it.
 export function keyMidProblem(keyMid: string | null): string | null {
-  const expected = process.env.TOSS_BILLING_MID?.trim() || null;
+  const expected = configuredMid("billing");
   if (!expected) {
     return isTossLiveMode() ? "TOSS_BILLING_MID가 설정되지 않음" : null;
   }

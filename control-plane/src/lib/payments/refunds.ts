@@ -8,7 +8,7 @@ import {
 import { runJobs } from "@/lib/payments/payment-jobs";
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payments/payment-states";
 import { endPlan, plansOf } from "@/lib/payments/subscriptions";
-import { paymentFlowForRecord } from "@/lib/payments/toss";
+import { paymentFlowForRecord, paymentOfOtherMid } from "@/lib/payments/toss";
 import { cancelOrder } from "@/lib/payments/toss-gateway";
 
 // 판매 정책의 환불 조건: 결제일로부터 7일 안에는 이유를 묻지 않고 전액 환불.
@@ -19,6 +19,7 @@ export const REFUND_WINDOW_DAYS = 7;
 export type RefundBlockReason =
   | "not_paid"
   | "already_refunded"
+  | "other_mid"
   | "window_passed";
 
 export type RefundEligibility =
@@ -33,6 +34,9 @@ export type RefundEligibilityInput = {
   status: string;
   paidAt: Date | string | null;
   refundedAmount: number;
+  // Made through another Toss MID than the current key's
+  // (lib/payments/toss, paymentOfOtherMid): Toss cannot cancel it from here.
+  otherMid?: boolean;
   now?: Date;
 };
 
@@ -65,6 +69,13 @@ export function refundEligibility(
       eligible: false,
       reason: "not_paid",
       message: "결제가 완료된 내역만 환불할 수 있습니다.",
+    };
+  }
+  if (input.otherMid) {
+    return {
+      eligible: false,
+      reason: "other_mid",
+      message: "이전 결제 설정으로 이루어진 결제라 여기서 환불할 수 없습니다.",
     };
   }
 
@@ -180,6 +191,7 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
       "toss_payment_key",
       "attempt_key",
       "toss_flow",
+      "toss_mid",
     ])
     .where("id", "=", opts.paymentId)
     .executeTakeFirstOrThrow();
@@ -196,6 +208,10 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
       409,
     );
   }
+
+  // Not even for an operator: Toss would refuse the cancel.
+  const otherMid = paymentOfOtherMid(payment);
+  if (otherMid) throw new RefundError(otherMid.message, 409);
 
   if (!opts.overridePolicy) {
     const eligibility = refundEligibility({

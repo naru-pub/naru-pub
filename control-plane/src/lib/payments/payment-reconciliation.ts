@@ -11,7 +11,9 @@ import {
   BillingInterval,
   describeTossError,
   oneTimeYearsForAmount,
+  OtherMidError,
   paymentFlowForRecord,
+  paymentOfOtherMid,
   paymentProviderMetadata,
   TossPaymentResult,
 } from "@/lib/payments/toss";
@@ -92,6 +94,9 @@ async function reconcilePaymentCore(
   if (!refreshable) {
     return { state: "failed", status: payment.status };
   }
+  // Out of the current key's reach: nothing to ask Toss.
+  const otherMid = paymentOfOtherMid(payment);
+  if (otherMid) throw otherMid;
 
   // A signup's first charge that went nowhere leaves the signup's key with
   // nothing to charge; retireUnusedSignupKey decides whether it is still in use.
@@ -599,17 +604,22 @@ async function reconcileLocked(
     try {
       // The error is recorded; the check is counted only for a pending row,
       // which the reconciler visits least recently checked first. A paid
-      // row whose lookup failed stays due for the refund sweep.
+      // row whose lookup failed stays due for the refund sweep — unless it
+      // is another MID's, which no later lookup will reach either: counted
+      // as checked, it waits its turn like any other paid row.
+      const checked = error instanceof OtherMidError;
       await db
         .updateTable("payments")
         .set((eb) => ({
           reconciliation_error: message,
-          last_reconciled_at: eb
-            .case()
-            .when("status", "=", "pending")
-            .then(new Date())
-            .else(eb.ref("last_reconciled_at"))
-            .end(),
+          last_reconciled_at: checked
+            ? new Date()
+            : eb
+                .case()
+                .when("status", "=", "pending")
+                .then(new Date())
+                .else(eb.ref("last_reconciled_at"))
+                .end(),
         }))
         .where("id", "=", paymentId)
         .execute();
@@ -665,7 +675,15 @@ export async function recoverOrphanedCharge(
 async function recoverLocked(paymentId: string): Promise<RecoveryResult> {
   const payment = await db
     .selectFrom("payments")
-    .select(["id", "order_id", "amount", "status", "toss_flow", "attempt_key"])
+    .select([
+      "id",
+      "order_id",
+      "amount",
+      "status",
+      "toss_flow",
+      "attempt_key",
+      "toss_mid",
+    ])
     .where("id", "=", paymentId)
     .executeTakeFirstOrThrow();
   if (!RECOVERABLE_STATUSES.includes(payment.status)) {
@@ -673,6 +691,8 @@ async function recoverLocked(paymentId: string): Promise<RecoveryResult> {
       `${payment.status} 상태의 결제는 복구 대상이 아닙니다.`,
     );
   }
+  const otherMid = paymentOfOtherMid(payment);
+  if (otherMid) throw new RecoveryError(otherMid.message);
 
   const found = await lookupOrder(
     payment.order_id,

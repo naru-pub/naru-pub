@@ -6,6 +6,7 @@ import { ArrowLeft, ReceiptText } from "lucide-react";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { refundEligibility, REFUND_WINDOW_DAYS } from "@/lib/payments/refunds";
+import { paymentOfOtherMid } from "@/lib/payments/toss";
 import { RefundPaymentButton } from "@/components/RefundPaymentButton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -108,6 +109,8 @@ export default async function PaymentsPage() {
       "refunded_amount",
       "refunded_at",
       "created_at",
+      "toss_mid",
+      "toss_flow",
     ])
     .where("user_id", "=", user.id)
     .where("paid_at", "is not", null)
@@ -123,6 +126,7 @@ export default async function PaymentsPage() {
         status: payment.status,
         paidAt: payment.paid_at,
         refundedAmount: payment.refunded_amount,
+        otherMid: paymentOfOtherMid(payment) !== null,
         now,
       }),
     ]),
