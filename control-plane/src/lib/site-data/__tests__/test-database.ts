@@ -70,7 +70,7 @@ export async function setupTestDatabase() {
   if (new URL(process.env.DATABASE_URL!).pathname !== "/naru_data_test")
     throw new Error("Use a disposable naru_data_test database.");
   await sql`create table users(id serial primary key, login_name text not null unique,
-    supporter_comp boolean not null default true, supporter_until timestamptz)`.execute(
+    supporter_comp boolean not null default true, supporter_until timestamptz, deleted_at timestamptz)`.execute(
     db,
   );
   await sql`create table subscriptions(id serial primary key, user_id integer not null unique references users(id) on delete cascade, plan text not null default 'supporter')`.execute(
