@@ -430,7 +430,7 @@ async function applyEndedPayment(
   // one running beside a refunded one-time payment. Done here, the
   // first time the refund is seen, so a refund made in the Toss
   // dashboard or one whose cancel call got no answer stops it as well
-  // as one made through refundPayment. Its cancel is told in the
+  // as an accepted refund task. Its cancel is told in the
   // refund's own mail.
   //
   // Only a plan that already existed when the refund happened: one the

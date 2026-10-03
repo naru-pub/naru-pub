@@ -6,7 +6,7 @@ import {
   deleteRetiredBillingKeys,
 } from "@/lib/payments/billing-keys";
 import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
-import { refundPayment } from "@/lib/payments/refunds";
+import { requestRefund } from "@/lib/payments/refunds";
 import { chargeDueSubscriptions } from "@/lib/payments/subscription-renewals";
 import {
   isCurrentPlan,
@@ -300,12 +300,13 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
       userId = (await paymentOwner(input.paymentId)).user_id;
       testCode = input.testCode;
       run = async () => {
-        const result = await refundPayment({
+        const result = await requestRefund({
           paymentId: input.paymentId,
           overridePolicy: true,
           reason: "결제 실험실 테스트 환불",
+          testCode: input.testCode,
         });
-        return `환불 결과: ${JSON.stringify(result)}`;
+        return `환불 접수: ${JSON.stringify(result)}`;
       };
       break;
     }

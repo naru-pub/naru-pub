@@ -134,8 +134,7 @@ export default function SupportCard({
   // Not beside a plan that charges or may (lib/payments/support-purchases): the
   // supporter cancels it first.
   const showOneTimeOptions =
-    !planCanCharge &&
-    (!supportActive || subscription?.status === "canceled");
+    !planCanCharge && (!supportActive || subscription?.status === "canceled");
   const intervalLabel =
     subscription?.billingInterval === "year" ? "연간" : "월간";
 
@@ -182,9 +181,9 @@ export default function SupportCard({
       }
     } else if (support === "card-changed") {
       toast.success("결제 카드를 변경했습니다.");
-    } else if (support === "card-changed-unpaid") {
-      toast.warning(
-        "결제 카드를 변경했지만 밀린 정기 결제는 아직 완료되지 않았습니다. 결제 결과를 확인해 다시 시도합니다.",
+    } else if (support === "card-changed-pending") {
+      toast.success(
+        "결제 카드를 변경했습니다. 밀린 정기 결제를 처리 중이며 결과는 결제 내역에서 확인할 수 있습니다.",
       );
     } else if (support === "canceled") toast(WINDOW_CLOSED_MESSAGE);
     router.replace("/support");

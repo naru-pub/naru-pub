@@ -220,8 +220,12 @@ const { enqueueDueRenewals } =
   require("@/lib/payments/subscription-renewals") as typeof import("@/lib/payments/subscription-renewals");
 const { reconcilePayment } =
   require("@/lib/payments/payment-reconciliation") as typeof import("@/lib/payments/payment-reconciliation");
-const { refundPayment, RefundError } =
+const { requestRefund, RefundError } =
   require("@/lib/payments/refunds") as typeof import("@/lib/payments/refunds");
+async function refundPayment(opts: Parameters<typeof requestRefund>[0]) {
+  await requestRefund(opts);
+  return runDueJobs();
+}
 const { deleteRetiredBillingKeys } =
   require("@/lib/payments/billing-keys") as typeof import("@/lib/payments/billing-keys");
 const { runDueJobs } =

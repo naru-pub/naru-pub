@@ -107,6 +107,7 @@ export default async function PaymentsPage() {
       "period_start",
       "period_end",
       "refunded_amount",
+      "refund_requested_at",
       "refunded_at",
       "created_at",
       "toss_mid",
@@ -203,10 +204,13 @@ export default async function PaymentsPage() {
                             {formatKrw(payment.amount)}
                           </TableCell>
                           <TableCell className="px-3 pt-3 pb-1 text-right align-top sm:px-4">
-                            {state?.eligible ? (
+                            {state?.eligible ||
+                            (payment.refund_requested_at &&
+                              !payment.refunded_amount) ? (
                               <RefundPaymentButton
                                 paymentId={payment.id}
-                                confirmMessage={`${formatKrw(payment.amount)}을 전액 환불할까요? 환불하면 이 결제로 열린 유료 기능이 즉시 종료되고, 정기 결제 중이라면 자동 결제도 함께 취소됩니다.`}
+                                requested={payment.refund_requested_at != null}
+                                confirmMessage={`${formatKrw(payment.amount)}을 전액 환불할까요? 환불이 완료되면 이 결제로 열린 유료 기능이 종료되고, 정기 결제 중이라면 자동 결제도 함께 취소됩니다.`}
                                 label="환불 신청"
                               />
                             ) : (

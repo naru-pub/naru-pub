@@ -57,11 +57,33 @@ sweeps continue to protect operations around the provider call.
 
 Acceptance commits `payments.refund_requested_at`, the specific
 `refund_subscription_id`, and a deduplicated refund task before calling Toss.
-The HTTP request still attempts the refund immediately. The durable task can
+HTTP returns 202 after acceptance and never cancels at Toss. Refund execution is
+private to the registered Absurd handler in `payment-jobs.ts`; there is no public
+refund executor. Integration and chaos tests use claimed Absurd tasks too. The same authenticated
+endpoint exposes read-only progress; the payment-history UI polls until the
+ledger confirms a refund or the task stops. Repeated requests return the accepted
+intent without another task or another policy check. The durable task can
 finish it after a crash or ambiguous result, including after the seven-day
 policy deadline. Recovery skips a payment already refunded and stops only
 the captured subscription. Reconciliation uses the same captured identity;
 dashboard refunds continue to use the provider's cancellation time.
+Accepted refunds block renewal charges of the captured plan while unsettled.
+Account deletion retains an anonymized user tombstone and the financial graph.
+Accepted refunds and other durable work continue after deletion; credentials,
+sessions, account content, and entitlements are removed. Financial foreign keys
+restrict deletion, and the database rejects new payment intents for tombstones.
+
+## Card-change renewals
+
+A due renewal is spawned in the same transaction that swaps the billing key and
+completes its card registration, deduplicated by registration id. HTTP returns
+that the card changed and its renewal is queued. The worker verifies that the
+completed registration still owns the subscription's current key, rechecks that
+the plan is due, and retries declined orders on the new card. A canceled plan or
+superseded registration cannot charge. Ordinary scheduled renewals keep their
+existing daily cutoff and retry spacing; card-change tasks explicitly bypass
+that spacing. Billing-key registration and deletion retain their existing paths.
+
 
 An external call can repeat before its checkpoint commits. Full cancellations
 are reconciled if Toss reports them already canceled. Approval facts and

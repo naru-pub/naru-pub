@@ -80,7 +80,7 @@ const {
 const { Client: PgClient } = require("pg") as typeof import("pg");
 const { reconcilePayment, recoverOrphanedCharge } =
   require("@/lib/payments/payment-reconciliation") as typeof import("@/lib/payments/payment-reconciliation");
-const { refundEligibility, refundPayment } =
+const { refundEligibility, requestRefund, refundProgress } =
   require("@/lib/payments/refunds") as typeof import("@/lib/payments/refunds");
 const { syncPaymentRefunds } =
   require("@/lib/payments/refund-sync") as typeof import("@/lib/payments/refund-sync");
@@ -132,6 +132,8 @@ const keepPaymentMail = email.setPaymentMailRecorder.mock.calls[0]?.[0] as
 const auth = require("@/lib/auth") as jest.Mocked<typeof import("@/lib/auth")>;
 const { POST: cancelSubscriptionRoute } =
   require("@/app/(main)/api/account/subscription/cancel/route") as typeof import("@/app/(main)/api/account/subscription/cancel/route");
+const { POST: refundRoute, GET: refundStatusRoute } =
+  require("@/app/(main)/api/account/payments/[id]/refund/route") as typeof import("@/app/(main)/api/account/payments/[id]/refund/route");
 const { POST: tossWebhook } =
   require("@/app/(main)/api/webhooks/toss/route") as typeof import("@/app/(main)/api/webhooks/toss/route");
 
@@ -159,6 +161,28 @@ function tossPayment(
     status: "DONE",
     totalAmount,
     ...extra,
+  };
+}
+
+// Domain scenarios accept an intent then execute an actual claimed Absurd task.
+async function refundPayment(opts: Parameters<typeof requestRefund>[0]) {
+  await requestRefund(opts);
+  await runDueJobs();
+  const payment = await db
+    .selectFrom("payments")
+    .select("refund_subscription_id")
+    .where("id", "=", opts.paymentId)
+    .executeTakeFirstOrThrow();
+  const plan = payment.refund_subscription_id
+    ? await db
+        .selectFrom("subscriptions")
+        .select("status")
+        .where("id", "=", payment.refund_subscription_id)
+        .executeTakeFirst()
+    : undefined;
+  return {
+    ...(await refundProgress(opts.paymentId)),
+    subscriptionCanceled: plan?.status === "canceled",
   };
 }
 
@@ -1218,10 +1242,14 @@ integration("payments against the database", () => {
       expect(
         await db
           .selectFrom("users")
-          .select("id")
+          .select(["deleted_at", "email", "password_hash"])
           .where("id", "=", userId)
           .executeTakeFirst(),
-      ).toBeUndefined();
+      ).toMatchObject({
+        deleted_at: expect.any(Date),
+        email: null,
+        password_hash: "",
+      });
     });
 
     test("a key Toss already deleted is cleared without being queued", async () => {
@@ -1817,6 +1845,234 @@ integration("payments against the database", () => {
       return paymentId;
     }
 
+    test("HTTP accepts a refund without moving money, then Absurd completes it", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      auth.validateRequest.mockResolvedValue({
+        user: { id: userId, loginName: "supporter" },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      const context = { params: Promise.resolve({ id: paymentId }) };
+      const response = await refundRoute(
+        new NextRequest("http://localhost/refund", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        }),
+        context,
+      );
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({
+        success: true,
+        result: { state: "pending" },
+      });
+      expect(toss.cancelPayment).not.toHaveBeenCalled();
+      expect(await supporterUntil(userId)).not.toBeNull();
+      const status = await refundStatusRoute(
+        new NextRequest("http://localhost/refund"),
+        context,
+      );
+      expect(await status.json()).toMatchObject({
+        result: { state: "pending" },
+      });
+      toss.cancelPayment.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+      await runDueJobs();
+      expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "completed",
+      });
+      expect(await supporterUntil(userId)).toBeNull();
+      await runDueJobs();
+      expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+    });
+
+    test("repeated accepted requests outlive the policy window without another task", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      await requestRefund({
+        paymentId,
+        overridePolicy: false,
+        reason: "first",
+      });
+      await db
+        .updateTable("payments")
+        .set({ paid_at: new Date(Date.now() - 10 * DAY) })
+        .where("id", "=", paymentId)
+        .execute();
+      expect(
+        await requestRefund({
+          paymentId,
+          overridePolicy: false,
+          reason: "again",
+        }),
+      ).toMatchObject({ state: "pending" });
+      expect(
+        await db
+          .selectFrom("absurd.t_payments")
+          .selectAll()
+          .where("idempotency_key", "=", `refund:${paymentId}`)
+          .execute(),
+      ).toHaveLength(1);
+      expect(toss.cancelPayment).not.toHaveBeenCalled();
+    });
+
+    test("stopped tasks are visible but a verified refund takes precedence", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      await requestRefund({ paymentId, overridePolicy: false, reason: "test" });
+      await db
+        .updateTable("absurd.t_payments")
+        .set({ state: "failed" })
+        .where("idempotency_key", "=", `refund:${paymentId}`)
+        .execute();
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "failed",
+      });
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+      await reconcilePayment(paymentId);
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "completed",
+      });
+    });
+
+    test("another supporter cannot inspect or request a refund", async () => {
+      const owner = await makeUser();
+      const paymentId = await paidPayment(owner);
+      const userId = await makeUser();
+      auth.validateRequest.mockResolvedValue({
+        user: { id: userId, loginName: "stranger" },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      const context = { params: Promise.resolve({ id: paymentId }) };
+      expect(
+        (
+          await refundStatusRoute(
+            new NextRequest("http://localhost/refund"),
+            context,
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (
+          await refundRoute(
+            new NextRequest("http://localhost/refund", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: "{}",
+            }),
+            context,
+          )
+        ).status,
+      ).toBe(404);
+      expect(toss.cancelPayment).not.toHaveBeenCalled();
+    });
+
+    test("account deletion preserves an accepted refund for its worker", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      await db
+        .insertInto("sessions")
+        .values({
+          id: "deleted-session",
+          user_id: userId,
+          expires_at: new Date(Date.now() + DAY),
+        })
+        .execute();
+      const subId = await makeSubscription(userId, { status: "active" });
+      await requestRefund({ paymentId, overridePolicy: false, reason: "test" });
+      expect(await settleChargesBeforeDeletion(userId)).toBe(true);
+      await db.transaction().execute((trx) => deleteUserRow(trx, userId));
+      expect(
+        await db
+          .selectFrom("payments")
+          .select("id")
+          .where("id", "=", paymentId)
+          .executeTakeFirst(),
+      ).toBeDefined();
+      toss.cancelPayment.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+      await runDueJobs();
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "completed",
+      });
+      expect((await subscription(subId)).status).toBe("canceled");
+      expect(
+        await db
+          .selectFrom("sessions")
+          .select("id")
+          .where("user_id", "=", userId)
+          .execute(),
+      ).toEqual([]);
+      await db
+        .updateTable("users")
+        .set({
+          deleted_at: null,
+          email: "stale@example.com",
+          password_hash: "stale",
+          supporter_comp: true,
+        })
+        .where("id", "=", userId)
+        .execute();
+      expect(
+        await db
+          .selectFrom("users")
+          .select(["deleted_at", "email", "password_hash", "supporter_comp"])
+          .where("id", "=", userId)
+          .executeTakeFirst(),
+      ).toMatchObject({
+        deleted_at: expect.any(Date),
+        email: null,
+        password_hash: "",
+        supporter_comp: false,
+      });
+      expect((await getUserEntitlement(userId)).isSupporter).toBe(false);
+      expect(
+        await prepareSubscription({ userId, interval: "month" }),
+      ).toMatchObject({ ok: false, status: 404 });
+      await expect(
+        db
+          .insertInto("sessions")
+          .values({
+            id: "stale-session",
+            user_id: userId,
+            expires_at: new Date(Date.now() + DAY),
+          })
+          .execute(),
+      ).rejects.toThrow("Account is deleted");
+      await expect(
+        db.deleteFrom("users").where("id", "=", userId).execute(),
+      ).rejects.toThrow("foreign key");
+      expect(await settleChargesBeforeDeletion(userId)).toBe(true);
+    });
+
+    test("an accepted refund prevents another renewal while its task waits", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      const periodEnd = new Date(Date.now() - DAY);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+        nextBillingAt: periodEnd,
+      });
+      await requestRefund({ paymentId, overridePolicy: false, reason: "test" });
+      await chargeDueSubscriptions(new Date(), { subscriptionIds: [subId] });
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+    });
+
     test("a committed refund intention survives request death and the policy deadline", async () => {
       const userId = await makeUser();
       const paymentId = await paidPayment(userId);
@@ -1862,7 +2118,7 @@ integration("payments against the database", () => {
       );
       await expect(
         refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
-      ).rejects.toMatchObject({ status: 503 });
+      ).resolves.toMatchObject({ state: "pending" });
       await db.transaction().execute(async (trx) => {
         await endPlan(trx, oldPlan, {
           notice: "user",
@@ -1881,6 +2137,11 @@ integration("payments against the database", () => {
       });
       toss.cancelPayment.mockResolvedValue(canceled);
       toss.getPaymentByOrderId.mockResolvedValue(canceled);
+      await db
+        .updateTable("absurd.r_payments")
+        .set({ available_at: new Date(Date.now() - 1000) })
+        .where("state", "in", ["pending", "sleeping"])
+        .execute();
       await runDueJobs();
       expect((await subscription(newPlan)).status).toBe("active");
       expect((await subscription(newPlan)).billing_key).toBe("replacement");
@@ -1969,7 +2230,7 @@ integration("payments against the database", () => {
       );
       await expect(
         refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
-      ).rejects.toThrow("mismatch");
+      ).resolves.toMatchObject({ state: "pending" });
       expect(await supporterUntil(userId)).toEqual(before);
       expect((await subscription(subId)).status).toBe("active");
       expect(
@@ -1981,7 +2242,7 @@ integration("payments against the database", () => {
       ).toHaveLength(0);
     });
 
-    test("a refund Toss refused is reported, and can be tried again", async () => {
+    test("Absurd retries a refused refund without another HTTP request", async () => {
       const userId = await makeUser();
       const paymentId = await paidPayment(userId);
       const refusal = new toss.TossApiError(
@@ -1996,7 +2257,7 @@ integration("payments against the database", () => {
 
       await expect(
         refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
-      ).rejects.toBe(refusal);
+      ).resolves.toMatchObject({ state: "pending" });
 
       toss.cancelPayment.mockResolvedValueOnce(
         tossPayment(`refund-order-${userId}`, 12000, {
@@ -2010,7 +2271,23 @@ integration("payments against the database", () => {
           cancels: [{ cancelAmount: 12000 }],
         }),
       );
-      await refundPayment({ paymentId, overridePolicy: false, reason: "test" });
+      expect(
+        await requestRefund({
+          paymentId,
+          overridePolicy: false,
+          reason: "test",
+        }),
+      ).toMatchObject({ state: "pending" });
+      expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+      await db
+        .updateTable("absurd.r_payments")
+        .set({ available_at: new Date(Date.now() - 1000) })
+        .where("state", "in", ["pending", "sleeping"])
+        .execute();
+      await runDueJobs();
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "completed",
+      });
 
       expect(toss.cancelPayment).toHaveBeenCalledTimes(2);
       for (const [params] of toss.cancelPayment.mock.calls) {
@@ -2169,7 +2446,7 @@ integration("payments against the database", () => {
       expect(sub.billing_key).toBe("new-key");
     });
 
-    test("a cancel that got no answer either way says so", async () => {
+    test("a cancel with an unknown result remains pending in Absurd", async () => {
       const userId = await makeUser();
       const paymentId = await paidPayment(userId);
       toss.cancelPayment.mockRejectedValue(new TypeError("fetch failed"));
@@ -2179,7 +2456,7 @@ integration("payments against the database", () => {
 
       await expect(
         refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
-      ).rejects.toMatchObject({ name: "RefundError", status: 503 });
+      ).resolves.toMatchObject({ state: "pending" });
     });
 
     test("a payment of another MID is neither looked up nor canceled", async () => {
@@ -2236,7 +2513,7 @@ integration("payments against the database", () => {
 
       await expect(
         refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
-      ).rejects.toMatchObject({ name: "RefundError", status: 503 });
+      ).resolves.toMatchObject({ state: "pending" });
     });
   });
 
@@ -2359,7 +2636,11 @@ integration("payments against the database", () => {
       // Toss's lookup still shows the payment paid.
       toss.getPaymentByOrderId.mockResolvedValue(tossPayment(orderId, 12000));
 
-      await refundPayment({ paymentId, overridePolicy: false, reason: "test" });
+      await requestRefund({ paymentId, overridePolicy: false, reason: "test" });
+      expect(await runDueJobs()).toMatchObject({ retried: 1 });
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "pending",
+      });
 
       await runDueJobs();
 
@@ -3391,7 +3672,7 @@ integration("payments against the database", () => {
       expect(await events("card_changed")).toHaveLength(1);
     });
 
-    test("a renewal failing on the old card is retried on the new one right away", async () => {
+    test("a renewal failing on the old card is durably retried on the new one", async () => {
       const periodEnd = new Date(Date.now() - DAY);
       const { userId, subId, prepared, confirm } = await running({
         status: "active",
@@ -3404,7 +3685,13 @@ integration("payments against the database", () => {
         tossPayment(params.orderId, params.amount),
       );
 
-      expect(await confirm()).toMatchObject({ ok: true, cardChanged: true });
+      expect(await confirm()).toMatchObject({
+        ok: true,
+        cardChanged: true,
+        renewalQueued: true,
+      });
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      await runDueJobs();
 
       expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
       expect(toss.chargeBillingKey.mock.calls[0][0]).toMatchObject({
@@ -3415,6 +3702,81 @@ integration("payments against the database", () => {
       expect(sub.status).toBe("active");
       expect(sub.failed_charge_count).toBe(0);
       expect((await supporterUntil(userId))! > new Date()).toBe(true);
+    });
+
+    test("a repeated card callback creates only one durable renewal", async () => {
+      const end = new Date(Date.now() - DAY);
+      const { prepared, confirm } = await running({
+        status: "active",
+        billingKey: "old-key",
+        currentPeriodEnd: end,
+        nextBillingAt: end,
+      });
+      await confirm();
+      await confirm();
+      expect(
+        await db
+          .selectFrom("absurd.t_payments")
+          .selectAll()
+          .where(
+            "idempotency_key",
+            "=",
+            `card-renewal:${prepared.registrationId}`,
+          )
+          .execute(),
+      ).toHaveLength(1);
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+    });
+
+    test("a queued card renewal cannot charge after the plan is canceled", async () => {
+      const end = new Date(Date.now() - DAY);
+      const { subId, confirm } = await running({
+        status: "active",
+        billingKey: "old-key",
+        currentPeriodEnd: end,
+        nextBillingAt: end,
+      });
+      await confirm();
+      await db
+        .transaction()
+        .execute((trx) =>
+          endPlan(trx, subId, { summary: () => "test cancellation" }),
+        );
+      await runDueJobs();
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      expect((await subscription(subId)).status).toBe("canceled");
+    });
+
+    test("an older queued card renewal is superseded by the latest card", async () => {
+      const end = new Date(Date.now() - DAY);
+      const { userId, confirm } = await running({
+        status: "active",
+        billingKey: "old-key",
+        currentPeriodEnd: end,
+        nextBillingAt: end,
+      });
+      await confirm();
+      const latest = await prepareCardChange({ userId });
+      if (!latest.ok) throw new Error(latest.message);
+      toss.issueBillingKey.mockResolvedValue({
+        billingKey: "latest-key",
+        customerKey: latest.customerKey,
+      });
+      await confirmSubscription({
+        userId,
+        authKey: "latest-auth",
+        customerKey: latest.customerKey,
+        registrationId: latest.registrationId,
+      });
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+      await runDueJobs();
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+      expect(toss.chargeBillingKey.mock.calls[0][0].billingKey).toBe(
+        "latest-key",
+      );
     });
 
     test("an order the old card declined is retried on the new card, not counted", async () => {
@@ -3444,7 +3806,13 @@ integration("payments against the database", () => {
         tossPayment(params.orderId, params.amount),
       );
 
-      expect(await confirm()).toMatchObject({ ok: true, cardChanged: true });
+      expect(await confirm()).toMatchObject({
+        ok: true,
+        cardChanged: true,
+        renewalQueued: true,
+      });
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      await runDueJobs();
 
       expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
       expect(toss.chargeBillingKey.mock.calls[0][0]).toMatchObject({

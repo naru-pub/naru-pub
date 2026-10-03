@@ -85,6 +85,7 @@ export async function validateSession(
       "users.discoverable",
     ])
     .where("sessions.id", "=", sessionId)
+    .where("users.deleted_at", "is", null)
     .executeTakeFirst();
 
   if (!row) {

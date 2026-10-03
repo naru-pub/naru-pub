@@ -20,7 +20,7 @@ import {
   settleOneTimeOrders,
   settlePendingCharges,
 } from "@/lib/payments/payment-reconciliation";
-import { chargeDueSubscriptions } from "@/lib/payments/subscription-renewals";
+import { enqueueJob } from "@/lib/payments/payment-jobs";
 import {
   kstDate,
   notePaymentEvent,
@@ -153,7 +153,16 @@ async function underAccountLock<T extends object>(
   fn: () => Promise<SignupResult<T>>,
 ): Promise<SignupResult<T>> {
   try {
-    return await withAccountLock(userId, { waitMs: LOCK_WAIT_MS }, fn);
+    return await withAccountLock(userId, { waitMs: LOCK_WAIT_MS }, async () => {
+      const user = await db
+        .selectFrom("users")
+        .select("id")
+        .where("id", "=", userId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (!user) return fail(404, "삭제된 계정입니다.");
+      return fn();
+    });
   } catch (error) {
     if (error instanceof AccountBusyError) {
       return fail(busyStatus, CHARGE_IN_PROGRESS_MESSAGE);
@@ -489,7 +498,7 @@ type ConfirmOutcome = SignupResult<{
   startsAt?: string;
   cardChanged?: boolean;
   // A card change whose overdue renewal is still not paid on the new card.
-  renewalStillDue?: boolean;
+  renewalQueued?: boolean;
 }>;
 
 function alreadySettled(sub: {
@@ -730,8 +739,8 @@ async function confirmAdoptedSignup(opts: {
 
 // Issues the new card's key and swaps it in for the old one, under the
 // account lock so no renewal is charging the old key meanwhile. A renewal that
-// was failing gets its retry with the new card right away, rather than at the
-// next run, and the answer says whether it went through.
+// was failing gets a durable retry committed with the key swap. HTTP never
+// charges it; the worker rechecks the plan and this registration before charging.
 async function confirmCardChange(opts: {
   userId: string;
   registrationId: string;
@@ -739,39 +748,7 @@ async function confirmCardChange(opts: {
   authKey: string;
   customerKey: string;
 }): Promise<ConfirmOutcome> {
-  const swapped = await swapCard(opts);
-  if (!swapped.ok) return swapped;
-
-  const isDue = () =>
-    db
-      .selectFrom("subscriptions")
-      .select("id")
-      .where("id", "=", opts.subscriptionId)
-      .where("status", "in", CARD_CHANGE_STATUSES)
-      .where("next_billing_at", "<=", new Date())
-      .executeTakeFirst();
-  if (!(await isDue())) return swapped;
-  try {
-    await chargeDueSubscriptions(new Date(), {
-      subscriptionIds: [opts.subscriptionId],
-      newCard: true,
-    });
-  } catch (error) {
-    // The next run retries it; the card itself is already changed.
-    console.error(
-      `Card change: charging subscription ${opts.subscriptionId} failed`,
-      error,
-    );
-  }
-  if (await isDue()) {
-    return {
-      ...swapped,
-      renewalStillDue: true,
-      message:
-        "결제 카드를 변경했지만 밀린 정기 결제는 아직 완료되지 않았습니다. 결제 결과를 확인해 다시 시도합니다.",
-    };
-  }
-  return swapped;
+  return swapCard(opts);
 }
 
 async function swapCard(opts: {
@@ -805,7 +782,7 @@ async function swapCard(opts: {
       .executeTakeFirstOrThrow();
     const current = await trx
       .selectFrom("subscriptions")
-      .select(["status", "billing_key_id"])
+      .select(["status", "billing_key_id", "next_billing_at"])
       .where("id", "=", subscriptionId)
       .forUpdate()
       .executeTakeFirstOrThrow();
@@ -851,7 +828,20 @@ async function swapCard(opts: {
       subscriptionId,
       summary: "정기 결제 카드 변경, 이전 빌링키는 폐기",
     });
-    return { result: changed, retired: oldKey };
+    const renewalQueued =
+      current.next_billing_at != null &&
+      new Date(current.next_billing_at) <= new Date();
+    if (renewalQueued)
+      await enqueueJob(
+        trx,
+        {
+          kind: "renew_subscription",
+          subscriptionId,
+          cardRegistrationId: registrationId,
+        },
+        { dedupeKey: `card-renewal:${registrationId}` },
+      );
+    return { result: { ...changed, renewalQueued }, retired: oldKey };
   });
   await deleteRetiredBillingKey(retired);
   return result;

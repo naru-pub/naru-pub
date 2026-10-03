@@ -37,6 +37,7 @@ export async function extendPaidTime(
       supporter_until: sql<Date>`greatest(coalesce(supporter_until, ${until}), ${until})`,
     })
     .where("id", "=", userId)
+    .where("deleted_at", "is", null)
     .execute();
 }
 
@@ -82,6 +83,7 @@ export async function movePaidTimeForLab(
     .updateTable("users")
     .set({ supporter_until: until })
     .where("id", "=", userId)
+    .where("deleted_at", "is", null)
     .execute();
 }
 

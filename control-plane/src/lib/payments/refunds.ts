@@ -1,19 +1,8 @@
-import {
-  applyVerifiedTossPayment,
-  TossPaymentMismatchError,
-} from "@/lib/payments/payment-facts";
 import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 import { db } from "@/lib/database";
 import { enqueueJob } from "@/lib/payments/payment-jobs";
-import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
-import {
-  reconcilePayment,
-  type ReconciliationResult,
-} from "@/lib/payments/payment-reconciliation";
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payments/payment-states";
-import { endPlan } from "@/lib/payments/subscriptions";
-import { paymentFlowForRecord, paymentOfOtherMid } from "@/lib/payments/toss";
-import { cancelOrder } from "@/lib/payments/toss-gateway";
+import { isTossTestMode, paymentOfOtherMid } from "@/lib/payments/toss";
 
 // 판매 정책의 환불 조건: 결제일로부터 7일 안에는 이유를 묻지 않고 전액 환불.
 // 이 상수와 아래 판정 함수가 그 문장의 구현이므로, components/SupportPolicy의
@@ -105,37 +94,6 @@ export class RefundError extends Error {
   }
 }
 
-// Refunding ends the billing relationship, not just this one charge.
-// Reconciliation stops the account's recurring plan when it first sees the
-// refund; this is for a cancel Toss accepted but the lookup does not show yet.
-async function stopRecurringBilling(
-  userId: string,
-  subscriptionId: string | null,
-): Promise<boolean> {
-  if (!subscriptionId) return false;
-  const ended = await db.transaction().execute(async (trx) => {
-    const live = await trx
-      .selectFrom("subscriptions")
-      .select("id")
-      .where("user_id", "=", userId)
-      .where("id", "=", subscriptionId)
-      .where("status", "in", LIVE_SUBSCRIPTION_STATUSES)
-      .executeTakeFirst();
-    // The refund's own cancel mail went out before this stop, or goes out
-    // later without it, so it cannot say so: this one does.
-    return live
-      ? endPlan(trx, live.id, {
-          summary: () => "환불에 따라 정기 결제도 취소",
-          notice: "refund",
-        })
-      : null;
-  });
-  if (!ended) return false;
-  await deleteRetiredBillingKey(ended.retiredKey);
-
-  return true;
-}
-
 // The account's subscription while it can still charge, or null.
 async function runningPlanId(userId: string): Promise<string | null> {
   const row = await db
@@ -147,26 +105,53 @@ async function runningPlanId(userId: string): Promise<string | null> {
   return row?.id ?? null;
 }
 
-export type RefundOutcome = {
+export type RefundProgress = {
   paymentId: string;
   amount: number;
-  subscriptionCanceled: boolean;
+  state: "not_requested" | "pending" | "completed" | "failed";
 };
 
-// Cancel at Toss, then apply its verified response through the same transaction
-// as webhooks and reconciliation. Only ambiguous calls need another lookup.
+export async function refundProgress(
+  paymentId: string,
+): Promise<RefundProgress> {
+  const payment = await readRefundPayment(paymentId);
+  if (!payment) throw new RefundError("결제 내역을 찾을 수 없습니다.", 404);
+  const task = payment.refund_requested_at
+    ? await db
+        .selectFrom("absurd.t_payments")
+        .select("state")
+        .where("idempotency_key", "=", `refund:${paymentId}`)
+        .executeTakeFirst()
+    : undefined;
+  return {
+    paymentId,
+    amount: payment.amount,
+    state:
+      payment.refunded_amount > 0
+        ? "completed"
+        : !payment.refund_requested_at
+          ? "not_requested"
+          : task?.state === "failed" || task?.state === "cancelled"
+            ? "failed"
+            : "pending",
+  };
+}
+
+// HTTP only accepts the request and commits its task. Only the Absurd handler
+// in payment-jobs cancels at Toss; eligibility belongs to acceptance, not worker retries.
 type RefundRequest = {
   paymentId: string;
   /** Operators may refund outside the policy window; owners may not. */
   overridePolicy: boolean;
   reason: string;
+  testCode?: string;
 };
 
 // Runs under the account lock (lib/payments/account-lock): a second click, the
 // webhook of this very cancel, or a renewal waits for it to finish.
-export async function refundPayment(
+export async function requestRefund(
   opts: RefundRequest,
-): Promise<RefundOutcome> {
+): Promise<RefundProgress> {
   const owner = await db
     .selectFrom("payments")
     .select("user_id")
@@ -187,7 +172,7 @@ export async function refundPayment(
   }
 }
 
-function readRefundPayment(paymentId: string) {
+export function readRefundPayment(paymentId: string) {
   return db
     .selectFrom("payments")
     .select([
@@ -208,10 +193,12 @@ function readRefundPayment(paymentId: string) {
     .executeTakeFirst();
 }
 
-async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
+async function refundLocked(opts: RefundRequest): Promise<RefundProgress> {
   const payment = await readRefundPayment(opts.paymentId);
   if (!payment) throw new RefundError("결제 내역을 찾을 수 없습니다.", 404);
 
+  // Repeated requests return the durable intention, even after its policy deadline.
+  if (payment.refund_requested_at) return refundProgress(payment.id);
   if (payment.refunded_amount > 0) {
     throw new RefundError("이미 환불된 결제입니다.", 409);
   }
@@ -260,125 +247,13 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
           kind: "refund_payment",
           paymentId: payment.id,
           reason: opts.reason.slice(0, 200),
+          ...(opts.testCode && isTossTestMode()
+            ? { testCode: opts.testCode.slice(0, 100) }
+            : {}),
         },
         { dedupeKey: `refund:${payment.id}` },
       );
     });
   }
-  return finishRefund(
-    payment,
-    opts.reason,
-    payment.refund_requested_at
-      ? payment.refund_subscription_id
-      : planRunningBefore,
-  );
-}
-
-// The policy was checked at acceptance. A worker restarting after the seven
-// day window still owes that refund; missing accounts have no work left.
-export async function resumeRefund(
-  paymentId: string,
-  reason: string,
-): Promise<void> {
-  const owner = await readRefundPayment(paymentId);
-  if (!owner) return;
-  await withAccountLock(owner.user_id, { waitMs: 0 }, async () => {
-    const payment = await readRefundPayment(paymentId);
-    if (!payment?.refund_requested_at) return;
-    if (payment.refunded_amount > 0) {
-      await stopRecurringBilling(
-        payment.user_id,
-        payment.refund_subscription_id,
-      );
-      return;
-    }
-    await finishRefund(payment, reason, payment.refund_subscription_id);
-    const settled = await readRefundPayment(paymentId);
-    if (settled && settled.refunded_amount === 0) {
-      throw new RefundError("환불 결과를 확인하고 있습니다.", 503);
-    }
-  });
-}
-
-async function finishRefund(
-  payment: NonNullable<Awaited<ReturnType<typeof readRefundPayment>>>,
-  reason: string,
-  planRunningBefore: string | null,
-): Promise<RefundOutcome> {
-  if (!payment.toss_payment_key)
-    throw new RefundError("결제 승인 정보가 없습니다.", 409);
-  const otherMid = paymentOfOtherMid(payment);
-  if (otherMid) throw new RefundError(otherMid.message, 409);
-
-  let refunded: ReconciliationResult | null = null;
-  const canceled = await cancelOrder({
-    flow: paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
-    paymentKey: payment.toss_payment_key,
-    cancelReason: reason.slice(0, 200),
-  });
-  if (canceled.kind !== "canceled") {
-    // Toss refuses to cancel a payment that is already canceled — with
-    // ALREADY_CANCELED_PAYMENT or NOT_CANCELABLE_PAYMENT, and the latter also
-    // covers other refusals — and a call that got no answer (a timeout, a
-    // dropped connection) may have canceled it all the same. Ask Toss what the
-    // payment is now: if the money is already back, only the ledger is behind
-    // and reconciliation catches it up, and the refund goes on to stop
-    // recurring billing like any other.
-    const result = await reconcilePayment(payment.id).catch(() => null);
-    if (result?.state !== "refunded") {
-      // Toss answered and did not cancel: the supporter can try again. Not
-      // when it said the payment is already canceled — the money is back,
-      // and only the lookup to confirm it failed — or already being refunded
-      // (ALREADY_REFUNDING_PAYMENT), which is a refund under way.
-      if (
-        canceled.kind === "refused" &&
-        canceled.error.code !== "ALREADY_CANCELED_PAYMENT" &&
-        canceled.error.code !== "ALREADY_REFUNDING_PAYMENT"
-      ) {
-        throw canceled.error;
-      }
-      // No answer either way. The webhook and the refund sweep will see the
-      // cancel if it happened; until then the supporter is told so rather
-      // than that it failed, which would invite a second request.
-      throw new RefundError(
-        "환불 결과를 확인하고 있습니다. 잠시 후 결제 내역을 다시 확인해 주세요.",
-        503,
-      );
-    }
-    refunded = result;
-  }
-
-  // Toss accepted the cancel, so the refund has happened whatever the
-  // local transaction does: a failed commit is caught up by the durable task
-  // or sweep, and must not tell the supporter that Toss refused the refund.
-  if (canceled.kind === "canceled") {
-    refunded = await applyVerifiedTossPayment(payment.id, canceled.payment)
-      .then(async (result) => {
-        await deleteRetiredBillingKey(result.retiredKey);
-        return result;
-      })
-      .catch((error) => {
-        if (error instanceof TossPaymentMismatchError) throw error;
-        console.error(
-          `Refund of payment ${payment.id}: Toss canceled it, but applying its response failed`,
-          error,
-        );
-        return null;
-      });
-  }
-  if (refunded?.state !== "refunded" || refunded.amount === 0) {
-    await stopRecurringBilling(payment.user_id, planRunningBefore);
-  }
-  // Whichever of this refund, its own reconciliation or the webhook it set
-  // off got there first, the plan that was running is what the supporter
-  // asked about.
-  const subscriptionCanceled =
-    planRunningBefore != null &&
-    (await runningPlanId(payment.user_id)) !== planRunningBefore;
-
-  return {
-    paymentId: payment.id,
-    amount: payment.amount,
-    subscriptionCanceled,
-  };
+  return { paymentId: payment.id, amount: payment.amount, state: "pending" };
 }

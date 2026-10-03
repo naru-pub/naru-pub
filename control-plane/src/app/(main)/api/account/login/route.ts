@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
     const existingUser = await db
       .selectFrom("users")
       .selectAll()
+      .where("deleted_at", "is", null)
       .where("login_name", "=", login_name)
       .executeTakeFirst();
 

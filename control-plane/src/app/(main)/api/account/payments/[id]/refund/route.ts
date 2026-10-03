@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
-import { refundPayment, RefundError } from "@/lib/payments/refunds";
+import {
+  requestRefund,
+  refundProgress,
+  RefundError,
+} from "@/lib/payments/refunds";
 import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
-import { TossApiError } from "@/lib/payments/toss";
 import { assertJsonContentType } from "@/lib/utils";
 import { parseUuid } from "@/lib/uuid";
 
@@ -11,13 +14,14 @@ import { parseUuid } from "@/lib/uuid";
 // 7일 이내)을 만족할 때 스스로 환불할 수 있고, 결제 운영자는
 // 그 밖의 사유 — 장애 보상이나 최종 취소 — 까지 포함해 어떤 결제든 환불할 수
 // 있습니다.
-export async function POST(
+async function handle(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
+  accept: boolean,
 ) {
   try {
     try {
-      assertJsonContentType(request);
+      if (accept) assertJsonContentType(request);
     } catch {
       return NextResponse.json(
         { success: false, message: "잘못된 요청입니다." },
@@ -58,19 +62,30 @@ export async function POST(
     // An operator refunding their own payment is still an operator decision;
     // the policy check only binds a supporter refunding for themselves. A
     // refund always ends the account's recurring plan.
-    const result = await refundPayment({
-      paymentId,
-      overridePolicy: isOperator,
-      reason: isOperator ? "나루 운영자 환불" : "유료 이용자 환불 신청",
-    });
+    const result = accept
+      ? await requestRefund({
+          paymentId,
+          overridePolicy: isOperator,
+          reason: isOperator ? "나루 운영자 환불" : "유료 이용자 환불 신청",
+        })
+      : await refundProgress(paymentId);
 
-    return NextResponse.json({
-      success: true,
-      result,
-      message: result.subscriptionCanceled
-        ? "환불이 접수되었습니다. 정기 결제도 함께 취소되어 더 이상 결제되지 않습니다."
-        : "환불이 접수되었습니다.",
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        result,
+        message:
+          result.state === "completed"
+            ? "환불이 완료되었습니다."
+            : result.state === "failed"
+              ? "환불 처리를 확인해야 합니다. 운영자에게 문의해 주세요."
+              : "환불 신청을 접수했습니다. 처리 결과는 결제 내역에서 확인할 수 있습니다.",
+      },
+      {
+        status: accept && result.state === "pending" ? 202 : 200,
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
   } catch (error) {
     if (error instanceof RefundError) {
       return NextResponse.json(
@@ -79,19 +94,22 @@ export async function POST(
       );
     }
     console.error("Payment refund error:", error);
-    if (error instanceof TossApiError) {
-      return NextResponse.json(
-        {
-          success: false,
-          message:
-            "결제사에서 환불을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-        },
-        { status: 502 },
-      );
-    }
     return NextResponse.json(
       { success: false, message: "환불 처리에 실패했습니다." },
       { status: 500 },
     );
   }
+}
+
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  return handle(request, context, true);
+}
+export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  return handle(request, context, false);
 }

@@ -38,8 +38,8 @@ function Callback({ registrationId }: { registrationId: string | null }) {
           if (res.ok && data.success) {
             router.replace(
               data.cardChanged
-                ? data.renewalStillDue
-                  ? "/support?support=card-changed-unpaid"
+                ? data.renewalQueued
+                  ? "/support?support=card-changed-pending"
                   : "/support?support=card-changed"
                 : data.scheduled
                   ? "/support?support=scheduled"

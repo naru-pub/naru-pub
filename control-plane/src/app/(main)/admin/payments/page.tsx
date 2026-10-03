@@ -72,6 +72,7 @@ export default async function PaymentOperatorPage({
       "payments.amount",
       "payments.status",
       "payments.refunded_amount",
+      "payments.refund_requested_at",
       "payments.created_at",
       "payments.last_reconciled_at",
       "payments.reconciliation_error",
@@ -176,10 +177,13 @@ export default async function PaymentOperatorPage({
                     {RECOVERABLE_STATUSES.includes(payment.status) ? (
                       <RecoverChargeButton paymentId={payment.id} />
                     ) : null}
-                    {payment.status === "done" && !payment.refunded_amount ? (
+                    {(payment.status === "done" ||
+                      payment.refund_requested_at) &&
+                    !payment.refunded_amount ? (
                       <RefundPaymentButton
                         paymentId={payment.id}
-                        confirmMessage={`${payment.login_name}님의 ${formatKrw(payment.amount)} 결제를 전액 환불할까요? 유료 기능이 즉시 종료되고, 정기 결제 중이라면 자동 결제도 함께 취소됩니다.`}
+                        requested={payment.refund_requested_at != null}
+                        confirmMessage={`${payment.login_name}님의 ${formatKrw(payment.amount)} 결제를 전액 환불할까요? 환불이 완료되면 유료 기능이 종료되고, 정기 결제 중이라면 자동 결제도 함께 취소됩니다.`}
                       />
                     ) : null}
                   </div>

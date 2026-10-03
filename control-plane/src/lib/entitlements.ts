@@ -68,6 +68,7 @@ export async function getUserEntitlement(
       "subscriptions.plan as plan",
     ])
     .where("users.id", "=", userId)
+    .where("users.deleted_at", "is", null)
     .executeTakeFirst();
 
   if (!row) {

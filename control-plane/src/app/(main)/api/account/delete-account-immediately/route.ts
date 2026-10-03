@@ -141,8 +141,7 @@ export async function POST(request: NextRequest) {
       }),
     );
 
-    // Federate the account deletion before the row (and its keys/followers)
-    // cascade away. Failure here must not block deletion.
+    // Federate the account deletion before account content and federation keys are removed. Failure here must not block deletion.
     try {
       await dispatchActorDelete(user.id, user.loginName);
     } catch (err) {
@@ -151,7 +150,7 @@ export async function POST(request: NextRequest) {
 
     await deleteCustomDomainsForUser(user.id);
 
-    // Delete user account (this will cascade to all related tables)
+    // Anonymize the account and remove content, retaining financial history.
     const billingKey = await withAccountLock(
       user.id,
       { waitMs: DELETION_LOCK_WAIT_MS },

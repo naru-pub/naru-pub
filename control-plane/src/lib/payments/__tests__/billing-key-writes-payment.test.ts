@@ -88,11 +88,29 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ]);
   });
 
-  test("users rows are only deleted through deleteUserRow", () => {
+  test("only the Absurd handler executes a refund", () => {
+    expect(offenders(/\bcancelOrder\s*\(/, [])).toEqual([
+      "lib/payments/payment-jobs.ts",
+      "lib/payments/toss-gateway.ts",
+    ]);
+    expect(offenders(/\bcancelPayment\s*\(/, [])).toEqual([
+      "lib/payments/toss-gateway.ts",
+      "lib/payments/toss.ts",
+    ]);
     expect(
-      offenders(/deleteFrom\(\s*["']users["']\s*\)|delete\s+from\s+users\b/i, [
-        "lib/account-deletion.ts",
-      ]),
+      offenders(
+        /export\s+(?:async\s+)?function\s+(?:resumeRefund|finishRefund)\b/,
+        [],
+      ),
+    ).toEqual([]);
+  });
+
+  test("application code never hard deletes users", () => {
+    expect(
+      offenders(
+        /deleteFrom\(\s*["']users["']\s*\)|delete\s+from\s+users\b/i,
+        [],
+      ),
     ).toEqual([]);
   });
 
@@ -110,9 +128,7 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     expect(
       offenders(/supporter_until\s*:(?!\s*(Date|string)\b)/, []).sort(),
     ).toEqual(["lib/payments/paid-time.ts"]);
-    expect(offenders(/deleteFrom\(\s*["']users["']\s*\)/, [])).toEqual([
-      "lib/account-deletion.ts",
-    ]);
+    expect(offenders(/deleteFrom\(\s*["']users["']\s*\)/, [])).toEqual([]);
   });
 });
 

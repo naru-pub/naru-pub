@@ -581,6 +581,7 @@ export interface UserKeys {
 
 export interface Users {
   created_at: Generated<Timestamp>;
+  deleted_at: Timestamp | null;
   discoverable: Generated<boolean>;
   email: string | null;
   email_verified_at: Timestamp | null;

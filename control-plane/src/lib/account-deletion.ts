@@ -3,6 +3,7 @@ import {
   deleteRetiredBillingKey,
   retireUserBillingKeys,
 } from "@/lib/payments/billing-keys";
+import { sql } from "kysely";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import { endPlan, plansOf } from "@/lib/payments/subscriptions";
@@ -12,7 +13,7 @@ import {
 } from "@/lib/payments/payment-reconciliation";
 
 export const CHARGE_IN_FLIGHT_MESSAGE =
-  "결제 결과를 확인하고 있어 지금은 계정을 삭제할 수 없습니다. 잠시 후 다시 시도해 주세요.";
+  "결제 또는 환불 결과를 확인하고 있어 지금은 계정을 삭제할 수 없습니다. 잠시 후 다시 시도해 주세요.";
 
 // How long a deletion waits for another payment operation on the account
 // (lib/payments/account-lock) before telling the supporter to try again.
@@ -56,14 +57,9 @@ export async function settleChargesBeforeDeletion(
   );
 }
 
-// The only place a users row is deleted. Deleting it cascades to the
-// subscription, which would take the billing key with it, so the key is
-// retired first. The caller passes the returned key to deleteRetiredBillingKey
-// once its transaction commits, and runs that transaction under the account
-// lock (withAccountLock), so no payment operation is under way.
-//
-// Locks in the order a grant takes them — the account's payments, the user,
-// then the subscription.
+// Retain an anonymized account identity and its financial graph. The caller
+// holds the account lock; account content and credentials disappear atomically.
+// Lock payments, user, then subscriptions in the same order as payment facts.
 export async function deleteUserRow(
   trx: Executor,
   userId: string,
@@ -87,6 +83,16 @@ export async function deleteUserRow(
     .forUpdate()
     .execute();
   const retired = await retireUserBillingKeys(trx, userId);
-  await trx.deleteFrom("users").where("id", "=", userId).execute();
+  const plan = await plansOf(trx, userId).select("id").executeTakeFirst();
+  if (plan)
+    await endPlan(trx, plan.id, {
+      summary: () => "계정 삭제로 정기 결제 취소",
+    });
+  await sql`SELECT erase_account_content(${userId}::uuid)`.execute(trx);
+  await trx
+    .updateTable("users")
+    .set({ deleted_at: new Date() })
+    .where("id", "=", userId)
+    .execute();
   return retired;
 }

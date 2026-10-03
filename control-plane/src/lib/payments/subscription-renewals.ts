@@ -121,6 +121,10 @@ function dueSubscriptions(
       AND NOT EXISTS (
         SELECT 1 FROM users u WHERE u.id = s.user_id AND u.supporter_comp
       )
+      -- An accepted refund must settle before this plan can charge again.
+      AND NOT EXISTS (SELECT 1 FROM payments p
+        WHERE p.refund_subscription_id = s.id AND p.refund_requested_at IS NOT NULL
+          AND p.refunded_amount = 0)
       ${notTriedToday}
       ${onlyThese}
     ORDER BY s.next_billing_at ASC, s.id ASC
@@ -441,6 +445,7 @@ export async function enqueueDueRenewals(now = new Date()): Promise<{
 export async function renewSubscription(
   subscriptionId: string,
   now = new Date(),
+  opts: { cardRegistrationId?: string } = {},
 ): Promise<void> {
   const owner = await db
     .selectFrom("subscriptions")
@@ -449,14 +454,27 @@ export async function renewSubscription(
     .executeTakeFirst();
   if (!owner) return;
   await withAccountLock(owner.user_id, { waitMs: 0 }, async () => {
+    const explicit = opts.cardRegistrationId != null;
+    if (explicit) {
+      const registration = await db
+        .selectFrom("card_registrations as r")
+        .innerJoin("subscriptions as s", "s.id", "r.subscription_id")
+        .select("r.id")
+        .where("r.id", "=", opts.cardRegistrationId!)
+        .where("s.id", "=", subscriptionId)
+        .where("r.completed_at", "is not", null)
+        .whereRef("r.billing_key_id", "=", "s.billing_key_id")
+        .executeTakeFirst();
+      if (!registration) return; // A newer card or cancellation superseded this task.
+    }
     const [sub] = (
       await dueSubscriptions(now, {
         only: [subscriptionId],
-        explicit: false,
-        dueBy: renewalCutoff(now),
+        explicit,
+        dueBy: explicit ? now : renewalCutoff(now),
       })
     ).rows;
-    if (sub) await chargeSubscription(sub, now, false);
+    if (sub) await chargeSubscription(sub, now, explicit);
   });
 }
 

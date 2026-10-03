@@ -90,7 +90,8 @@ account too.
 | One-time confirm (callback route) | 5 s | 503; the callback retries, inside Toss's 10 minutes |
 | Renewal, per subscription (`subscription-renewals.ts`) | 0 | skip this account this run |
 | Reconciler, per payment (lock on its `user_id`) | 0 | skip; the next run gets it |
-| Refund (`refundPayment`: cancel → reconcile → stop plan) | 10 s | 409 "잠시 후 다시 시도" |
+| Refund acceptance (`requestRefund`: record intent + Absurd task) | 10 s | 409 "잠시 후 다시 시도" |
+| Refund execution (private Absurd handler: cancel → apply/reconcile → stop captured plan) | 0 | Absurd durably sleeps on contention |
 | Cancel route | 10 s | 409 |
 | Webhook reconcile (`PAYMENT_STATUS_CHANGED`) and `BILLING_DELETED` | 5 s | 503; Toss retries |
 | Account deletion: the settle-and-cancel step and `deleteUserRow` | 10 s | 409 |
