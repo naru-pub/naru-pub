@@ -1,3 +1,4 @@
+import { enqueueTemplatePreview } from "@/lib/maintenance/jobs";
 import { sql } from "kysely";
 import { db, recordSiteEdit } from "@/lib/database";
 import type { User } from "@/lib/auth";
@@ -29,7 +30,6 @@ import { BoardError } from "./errors";
 import { assertUnderHourlyLimit } from "./limits";
 import { assertCanPost, validatePostBody, validateTitle } from "./posts";
 import {
-  TEMPLATE_PUBLISHED_CHANNEL,
   getTemplatePreviewUrl,
   templateFileKey,
   templatePrefix,
@@ -337,8 +337,8 @@ export async function publishTemplatePost(
       .where("id", "=", template.id)
       .execute();
     await copyIntoTemplate(template.id, 1, files);
-    // Delivered on commit, so only a version that exists is rendered.
-    await sql`select pg_notify(${TEMPLATE_PUBLISHED_CHANNEL}, '')`.execute(tx);
+    // Durable work is visible only after this version commits.
+    await enqueueTemplatePreview(tx, version.id);
     return { postId: post.id, templateId: template.id };
   });
 }
@@ -427,7 +427,7 @@ export async function publishTemplateVersion(
       .where("id", "=", template.post_id)
       .execute();
     await copyIntoTemplate(templateId, versionNumber, files);
-    await sql`select pg_notify(${TEMPLATE_PUBLISHED_CHANNEL}, '')`.execute(tx);
+    await enqueueTemplatePreview(tx, version.id);
     return versionNumber;
   });
 }

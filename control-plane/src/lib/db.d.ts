@@ -13,6 +13,15 @@ export type Int8 = ColumnType<string, bigint | number | string, bigint | number 
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface AbsurdCMaintenance {
+  checkpoint_name: string;
+  owner_run_id: string | null;
+  state: unknown | null;
+  status: Generated<string>;
+  task_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AbsurdCPayments {
   checkpoint_name: string;
   owner_run_id: string | null;
@@ -20,6 +29,12 @@ export interface AbsurdCPayments {
   status: Generated<string>;
   task_id: string;
   updated_at: Generated<Timestamp>;
+}
+
+export interface AbsurdEMaintenance {
+  emitted_at: Generated<Timestamp>;
+  event_name: string;
+  payload: unknown | null;
 }
 
 export interface AbsurdEPayments {
@@ -41,6 +56,24 @@ export interface AbsurdQueues {
   storage_mode: Generated<string>;
 }
 
+export interface AbsurdRMaintenance {
+  attempt: number;
+  available_at: Timestamp;
+  claim_expires_at: Timestamp | null;
+  claimed_by: string | null;
+  completed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  event_payload: unknown | null;
+  failed_at: Timestamp | null;
+  failure_reason: unknown | null;
+  result: unknown | null;
+  run_id: string;
+  started_at: Timestamp | null;
+  state: string;
+  task_id: string;
+  wake_event: string | null;
+}
+
 export interface AbsurdRPayments {
   attempt: number;
   available_at: Timestamp;
@@ -59,6 +92,24 @@ export interface AbsurdRPayments {
   wake_event: string | null;
 }
 
+export interface AbsurdTMaintenance {
+  attempts: Generated<number>;
+  cancellation: unknown | null;
+  cancelled_at: Timestamp | null;
+  completed_payload: unknown | null;
+  enqueue_at: Generated<Timestamp>;
+  first_started_at: Timestamp | null;
+  headers: unknown | null;
+  idempotency_key: string | null;
+  last_attempt_run: string | null;
+  max_attempts: number | null;
+  params: unknown;
+  retry_strategy: unknown | null;
+  state: string;
+  task_id: string;
+  task_name: string;
+}
+
 export interface AbsurdTPayments {
   attempts: Generated<number>;
   cancellation: unknown | null;
@@ -75,6 +126,15 @@ export interface AbsurdTPayments {
   state: string;
   task_id: string;
   task_name: string;
+}
+
+export interface AbsurdWMaintenance {
+  created_at: Generated<Timestamp>;
+  event_name: string;
+  run_id: string;
+  step_name: string;
+  task_id: string;
+  timeout_at: Timestamp | null;
 }
 
 export interface AbsurdWPayments {
@@ -223,6 +283,9 @@ export interface CardRegistrations {
 
 export interface CronJobs {
   every_seconds: number;
+  failed_at: Timestamp | null;
+  failure_message: string | null;
+  failure_notified: Generated<boolean>;
   id: Generated<string>;
   last_started_at: Generated<Timestamp>;
   name: string;
@@ -600,11 +663,16 @@ export interface Users {
 }
 
 export interface DB {
+  "absurd.c_maintenance": AbsurdCMaintenance;
   "absurd.c_payments": AbsurdCPayments;
+  "absurd.e_maintenance": AbsurdEMaintenance;
   "absurd.e_payments": AbsurdEPayments;
   "absurd.queues": AbsurdQueues;
+  "absurd.r_maintenance": AbsurdRMaintenance;
   "absurd.r_payments": AbsurdRPayments;
+  "absurd.t_maintenance": AbsurdTMaintenance;
   "absurd.t_payments": AbsurdTPayments;
+  "absurd.w_maintenance": AbsurdWMaintenance;
   "absurd.w_payments": AbsurdWPayments;
   account_deletion_tokens: AccountDeletionTokens;
   activities: Activities;

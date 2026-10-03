@@ -104,19 +104,13 @@ const expect = async (path, type) => {
 });
 '
 
-echo "Starting cron and worker..."
+echo "Starting durable workers..."
+# Enqueue a harmless empty screenshot sweep to exercise the compiled child CLI
+# adapter as well as worker startup; pg_cron itself is tested separately.
+docker exec "$run-db" psql -U postgres -d naru -c "select absurd.spawn_task('maintenance', 'maintenance-job-v1', '{\"name\":\"screenshot-updater\"}'::jsonb);" >/dev/null
 start worker -e DATABASE_URL="$database_url" "$jobs_image" node dist/cli/worker.mjs
-start cron -e DATABASE_URL="$database_url" "$jobs_image" node dist/cli/cron.mjs
-# cron's first job, the screenshot updater, starts after ten seconds; with no
-# sites it exits without opening Chromium.
-wait_for "cron's first job" 60 sh -c \
-  "docker logs '$run-cron' 2>&1 | grep -q 'update-screenshots.tsx exited with code 0'"
-for service in worker cron; do
-  if [[ "$(docker inspect -f '{{.State.Running}}' "$run-$service")" != true ]]; then
-    echo "$service stopped." >&2
-    exit 1
-  fi
-done
+wait_for "maintenance screenshot sweep" 60 sh -c \
+  "docker logs '$run-worker' 2>&1 | grep -q 'maintenance-worker.*update-screenshots.tsx completed'"
 
 wait_for "payment worker startup" 20 sh -c \
   "docker logs '$run-worker' 2>&1 | grep -q 'payments-worker.*Started'"
@@ -133,6 +127,11 @@ fi
 
 if ! docker logs "$run-worker" 2>&1 | grep -q 'payments-worker.*Drained'; then
   echo "Worker did not drain its payment tasks." >&2
+  exit 1
+fi
+
+if ! docker logs "$run-worker" 2>&1 | grep -q 'maintenance-worker.*Drained'; then
+  echo "Worker did not drain its maintenance tasks." >&2
   exit 1
 fi
 

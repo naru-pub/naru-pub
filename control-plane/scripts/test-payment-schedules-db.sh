@@ -28,23 +28,34 @@ pg_started=1
 export DATABASE_URL="postgresql://payments_test@localhost/naru_schedule_test?host=$pg_dir"
 node scripts/build-cli.mjs
 node dist/cli/migrate.mjs >"$pg_dir/migrate.log"
-node dist/cli/configure-payment-schedules.mjs
-node dist/cli/configure-payment-schedules.mjs
+node dist/cli/configure-schedules.mjs
+node dist/cli/configure-schedules.mjs
 psql_meta() { "$pg_bin/psql" -h "$pg_dir" -U payments_test -d postgres -At -v ON_ERROR_STOP=1 -c "$1"; }
 psql_app() { "$pg_bin/psql" -h "$pg_dir" -U payments_test -d naru_schedule_test -At -v ON_ERROR_STOP=1 -c "$1"; }
 [[ "$(psql_meta "select count(*) from cron.job where jobname='naru-renewal-scan' and database='naru_schedule_test' and schedule='0 * * * *' and active")" == 1 ]]
 [[ "$(psql_app "select count(*) from absurd.t_payments")" == 1 ]]
+[[ "$(psql_meta "select count(*) from cron.job where database='naru_schedule_test' and active")" == 17 ]]
+[[ "$(psql_app "select count(distinct params->>'name') from absurd.t_maintenance")" == 16 ]]
+# A removed schedule is pruned without deleting already durable work; unrelated
+# schedules are untouched. Run configuration again to verify reconciliation.
+psql_meta "select cron.schedule_in_database('naru-maintenance-retired', '0 0 * * *', 'select 1', 'naru_schedule_test', 'payments_test')" >/dev/null
+psql_meta "select cron.schedule_in_database('unrelated', '0 0 * * *', 'select 1', 'naru_schedule_test', 'payments_test')" >/dev/null
+node dist/cli/configure-schedules.mjs
+[[ "$(psql_meta "select count(*) from cron.job where jobname='naru-maintenance-retired'")" == 0 ]]
+[[ "$(psql_meta "select count(*) from cron.job where jobname='unrelated'")" == 1 ]]
+[[ "$(psql_app "select count(distinct params->>'name') from absurd.t_maintenance")" == 16 ]]
 # Prove pg_cron itself enqueues into the other database, not just the installer's
 # catch-up call. The temporary queue has no other work and no running worker.
-psql_app 'truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments cascade' >/dev/null
-psql_meta "select cron.alter_job(jobid, schedule := '1 second') from cron.job where jobname='naru-renewal-scan'" >/dev/null
+psql_app 'truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments, absurd.c_maintenance, absurd.e_maintenance, absurd.r_maintenance, absurd.t_maintenance, absurd.w_maintenance cascade' >/dev/null
+psql_meta "select cron.alter_job(jobid, schedule := '1 second') from cron.job where jobname in ('naru-renewal-scan', 'naru-maintenance-media-cleanup')" >/dev/null
 for ((i=0;i<100;i++)); do
-  if [[ "$(psql_app 'select count(*) from absurd.t_payments')" == 1 ]]; then break; fi
+  if [[ "$(psql_app 'select count(*) from absurd.t_payments')" == 1 ]] && [[ "$(psql_app "select count(*) from absurd.t_maintenance where params->>'name'='media-cleanup'")" == 1 ]]; then break; fi
   sleep 0.1
 done
 [[ "$(psql_app "select count(*) from absurd.t_payments where params->'job'->>'kind'='enqueue_due_renewals'")" == 1 ]]
 sleep 2
+[[ "$(psql_app "select count(*) from absurd.t_maintenance where params->>'name'='media-cleanup'")" == 1 ]]
 [[ "$(psql_app 'select count(*) from absurd.t_payments')" == 1 ]]
 [[ "$(psql_meta "select count(*) from cron.job_run_details where status='succeeded'")" -ge 1 ]]
 [[ "$(psql_meta "select count(*) from cron.job_run_details where status='failed'")" == 0 ]]
-echo 'pg_cron cross-database schedule, deployment catch-up, and slot deduplication passed'
+echo 'pg_cron cross-database schedules, catch-up, deduplication, and reconciliation passed'

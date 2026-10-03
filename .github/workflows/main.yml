@@ -25,7 +25,7 @@ jobs:
       - id: arch
         run: echo arch=arm64 >> "$GITHUB_OUTPUT"
       # Two targets of one Dockerfile: the Next.js standalone server, and the
-      # image cron, worker and migrations run from. The second build reuses the
+      # image worker and migrations run from. The second build reuses the
       # first's dependency install from this builder's cache.
       - uses: docker/build-push-action@v6
         with:

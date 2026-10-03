@@ -1,7 +1,7 @@
 import "@/lib/payments/toss-calls";
 import { checkTossTransactions } from "@/lib/payments/toss-transaction-check";
 
-// Daily from cron.ts: yesterday's (KST) transactions at Toss against the
+// Daily through Absurd: yesterday's (KST) transactions at Toss against the
 // ledger (lib/payments/toss-transaction-check).
 checkTossTransactions()
   .then(({ day, transactions, problems }) => {

@@ -6,7 +6,7 @@
 #   ./deploy-server.sh rollback
 #
 # It deploys naru-pub-control-plane:<commit> (the Next.js server),
-# naru-pub-control-plane-jobs:<commit> (cron, worker and migrations) and
+# naru-pub-control-plane-jobs:<commit> (worker and migrations) and
 # naru-pub-proxy:<commit>. When `deploy.sh build` has already loaded them,
 # those are used. Otherwise they are pulled from the images GitHub Actions
 # built for <commit>:
@@ -430,27 +430,35 @@ docker tag "$CONTROL_PLANE_IMAGE" naru-pub-control-plane:current
 docker tag "$JOBS_IMAGE" naru-pub-control-plane-jobs:current
 docker tag "$PROXY_IMAGE" naru-pub-proxy:current
 
+# Stop and remove the retired scheduler from older releases. It is no longer
+# declared in Compose; do not let it overlap the durable maintenance worker.
+retired_cron=$(docker ps -aq --filter label=com.docker.compose.project=naru-pub --filter label=com.docker.compose.service=cron)
+if [[ -n "$retired_cron" ]]; then
+  docker stop --timeout 300 $retired_cron
+  docker rm $retired_cron
+fi
+
 # Ordinary releases keep the active HTTP slot serving until its replacement
 # passes health checks. Breaking migrations explicitly opt into a full cutover.
 case "$DEPLOY_DOWNTIME" in
   0)
     echo "Keeping the active web slot serving; stopping background processes before migrations..."
-    docker compose stop --timeout 300 cron worker
+    docker compose stop --timeout 300 worker
     ;;
   1)
     echo "Stopping application and background processes for a breaking schema cutover..."
-    docker compose stop --timeout 300 control-plane-blue control-plane-green cron worker
+    docker compose stop --timeout 300 control-plane-blue control-plane-green worker
     ;;
   *) echo "DEPLOY_DOWNTIME must be 0 or 1." >&2; exit 2 ;;
 esac
 
 echo "Running migrations..."
-# In the jobs image, through the cron service's settings: the web image is only
+# In the jobs image, through the worker service's settings: the web image is only
 # the Next.js server and has no migrations.
-docker compose run --rm --no-deps cron node dist/cli/migrate.mjs
+docker compose run --rm --no-deps worker node dist/cli/migrate.mjs
 
-echo "Configuring pg_cron payment schedules..."
-docker compose run --rm --no-deps cron node dist/cli/configure-payment-schedules.mjs
+echo "Configuring pg_cron schedules..."
+docker compose run --rm --no-deps worker node dist/cli/configure-schedules.mjs
 
 echo "Starting and checking the $target slot..."
 docker compose up -d --no-deps --force-recreate "$control_plane_service" "$proxy_service"
@@ -461,7 +469,7 @@ echo "Switching traffic to the $target slot..."
 switch_gateway "$target"
 
 echo "Updating background processes..."
-docker compose up -d --no-deps --force-recreate cron worker
+docker compose up -d --no-deps --force-recreate worker
 
 if [[ "$current" != none ]]; then
   stop_slot "$current"

@@ -31,8 +31,3 @@ export function getTemplatePreviewUrl(
   const stamp = new Date(renderedAt).getTime();
   return `${getSiteBucketUrl(templatePreviewKey(templateId, version))}?v=${stamp}`;
 }
-
-// Publishing a template version notifies this Postgres channel, and cron,
-// which runs where Chromium is, renders the preview straight away rather
-// than at its next 15-minute screenshot run.
-export const TEMPLATE_PUBLISHED_CHANNEL = "board_template_published";

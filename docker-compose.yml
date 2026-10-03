@@ -75,17 +75,6 @@ services:
 
   # The jobs image: the compiled CLIs, and Chromium for screenshots. The web
   # image above is only the Next.js server and cannot run these.
-  cron:
-    image: naru-pub-control-plane-jobs:current
-    pull_policy: never
-    restart: always
-    # Compiled by scripts/build-cli.mjs, so plain node with no tsx loader.
-    command: ["node", "dist/cli/cron.mjs"]
-    init: true
-    env_file: .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
   worker:
     stop_grace_period: 5m
     image: naru-pub-control-plane-jobs:current

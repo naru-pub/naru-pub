@@ -1,6 +1,6 @@
 import { reportPaymentInvariants } from "@/lib/payments/payment-invariants";
 
-// Daily from cron.ts: the rules the payment data must satisfy, reported as one
+// Daily through Absurd: the rules the payment data must satisfy, reported as one
 // operator event when any is broken (lib/payments/payment-invariants).
 reportPaymentInvariants()
   .then((found) => {

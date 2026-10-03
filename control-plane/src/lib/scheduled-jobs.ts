@@ -5,14 +5,8 @@ import {
   sendOperatorAlert,
 } from "@/lib/operator-alerts";
 
-// Every scheduled job is a cron_jobs row saying when it last started and how
-// often it should (see the migration that adds it). A job that fails tells the
-// operators itself (src/cli/cron.ts); one that stops starting cannot — the cron
-// process dead or hung, a schedule that never fires. So both long-running
-// processes, cron and worker, note a heartbeat of their own every minute and
-// look for any job, the other process's heartbeat included, that is overdue:
-// either one notices the other gone. Each stall is told once, and so is its
-// recovery.
+// pg_cron produces durable tasks; workers record starts and check for missing
+// schedules. Failure/recovery alert state is persisted across restarts.
 
 export type JobProcess = "cron" | "worker";
 
@@ -137,5 +131,51 @@ export async function checkStalledJobs(): Promise<{
       });
     }
     return result;
+  });
+}
+
+export async function noteJobResult(
+  name: string,
+  error: Error | null,
+): Promise<void> {
+  await db
+    .updateTable("cron_jobs")
+    .set(
+      error
+        ? {
+            failed_at: sql<Date>`coalesce(failed_at, now())`,
+            failure_message: error.message.slice(-4000),
+          }
+        : { failed_at: null, failure_message: null },
+    )
+    .where("name", "=", name)
+    .execute();
+}
+
+// Notification state commits only after sending, so a failed post retries next
+// heartbeat. Row locks serialize checks from multiple worker replicas.
+export async function checkJobFailures(): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    const jobs = await trx
+      .selectFrom("cron_jobs")
+      .selectAll()
+      .where(sql<boolean>`(failed_at is not null) <> failure_notified`)
+      .forUpdate()
+      .execute();
+    for (const job of jobs) {
+      const failed = job.failed_at !== null;
+      if (operatorAlertsConfigured())
+        await sendOperatorAlert({
+          title: `작업 ${failed ? "실패" : "복구"}: ${job.name}`,
+          lines: failed
+            ? (job.failure_message ?? "").trim().split("\n").slice(-8)
+            : [],
+        });
+      await trx
+        .updateTable("cron_jobs")
+        .set({ failure_notified: failed })
+        .where("id", "=", job.id)
+        .execute();
+    }
   });
 }

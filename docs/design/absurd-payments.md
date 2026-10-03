@@ -38,9 +38,10 @@ before closing shared resources, and the service restart policy restarts it.
 pg_cron enqueues an `enqueue_due_renewals` Absurd task hourly. The continuous
 payment worker scans due subscriptions and enqueues their individual renewal
 tasks. A UTC-hour idempotency key merges repeated triggers and deployment
-catch-up; subscription-level keys still prevent duplicate charges. Cron runs
-the remaining reconciliation and maintenance jobs. Its minute queue-draining
-subprocess and five-minute batch timeout have been removed.
+catch-up; subscription-level keys still prevent duplicate charges. The remaining
+reconciliation and maintenance schedules also spawn durable tasks, on a separate
+maintenance queue. The application cron service and its
+queue-draining subprocess have been removed. See [the full migration](cron-replacement.md).
 No new broker, service, or queue implementation is required. `runDueJobs` remains
 an integration-test helper; source checks prohibit production batch drains.
 

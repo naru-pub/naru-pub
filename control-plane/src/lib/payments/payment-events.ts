@@ -349,7 +349,7 @@ export async function prunePaymentLogs(now = new Date()) {
   };
 }
 
-// One run of a payment cron job (cli/cron.ts), so "did the 09:00 renewal run,
+// One run of a payment maintenance job, so "did the 09:00 renewal run,
 // and what did it do" has an answer after the container's log is gone. Best
 // effort: a run that cannot be recorded is still a run.
 export async function recordPaymentCronRun(run: {

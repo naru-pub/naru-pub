@@ -38,7 +38,6 @@
     "cleanup-expired-custom-domains": "tsx src/cli/cleanup-expired-custom-domains.ts",
     "cleanup-expired-github-deployments": "tsx src/cli/cleanup-expired-github-deployments.ts",
     "cleanup-site-data-grants": "tsx src/cli/cleanup-site-data-grants.ts",
-    "cron": "tsx src/cli/cron.ts",
     "worker": "tsx src/cli/worker.ts"
   },
   "dependencies": {

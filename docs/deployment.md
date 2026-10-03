@@ -17,7 +17,7 @@ uses, without Chromium, pnpm, devDependencies or the build cache. The blue and
 green slots run it. `control-plane-jobs` has the CLIs and migrations compiled
 to `dist/` by `scripts/build-cli.mjs`, only the dependencies those import (not
 Next, React or the other web app packages, which the build refuses), and
-Chromium; `cron`, `worker` and migrations run from it with plain `node`, no
+Chromium; `worker` and migrations run from it with plain `node`, no
 `tsx`.
 
 To deploy, push to `main` and run this from the development machine:
@@ -89,13 +89,13 @@ For each deployment, `deploy-server.sh`:
    built from;
 2. pulls that commit's images from ghcr.io unless they are already loaded;
 3. points the `:current` tags at that commit's images;
-4. keeps the active web slot serving, stops cron/worker, and runs compatible
+4. keeps the active web slot serving, stops the worker, and runs compatible
    database migrations from the new jobs image, then configures the pg_cron
-   renewal schedule and enqueues an immediate catch-up scan;
+   payment and maintenance schedules and enqueues catch-up tasks;
 5. starts the inactive slot and waits for the control plane, database, and
    hosted-site proxy to become healthy;
 6. reloads nginx to atomically direct new requests to the healthy slot;
-7. recreates the cron and worker processes from the new jobs image; and
+7. recreates the worker process from the new jobs image; and
 8. stops the previous slot and removes release images nothing can come back to.
 
 Ordinary deployments keep the active control plane serving until the new slot
@@ -127,7 +127,7 @@ traffic to it, and stops the slot it left. The slots use
 restart.
 
 Rollback only switches HTTP services. It does not reverse database migrations
-or roll back cron and worker code. After a breaking migration, use a forward
+or roll back worker code. After a breaking migration, use a forward
 fix; an older image may no longer work with the current schema. Backward
 compatibility is not maintained solely to support rollback.
 
@@ -254,13 +254,13 @@ exiting. The image smoke test checks that it exits cleanly within 20 seconds;
 deployment still allows 300 seconds for genuinely running work to drain.
 
 The existing worker process now hosts both Fedify and the continuous Absurd
-payment worker. On ordinary deployments, cron and worker stop gracefully while
+payment worker. On ordinary deployments, the worker stops gracefully while
 the active HTTP slot remains serving. The worker drains both listeners before
 closing shared databases; Compose's stop grace period is five minutes. The image
 smoke test verifies payment-worker startup, drain, and exit code zero. No queue
 migration or separate worker service is required.
 
-Renewal scheduling requires pg_cron installed and preloaded in PostgreSQL.
+Payment and maintenance scheduling requires pg_cron installed and preloaded in PostgreSQL.
 The deployment CLI connects to `cron.database_name`, creates the extension
 there if necessary, and updates the named hourly job with
 `cron.schedule_in_database`, targeting the application database and role.
@@ -268,3 +268,8 @@ That role needs permission to install/manage pg_cron in its metadata database,
 and pg_cron needs database authentication to execute the command. Production
 already preloads pg_cron, so this change needs no PostgreSQL restart.
 Configuration failure stops deployment before the new background worker starts.
+
+The application cron service is retired. The deployment script stops and removes
+its old container before migration, preserving database task state. Maintenance
+tasks have separate Absurd capacity and stop their child scripts on shutdown so
+unfinished attempts can retry. See [the cron replacement](design/cron-replacement.md).

@@ -1,6 +1,6 @@
 // Compiles src/cli and src/migrations to dist/ for the jobs image, which runs
 // them with plain node instead of tsx: tsx transpiles every module on every
-// start, which costs each cron job and the long-running cron and worker
+// start, which costs each maintenance job and the long-running worker
 // processes about 60MB and 0.2s. Locally, `pnpm <script>` still uses tsx.
 //
 // Each CLI is one bundle of our own code. Runtime dependencies stay imports,

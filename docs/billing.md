@@ -72,21 +72,21 @@
 - **웹훅** (`/admin/webhooks`): 받은 웹훅 하나하나와 나루가 한 일, 응답 코드, (가린) 본문. 기간(24시간·7일)과 5xx로 거릅니다.
 - **빌링키 삭제** (`/admin/billing-keys`): Toss에서 아직 지우지 못한 빌링키와 시도 횟수·마지막 오류.
 - **Toss 호출** (`/admin/toss-calls`): 나루가 Toss에 보낸 모든 요청과 응답(5년 보관).
-- **결제 기록** (`/admin/records`): 결제 cron 작업마다 마지막 실행과 그 결과·출력 끝부분(`payment_cron_runs`, 1년), 보내거나 실패한 결제 메일(`payment_mails`, 1년), 성공하지 못한 결제창(`toss_window_outcomes`, 5년). 계정 이름으로 거릅니다. 결제창 기록은 카드 등록·결제 창이 실패하거나 닫혔을 때 Toss가 failUrl이나 팝업 오류로만 알려 주는 코드와 메시지로, `/support`가 `api/account/payment-window`로 보내 남깁니다(그 계정의 등록·주문일 때만, 창과 코드마다 한 번).
+- **결제 기록** (`/admin/records`): 결제 유지보수 작업마다 마지막 실행과 그 결과·출력 끝부분(`payment_cron_runs`, 1년), 보내거나 실패한 결제 메일(`payment_mails`, 1년), 성공하지 못한 결제창(`toss_window_outcomes`, 5년). 계정 이름으로 거릅니다. 결제창 기록은 카드 등록·결제 창이 실패하거나 닫혔을 때 Toss가 failUrl이나 팝업 오류로만 알려 주는 코드와 메시지로, `/support`가 `api/account/payment-window`로 보내 남깁니다(그 계정의 등록·주문일 때만, 창과 코드마다 한 번).
 - **결제 실험실** (`/admin/lab`): 테스트 키 환경에서만 보입니다(아래).
 - **게시판** (`/admin/board`).
 
 ## 예약 작업 감시
 
-cron이 돌리는 작업마다(1분마다 도는 것부터 매일 한 번 도는 것까지) `cron_jobs`에 마지막으로 시작한 시각과 주기를 적습니다(`lib/scheduled-jobs.ts`). 실패한 작업은 cron이 스스로 알리지만, 아예 시작하지 않는 작업 — cron 프로세스가 죽거나 멈춘 경우, 예약이 불리지 않은 경우 — 은 알릴 수 없습니다. 그래서 cron과 worker 프로세스가 1분마다 각자의 심장 박동(`cron`, `worker` 행)을 적고, 주기에 유예(주기의 10분의 1, 적어도 5분)를 더한 시간이 지나도록 시작하지 않은 작업을 찾아 운영자 Discord 채널에 '예약 작업 멈춤'을, 다시 시작하면 '예약 작업 재개'를 한 번씩 알립니다. 서로의 심장 박동도 보므로 cron이 죽으면 worker가, worker가 죽으면 cron이 알립니다. 둘 다 멈추는 경우(서버 전체가 멈춘 경우)는 `CRON_HEARTBEAT_URL`의 외부 감시가 알립니다.
+모든 예약 작업은 pg_cron이 Absurd에 넣고 worker가 실행합니다. `cron_jobs`에 작업이 마지막으로 시작한 시각과 주기를 적고, 주기에 유예(주기의 10분의 1, 적어도 5분)를 더한 시간이 지나도록 시작하지 않은 작업을 찾아 운영자 Discord 채널에 '예약 작업 멈춤'을, 다시 시작하면 '예약 작업 재개'를 한 번씩 알립니다. 작업 실패·복구 알림 상태도 DB에 보관하므로 worker 재시작으로 잃지 않고, 알림 전송 실패는 다음 심장 박동에서 다시 시도합니다. worker는 1분마다 심장 박동을 적고 외부 `CRON_HEARTBEAT_URL`을 부릅니다. worker나 서버 전체가 멈추면 외부 감시가 알립니다. 별도 cron 프로세스는 없습니다.
 
 ## 결제 이벤트 알림
 
 결제와 정기 결제의 상태가 바뀌는 곳마다 `payment_events`에 한 줄을 남깁니다(`lib/payments/payment-events.ts`). 대부분 그 변경과 같은 트랜잭션 안에서 기록하므로, 이벤트는 변경이 실제로 일어났을 때만 남습니다. 종류: 결제 완료(정기·한 번만), 결제 카드 변경, 결제 실패, 결과 불분명, 연체(past_due) 전환, 환불, 정기 결제 예약, 정기 결제 취소(사용자·환불), 빌링키 삭제(`BILLING_DELETED`), 주문 만료(결제창을 닫은 주문 포함), 빌링키 삭제 지연(5번 실패).
 
-운영 환경 — 모든 Toss 키가 라이브 키(`live_…`)일 때(`isTossLiveMode`) — 에서는 cron의 `send-payment-event-digest.ts`(매분)가 아직 알리지 않은 이벤트를 운영자 Discord 채널에 **한 메시지로 묶어** 올립니다(`lib/operator-alerts.ts`, 메일은 쓰지 않습니다). 한 메시지(2000자)에 다 들어가지 않으면 들어가는 만큼 적고 나머지 건수와 `/admin/events` 주소를 붙입니다. 새 이벤트가 2분 동안 없으면 보내고, 이벤트가 계속 들어와도 가장 오래된 것이 15분을 기다렸으면 보냅니다. 그래서 갱신 cron 한 번, 환불과 그에 따른 정기 결제 취소는 한 메시지로 옵니다. 실패 이벤트(`FAILURE_EVENT_KINDS`: 결제 실패, 결과 불분명, 결제됐으나 기간 미부여, 카드 등록 실패(가입·카드 변경에서 Toss가 빌링키 발급을 거절했거나 결과를 알 수 없을 때), 연체 전환, 빌링키 삭제 지연, 결제 작업 실패, 결제 데이터 이상, Toss 거래 불일치)는 기다리지 않고 다음 실행(1분 안)에 그때 대기 중인 이벤트와 함께 올립니다. 올린 뒤에야 `notified_at`을 적으므로, Discord가 받지 않으면 다음 실행이 다시 올립니다. 테스트 키 환경에서는 실패 이벤트만 `[나루 결제·테스트]`를 붙여 올리고, 나머지는 기록만 합니다.
+운영 환경 — 모든 Toss 키가 라이브 키(`live_…`)일 때(`isTossLiveMode`) — 에서는 Absurd 유지보수 작업 `send-payment-event-digest.ts`(매분)가 아직 알리지 않은 이벤트를 운영자 Discord 채널에 **한 메시지로 묶어** 올립니다(`lib/operator-alerts.ts`, 메일은 쓰지 않습니다). 한 메시지(2000자)에 다 들어가지 않으면 들어가는 만큼 적고 나머지 건수와 `/admin/events` 주소를 붙입니다. 새 이벤트가 2분 동안 없으면 보내고, 이벤트가 계속 들어와도 가장 오래된 것이 15분을 기다렸으면 보냅니다. 그래서 갱신 작업 한 번, 환불과 그에 따른 정기 결제 취소는 한 메시지로 옵니다. 실패 이벤트(`FAILURE_EVENT_KINDS`: 결제 실패, 결과 불분명, 결제됐으나 기간 미부여, 카드 등록 실패(가입·카드 변경에서 Toss가 빌링키 발급을 거절했거나 결과를 알 수 없을 때), 연체 전환, 빌링키 삭제 지연, 결제 작업 실패, 결제 데이터 이상, Toss 거래 불일치)는 기다리지 않고 다음 실행(1분 안)에 그때 대기 중인 이벤트와 함께 올립니다. 올린 뒤에야 `notified_at`을 적으므로, Discord가 받지 않으면 다음 실행이 다시 올립니다. 테스트 키 환경에서는 실패 이벤트만 `[나루 결제·테스트]`를 붙여 올리고, 나머지는 기록만 합니다.
 
-이벤트는 1년, 웹훅 기록(`toss_webhook_deliveries`)과 Toss 호출 기록(`toss_calls`)은 5년 보관하고 같은 cron이 지웁니다 — 결제 기록 보존 기간(전자상거래법 5년)이자 Toss가 결제를 조회해 주는 기간이고, 이름·가린 카드 번호 같은 개인정보가 들어 있어 그보다 오래 두지 않습니다.
+이벤트는 1년, 웹훅 기록(`toss_webhook_deliveries`)과 Toss 호출 기록(`toss_calls`)은 5년 보관하고 같은 작업이 지웁니다 — 결제 기록 보존 기간(전자상거래법 5년)이자 Toss가 결제를 조회해 주는 기간이고, 이름·가린 카드 번호 같은 개인정보가 들어 있어 그보다 오래 두지 않습니다.
 
 ## 결제 실험실 (`/admin/lab`)
 
@@ -148,7 +148,7 @@ cron이 돌리는 작업마다(1분마다 도는 것부터 매일 한 번 도는
 - `absurd.*_payments`: Absurd가 관리하는 작업·실행·체크포인트·이벤트.
 - `toss_window_outcomes`: 성공하지 못한 결제창의 Toss 코드와 메시지(5년).
 - `payment_mails`: 보내거나 실패한 결제 메일, 받는 사람과 메일 서비스의 메시지 id(1년).
-- `payment_cron_runs`: 결제 cron 작업의 실행 기록과 출력 끝부분(1년, 매분 도는 작업 대기열은 한 일이 있거나 실패한 실행만).
+- `payment_cron_runs`: 결제 유지보수 작업의 실행 기록과 출력 끝부분(1년, 매분 도는 작업 대기열은 한 일이 있거나 실패한 실행만).
 - `payment_transactions`: 실제로 오간 돈의 기록. 결제마다 승인 한 줄, Toss가 한 취소마다 한 줄(Toss의 `transactionKey`로 한 번만). 추가만 되고 고쳐지지 않습니다(트리거가 `UPDATE`를 거절). `payments.refunded_amount`는 그 결제의 취소 합계이고, 매일의 데이터 확인이 둘을 맞춰 봅니다(`lib/payments/payment-ledger.ts`).
 - `payments`: Toss 청구 시도/성공 원장. `refunded_amount`, `refunded_at`은 Toss에서 확인한 누적 환불 정보이고, `last_reconciled_at`, `reconciliation_error`는 최근 대사 진단입니다.
 
@@ -160,7 +160,7 @@ cron이 돌리는 작업마다(1분마다 도는 것부터 매일 한 번 도는
 - `TOSS_BILLING_SECRET_KEY` / `TOSS_PAYMENT_SECRET_KEY`: 서버 전용 시크릿 키.
 - `TOSS_BILLING_MID`: `TOSS_BILLING_SECRET_KEY`의 상점아이디(MID). 빌링키는 발급한 MID로만 청구되므로, 갱신은 빌링키에 기록된 MID(`billing_keys.toss_mid`, 발급 응답의 `mId`)가 이 값과 다르면 청구하지 않고 '빌링키 MID 불일치' 실패 이벤트를 하루 한 번 남깁니다 — 카드 거절로 세지도, 구독자에게 실패 메일을 보내지도 않습니다. 라이브 키에서는 이 값이 없으면 아무 갱신도 청구하지 않습니다. 테스트 키에서는 없으면 확인하지 않습니다.
 - `TOSS_PAYMENT_MID`: `TOSS_PAYMENT_SECRET_KEY`의 상점아이디(MID). Toss는 결제를 그 결제를 만든 MID 아래에 두고 그 MID의 키로만 조회·취소하게 하므로, 결제에 기록된 MID(`payments.toss_mid`)가 그 결제 흐름의 MID(`TOSS_BILLING_MID`/`TOSS_PAYMENT_MID`)와 다르면 대사·환불·복구·웹훅은 Toss를 부르지 않습니다 — 대사는 이유를 `reconciliation_error`에 적고 확인한 것으로 세어 환불 동기화가 매번 다시 보지 않게 하고, 환불은 409로 거절하며 `/support/payments`에는 환불 버튼 대신 사유를 보여 줍니다. 아직 Toss가 답하지 않은 결제(`toss_mid` 없음)와 MID를 설정하지 않은 흐름은 막지 않습니다.
-- `CRON_HEARTBEAT_URL`(선택): cron이 1분마다 GET으로 부르는 외부 감시 주소(healthchecks.io 같은 서비스). 서버 전체가 멈춘 것은 서버 안의 어떤 프로세스도 알릴 수 없으므로, 그 서비스가 신호가 끊기면 알려 줍니다.
+- `CRON_HEARTBEAT_URL`(선택): worker가 1분마다 GET으로 부르는 외부 감시 주소(healthchecks.io 같은 서비스). 서버 전체가 멈춘 것은 서버 안의 어떤 프로세스도 알릴 수 없으므로, 그 서비스가 신호가 끊기면 알려 줍니다.
 - `RESEND_API_KEY` / `FROM_EMAIL` / `BASE_URL`: 결제 갱신/실패 안내 메일 발송에 사용합니다.
 - `OPERATOR_DISCORD_WEBHOOK_URL`: 운영자 알림(결제 이벤트, 작업 실패, 예약 작업 멈춤)을 올리는 Discord 웹훅. 누구든 이 주소로 채널에 글을 올릴 수 있으니 서버 환경에만 둡니다. 없으면 알리지 않습니다.
 
