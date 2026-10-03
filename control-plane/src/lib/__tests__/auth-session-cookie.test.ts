@@ -10,18 +10,24 @@ const user = {
   email: null,
   email_verified_at: null,
   discoverable: true,
+  deleted_at: null as Date | null,
 };
 jest.mock("../database", () => ({
   db: {
     selectFrom: () => {
       let id = "";
+      let liveOnly = false;
       const chain = {
         innerJoin: () => chain,
         select: () => chain,
-        where: (_: string, __: string, value: string) => ((id = value), chain),
+        where: (column: string, _: string, value: string | null) => {
+          if (column === "sessions.id") id = value!;
+          if (column === "users.deleted_at") liveOnly = true;
+          return chain;
+        },
         executeTakeFirst: async () => {
           const row = sessions.get(id);
-          return row
+          return row && (!liveOnly || user.deleted_at === null)
             ? {
                 ...user,
                 user_id: row.user_id,
@@ -95,6 +101,7 @@ const inDays = (days: number) => new Date(Date.now() + days * 86_400_000);
 
 beforeEach(() => {
   sessions.clear();
+  user.deleted_at = null;
   cookieHeader = "";
   canSet = true;
   setCookies = [];
@@ -121,6 +128,14 @@ describe("production session cookie", () => {
     cookieHeader = "__Host-auth_session=current";
     const result = await auth.validateRequest();
     expect(result.session?.id).toBe("current");
+  });
+
+  test("a deleted account cannot use an existing session", async () => {
+    const auth = loadAuth("production");
+    sessions.set("current", { user_id: "user-1", expires_at: inDays(30) });
+    cookieHeader = "__Host-auth_session=current";
+    user.deleted_at = new Date();
+    expect(await auth.validateRequest()).toEqual({ user: null, session: null });
   });
 
   test("moves a legacy session to a new __Host- session", async () => {
