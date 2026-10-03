@@ -90,7 +90,8 @@ For each deployment, `deploy-server.sh`:
 2. pulls that commit's images from ghcr.io unless they are already loaded;
 3. points the `:current` tags at that commit's images;
 4. keeps the active web slot serving, stops cron/worker, and runs compatible
-   database migrations from the new jobs image;
+   database migrations from the new jobs image, then configures the pg_cron
+   renewal schedule and enqueues an immediate catch-up scan;
 5. starts the inactive slot and waits for the control plane, database, and
    hosted-site proxy to become healthy;
 6. reloads nginx to atomically direct new requests to the healthy slot;
@@ -251,3 +252,19 @@ The federation worker aborts its queue listener on SIGTERM, drains heartbeat
 work, and closes both the postgres.js client and the shared Kysely pool before
 exiting. The image smoke test checks that it exits cleanly within 20 seconds;
 deployment still allows 300 seconds for genuinely running work to drain.
+
+The existing worker process now hosts both Fedify and the continuous Absurd
+payment worker. On ordinary deployments, cron and worker stop gracefully while
+the active HTTP slot remains serving. The worker drains both listeners before
+closing shared databases; Compose's stop grace period is five minutes. The image
+smoke test verifies payment-worker startup, drain, and exit code zero. No queue
+migration or separate worker service is required.
+
+Renewal scheduling requires pg_cron installed and preloaded in PostgreSQL.
+The deployment CLI connects to `cron.database_name`, creates the extension
+there if necessary, and updates the named hourly job with
+`cron.schedule_in_database`, targeting the application database and role.
+That role needs permission to install/manage pg_cron in its metadata database,
+and pg_cron needs database authentication to execute the command. Production
+already preloads pg_cron, so this change needs no PostgreSQL restart.
+Configuration failure stops deployment before the new background worker starts.

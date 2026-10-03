@@ -23,10 +23,6 @@ const SITE_UPDATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const CUSTOM_DOMAIN_INTERVAL = 3 * 60 * 1000; // 3 minutes
 const GITHUB_DEPLOYMENT_CLEANUP_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const CUSTOM_DOMAIN_TIMEOUT = 2 * 60 * 1000; // 2 minutes
-// Every due subscription is charged in one run, and a billing charge alone can
-// take up to 60 seconds at Toss. Runs hourly; a run still going when the next
-// hour comes is not started twice (runPaymentJob).
-const SUBSCRIPTION_CHARGE_TIMEOUT = 2 * 60 * 60 * 1000; // 2 hours
 const PAYMENT_INVARIANT_CHECK_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const BILLING_NOTIFICATION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const PAYMENT_RECONCILIATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -37,8 +33,6 @@ const BILLING_KEY_DELETION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 const PAYMENT_EVENT_DIGEST_INTERVAL = 60 * 1000; // 1 minute
 const PAYMENT_EVENT_DIGEST_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 const TOSS_TRANSACTION_CHECK_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-const PAYMENT_JOB_QUEUE_INTERVAL = 60 * 1000; // 1 minute
-const PAYMENT_JOB_QUEUE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 // One Toss lookup per paid payment in the lookback window.
 const PAYMENT_REFUND_SYNC_TIMEOUT = 60 * 60 * 1000; // 60 minutes
 const EXPIRED_CUSTOM_DOMAIN_CLEANUP_TIMEOUT = 5 * 60 * 1000; // 5 minutes
@@ -255,26 +249,16 @@ async function runPaymentJob(script: string, timeout: number) {
       script,
       timeout,
     );
-    // The job queue runs every minute and prints only when it did something;
-    // its quiet runs are not worth a row each.
-    const quiet =
-      script === "run-payment-jobs.ts" && success && !outputTail.trim();
-    if (!quiet) {
-      await recordPaymentCronRun({
-        script,
-        startedAt,
-        exitCode: code,
-        timedOut,
-        outputTail,
-      });
-    }
+    await recordPaymentCronRun({
+      script,
+      startedAt,
+      exitCode: code,
+      timedOut,
+      outputTail,
+    });
   } finally {
     paymentJobsRunning.delete(script);
   }
-}
-
-async function runSubscriptionCharger() {
-  await runPaymentJob("charge-subscriptions.ts", SUBSCRIPTION_CHARGE_TIMEOUT);
 }
 
 async function runBillingNotifications() {
@@ -307,10 +291,6 @@ async function runPaymentInvariantCheck() {
     "check-payment-invariants.ts",
     PAYMENT_INVARIANT_CHECK_TIMEOUT,
   );
-}
-
-async function runPaymentJobQueue() {
-  await runPaymentJob("run-payment-jobs.ts", PAYMENT_JOB_QUEUE_TIMEOUT);
 }
 
 async function runPaymentEventDigest() {
@@ -401,17 +381,6 @@ function scheduleDaily(
   runIfTime();
 }
 
-// Every hour at the given minute.
-function scheduleHourly(name: string, minute: number, fn: () => Promise<void>) {
-  scheduled.push({ name, everySeconds: 60 * 60 });
-  const run = started(name, fn);
-  const runIfTime = () => {
-    if (new Date().getUTCMinutes() === minute) run();
-  };
-  setInterval(runIfTime, 60 * 1000);
-  runIfTime();
-}
-
 // Best effort, like every alert here. CRON_HEARTBEAT_URL, when set, is pinged
 // after each check: an outside service (healthchecks.io and the like) that
 // expects it every minute notices what no process here can — the whole server
@@ -482,14 +451,6 @@ async function main() {
     55 * 1000,
   );
 
-  console.log("[cron] Scheduling payment job queue every minute");
-  scheduleEvery(
-    "payment-job-queue",
-    PAYMENT_JOB_QUEUE_INTERVAL,
-    runPaymentJobQueue,
-    15 * 1000,
-  );
-
   console.log("[cron] Scheduling payment event digest every minute");
   scheduleEvery(
     "payment-event-digest",
@@ -525,15 +486,6 @@ async function main() {
   // Daily jobs run at Korean times (scheduleDaily).
   console.log("[cron] Scheduling home directory updater daily at 22:00 KST");
   scheduleDaily("home-directory-updater", 22, 0, runHomeDirectoryUpdater);
-
-  // Renewals bill at 09:00 KST. The job runs every hour, but each run only
-  // charges what was due by the last 09:00 and was not tried in the last day
-  // (lib/payments/subscription-renewals), so the hours after 09:00 only make up a run
-  // missed for a deploy or a database blip.
-  console.log(
-    "[cron] Scheduling subscription charger hourly (renewals due by 09:00 KST)",
-  );
-  scheduleHourly("subscription-charger", 0, runSubscriptionCharger);
 
   console.log("[cron] Scheduling payment refund sync daily at 04:15 KST");
   scheduleDaily("payment-refund-sync", 4, 15, runPaymentRefundSync);

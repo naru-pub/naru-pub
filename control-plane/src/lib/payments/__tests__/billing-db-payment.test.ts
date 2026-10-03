@@ -130,7 +130,7 @@ const {
   prepareCardChange,
   prepareSubscription,
 } = require("@/lib/payments/subscription-signup") as typeof import("@/lib/payments/subscription-signup");
-const { enqueueJob, runDueJobs } =
+const { enqueueJob, runDueJobs, runPaymentWorker } =
   require("@/lib/payments/payment-jobs") as typeof import("@/lib/payments/payment-jobs");
 const {
   canMovePayment,
@@ -2997,6 +2997,64 @@ integration("payments against the database", () => {
       );
     }
 
+    test("payment progress is owner-only, uncached, and never executes payment work", async () => {
+      const { userId, orderId, paymentId } = await authenticated();
+      await acceptOneTime(userId, orderId);
+      const { GET } =
+        require("@/app/(main)/api/account/payments/[id]/route") as typeof import("@/app/(main)/api/account/payments/[id]/route");
+      const get = () =>
+        GET(new Request("http://localhost/api/account/payments/status"), {
+          params: Promise.resolve({ id: paymentId }),
+        });
+      const pending = await get();
+      expect(await pending.json()).toMatchObject({ state: "processing" });
+      expect(pending.headers.get("cache-control")).toBe("no-store");
+      expect(toss.confirmPayment).not.toHaveBeenCalled();
+      expect(toss.getPaymentByOrderId).not.toHaveBeenCalled();
+      await sql`update absurd.t_payments set state = 'failed' where params->'job'->>'paymentId' = ${paymentId}`.execute(
+        db,
+      );
+      expect(await (await get()).json()).toMatchObject({
+        state: "needs_attention",
+      });
+      auth.validateRequest.mockResolvedValue({
+        user: { id: await makeUser() },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      expect((await get()).status).toBe(404);
+      auth.validateRequest.mockResolvedValue({ user: null, session: null });
+      expect((await get()).status).toBe(401);
+    });
+
+    test("payment progress reports verified completion and business failure", async () => {
+      const { userId, orderId, paymentId } = await authenticated();
+      const accepted = await acceptOneTime(userId, orderId);
+      expect(await accepted.json()).toMatchObject({ paymentId });
+      const { GET } =
+        require("@/app/(main)/api/account/payments/[id]/route") as typeof import("@/app/(main)/api/account/payments/[id]/route");
+      const get = () =>
+        GET(new Request("http://localhost/api/account/payments/status"), {
+          params: Promise.resolve({ id: paymentId }),
+        });
+      toss.confirmPayment.mockResolvedValue(tossPayment(orderId, 12000));
+      await runDueJobs();
+      expect(await (await get()).json()).toMatchObject({ state: "completed" });
+      const failed = await authenticated();
+      await acceptOneTime(failed.userId, failed.orderId);
+      await db
+        .updateTable("payments")
+        .set({ status: "failed" })
+        .where("id", "=", failed.paymentId)
+        .execute();
+      expect(
+        await (
+          await GET(new Request("http://localhost/status"), {
+            params: Promise.resolve({ id: failed.paymentId }),
+          })
+        ).json(),
+      ).toMatchObject({ state: "failed" });
+    });
+
     test("one-time callbacks commit one durable approval and never charge inline", async () => {
       const { userId, orderId, paymentId } = await authenticated();
       const responses = await Promise.all([
@@ -4895,6 +4953,124 @@ integration("payments against the database", () => {
           .where("login_name", "=", "rollback-payer")
           .execute(),
       ).toEqual([]);
+    });
+
+    test("database renewal scan deduplicates its UTC slot and enqueues due plans", async () => {
+      const { RENEWAL_SCAN_COMMAND } =
+        require("@/lib/payments/renewal-schedule") as typeof import("@/lib/payments/renewal-schedule");
+      const userId = await makeUser(new Date(Date.now() - DAY));
+      const subscriptionId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: new Date(Date.now() - DAY),
+        nextBillingAt: new Date(Date.now() - DAY),
+      });
+      await sql.raw(RENEWAL_SCAN_COMMAND).execute(db);
+      await sql.raw(RENEWAL_SCAN_COMMAND).execute(db);
+      expect(
+        await db.selectFrom("absurd.t_payments").select("params").execute(),
+      ).toEqual([{ params: { job: { kind: "enqueue_due_renewals" } } }]);
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+      await runDueJobs();
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+      expect(
+        (await subscription(subscriptionId)).current_period_end,
+      ).not.toBeNull();
+      // A restarted producer in the same slot cannot produce another scan.
+      await sql.raw(RENEWAL_SCAN_COMMAND).execute(db);
+      await runDueJobs();
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+    });
+
+    test("continuous worker bounds concurrency and drains claimed tasks on shutdown", async () => {
+      for (let i = 0; i < 5; i++) {
+        const userId = await makeUser();
+        const subscriptionId = await makeSubscription(userId, {
+          status: "canceled",
+        });
+        await enqueueJob(db, {
+          kind: "subscription_canceled",
+          subscriptionId,
+          reason: "user",
+        });
+      }
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      email.sendSubscriptionCanceledEmail.mockImplementation(async () => {
+        await gate;
+        return { successful: true as const, messageId: "drain-test" };
+      });
+      const abort = new AbortController();
+      const running = runPaymentWorker(abort.signal);
+      try {
+        for (
+          let i = 0;
+          i < 200 && email.sendSubscriptionCanceledEmail.mock.calls.length < 4;
+          i++
+        )
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(4);
+        abort.abort();
+        // Shutdown must wait for the providers already called, without claiming
+        // the fifth task. Its durable intent remains for the next worker.
+        let stopped = false;
+        void running.then(() => {
+          stopped = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(stopped).toBe(false);
+        expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(4);
+        release();
+        await running;
+        const states = await db
+          .selectFrom("absurd.t_payments")
+          .select("state")
+          .execute();
+        expect(states.filter((row) => row.state === "completed")).toHaveLength(
+          4,
+        );
+        expect(states.filter((row) => row.state === "pending")).toHaveLength(1);
+      } finally {
+        abort.abort();
+        release();
+        await running;
+      }
+      await runDueJobs();
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(5);
+    });
+
+    test("continuous worker picks up work enqueued after startup without cron", async () => {
+      const abort = new AbortController();
+      const running = runPaymentWorker(abort.signal);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const userId = await makeUser();
+        const subscriptionId = await makeSubscription(userId, {
+          status: "canceled",
+        });
+        await enqueueJob(db, {
+          kind: "subscription_canceled",
+          subscriptionId,
+          reason: "user",
+        });
+        for (
+          let i = 0;
+          i < 200 &&
+          email.sendSubscriptionCanceledEmail.mock.calls.length === 0;
+          i++
+        )
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      } finally {
+        abort.abort();
+        await running;
+      }
+      expect(
+        await db.selectFrom("absurd.t_payments").select("state").execute(),
+      ).toEqual([{ state: "completed" }]);
     });
 
     test("a completed step survives a crash before task completion", async () => {

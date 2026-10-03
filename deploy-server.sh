@@ -449,6 +449,9 @@ echo "Running migrations..."
 # the Next.js server and has no migrations.
 docker compose run --rm --no-deps cron node dist/cli/migrate.mjs
 
+echo "Configuring pg_cron payment schedules..."
+docker compose run --rm --no-deps cron node dist/cli/configure-payment-schedules.mjs
+
 echo "Starting and checking the $target slot..."
 docker compose up -d --no-deps --force-recreate "$control_plane_service" "$proxy_service"
 wait_for_healthy "$control_plane_service"

@@ -44,7 +44,7 @@ function Callback({ registrationId }: { registrationId: string | null }) {
                 : data.scheduled
                   ? "/support?support=scheduled"
                   : data.chargeQueued
-                    ? "/support?support=pending"
+                    ? `/support/payments?processing=${encodeURIComponent(data.paymentId)}`
                     : "/support?support=success",
             );
             return;

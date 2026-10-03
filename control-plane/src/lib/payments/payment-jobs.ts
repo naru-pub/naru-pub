@@ -57,6 +57,7 @@ import { mailRecipient } from "@/lib/payments/payment-mails";
 // payment-job-v1 is versioned: preserve its handler until its tasks drain.
 
 export type PaymentJob =
+  | { kind: "enqueue_due_renewals" }
   | { kind: "confirm_one_time"; paymentId: string }
   | {
       kind: "initial_subscription_charge";
@@ -108,6 +109,15 @@ export type PaymentJob =
 export const MAX_ATTEMPTS = 8;
 export const PAYMENT_QUEUE = "payments";
 export const PAYMENT_TASK = "payment-job-v1";
+export const PAYMENT_RETRY_OPTIONS = {
+  max_attempts: MAX_ATTEMPTS,
+  retry_strategy: {
+    kind: "exponential",
+    base_seconds: 60,
+    factor: 2,
+    max_seconds: 21600,
+  },
+} as const;
 // A money operation can make several 90-second Toss calls. Claim one task at
 // a time so waiting in a claimed batch does not consume another task's lease.
 const CLAIM_SECONDS = 600;
@@ -150,20 +160,39 @@ export async function enqueueJob(
     select task_id, created from absurd.spawn_task(
       ${PAYMENT_QUEUE}, ${PAYMENT_TASK}, ${JSON.stringify(params)}::jsonb,
       ${JSON.stringify({
-        max_attempts: MAX_ATTEMPTS,
+        ...PAYMENT_RETRY_OPTIONS,
         idempotency_key: opts.dedupeKey,
-        retry_strategy: {
-          kind: "exponential",
-          base_seconds: 60,
-          factor: 2,
-          max_seconds: 21600,
-        },
       })}::jsonb)
   `.execute(executor);
   const row = result.rows[0];
   return row.created ? row.task_id : null;
 }
 
+// The SDK owns the polling loop, capacity, claims and draining. Start it in
+// the existing background worker process; no minute cron or subprocess timeout.
+export async function runPaymentWorker(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  const worker = await workflows.startWorker({
+    workerId: `payments:${process.pid}`,
+    claimTimeout: CLAIM_SECONDS,
+    concurrency: 4,
+    batchSize: 1,
+    pollInterval: 0.5,
+    onError: (error) => console.error("[payments-worker] error", error),
+  });
+  console.log("[payments-worker] Started (concurrency=4)");
+  try {
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  } finally {
+    await worker.close();
+    console.log("[payments-worker] Drained");
+  }
+}
+
+// A bounded drain for integration tests. Production uses the SDK worker above.
 export async function runDueJobs(
   limit = 50,
 ): Promise<{ done: number; retried: number; failed: number }> {
@@ -187,6 +216,14 @@ export async function runDueJobs(
 
 async function handle(job: PaymentJob): Promise<void> {
   switch (job.kind) {
+    case "enqueue_due_renewals": {
+      const { noteJobStarted } = await import("@/lib/scheduled-jobs");
+      const { enqueueDueRenewals } =
+        await import("@/lib/payments/subscription-renewals");
+      await noteJobStarted("subscription-charger");
+      await enqueueDueRenewals();
+      return;
+    }
     case "confirm_one_time":
       return confirmOneTime(job.paymentId);
     case "initial_subscription_charge":

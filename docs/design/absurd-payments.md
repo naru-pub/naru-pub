@@ -23,12 +23,26 @@ Successful work and contention are checkpointed; other errors retry. Pending mon
 remain in the payment ledger and are revisited by the existing reconciliation
 and refund sweeps.
 
-The existing minute cron invokes `run-payment-jobs.ts`, which uses Absurd's
-SDK to claim and execute at most 50 tasks, one at a time. A 600-second claim
-allows several 90-second Toss requests without claiming other tasks in advance.
-Web requests only enqueue; notifications may arrive on the next minute run.
-The hourly subscription producer also drains a batch after enqueueing renewals.
-No new broker, service, or queue implementation is required.
+The existing background `worker` process runs Absurd's SDK worker alongside
+Fedify. It polls every 0.5 seconds and executes at most four tasks concurrently,
+claiming one task at a time only when capacity is available. The 600-second
+claim permits several 90-second Toss requests without holding claims for tasks
+waiting in a local batch. The SDK owns polling, capacity, claims and draining.
+
+SIGTERM/SIGINT stop both listeners, wait for claimed work and heartbeat calls,
+then close the databases. Compose allows five minutes for this shutdown, matching
+the deployment script. Process death still leaves durable tasks for Absurd's
+lease recovery. If either listener exits, the process stops and drains the other
+before closing shared resources, and the service restart policy restarts it.
+
+pg_cron enqueues an `enqueue_due_renewals` Absurd task hourly. The continuous
+payment worker scans due subscriptions and enqueues their individual renewal
+tasks. A UTC-hour idempotency key merges repeated triggers and deployment
+catch-up; subscription-level keys still prevent duplicate charges. Cron runs
+the remaining reconciliation and maintenance jobs. Its minute queue-draining
+subprocess and five-minute batch timeout have been removed.
+No new broker, service, or queue implementation is required. `runDueJobs` remains
+an integration-test helper; source checks prohibit production batch drains.
 
 ## Applying provider facts
 
@@ -147,7 +161,11 @@ identity/reason audit event commit together. Recovery never executes money in HT
 
 The one-time callback validates the authenticated user's stored order and amount,
 then commits `toss_payment_key` and a deduplicated `confirm_one_time` task together.
-It returns 202; the UI shows acceptance and points to payment history. Repeated
+It returns 202 with the payment ID; the callback opens payment history with a
+processing modal that polls the owner-only, uncached payment status endpoint.
+The modal displays completion, failure, scheduled start, or operator attention
+and refreshes history on a final result. Transient connection errors keep polling;
+closing the modal stops polling without canceling durable work. Repeated
 callbacks reuse the task and cannot replace its provider key. The ledger, rather
 than task params, supplies the key, order ID and amount to the executor.
 

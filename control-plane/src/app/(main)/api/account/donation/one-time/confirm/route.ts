@@ -133,6 +133,7 @@ export async function POST(request: NextRequest) {
           {
             success: true,
             chargeQueued: true,
+            paymentId: pendingPayment.id,
             message: "결제를 접수했습니다. 결과는 결제 내역에서 확인해 주세요.",
           },
           { status: 202 },

@@ -1,3 +1,5 @@
+import { PaymentProcessingModal } from "@/components/PaymentProcessingModal";
+import { parseUuid } from "@/lib/uuid";
 import { Fragment } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -42,9 +44,10 @@ function statusLabel(status: string, refundedAmount = 0) {
     case "done":
       return "결제 완료";
     case "failed":
+    case "aborted":
       return "결제 실패";
     case "pending":
-      return "대기 중";
+      return "결제 처리 중";
     case "canceled":
       return refundedAmount > 0 ? "환불" : "결제 취소";
     case "expired":
@@ -87,7 +90,11 @@ function refundBlockedLabel(reason: string) {
   }
 }
 
-export default async function PaymentsPage() {
+export default async function PaymentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ processing?: string }>;
+}) {
   const { user } = await validateRequest();
 
   if (!user) {
@@ -114,11 +121,21 @@ export default async function PaymentsPage() {
       "toss_flow",
     ])
     .where("user_id", "=", user.id)
-    .where("paid_at", "is not", null)
+    .where((eb) =>
+      eb.or([
+        eb("paid_at", "is not", null),
+        eb("toss_payment_key", "is not", null),
+        eb("subscription_id", "is not", null),
+      ]),
+    )
     .orderBy("created_at", "desc")
     .limit(100)
     .execute();
 
+  const processingId = parseUuid((await searchParams).processing);
+  const processingPayment = payments.find(
+    (payment) => payment.id === processingId,
+  );
   const now = new Date();
   const refundState = new Map(
     payments.map((payment) => [
@@ -135,6 +152,12 @@ export default async function PaymentsPage() {
 
   return (
     <div className="bg-background min-h-screen">
+      {processingPayment && (
+        <PaymentProcessingModal
+          key={processingPayment.id}
+          paymentId={processingPayment.id}
+        />
+      )}
       <div className="max-w-5xl mx-auto p-6 space-y-6">
         <div className="flex items-center">
           <Button asChild variant="ghost" size="sm">

@@ -87,6 +87,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   worker:
+    stop_grace_period: 5m
     image: naru-pub-control-plane-jobs:current
     pull_policy: never
     restart: always

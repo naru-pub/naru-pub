@@ -134,6 +134,13 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ).toEqual([]);
   });
 
+  test("production never drains payment batches", () => {
+    expect(
+      offenders(/\brunDueJobs\s*\(/, ["lib/payments/payment-jobs.ts"]),
+    ).toEqual([]);
+    expect(offenders(/run-payment-jobs|payment-job-queue/, [])).toEqual([]);
+  });
+
   test("application code never hard deletes users", () => {
     expect(
       offenders(

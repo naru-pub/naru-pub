@@ -514,6 +514,7 @@ type ConfirmOutcome = SignupResult<{
   // A card change whose overdue renewal is still not paid on the new card.
   renewalQueued?: boolean;
   chargeQueued?: boolean;
+  paymentId?: string;
 }>;
 
 function alreadySettled(sub: {
@@ -680,12 +681,13 @@ async function confirmAdoptedSignup(opts: {
   const key = await chargeableKey(db, sub.id);
   if (!key) return fail(409, SIGNUP_CHANGED_MESSAGE);
 
-  await db
+  const paymentId = await db
     .transaction()
     .execute((trx) => enqueueInitialCharge(trx, { ...sub, userId }));
   return {
     ok: true,
     chargeQueued: true,
+    paymentId,
     message: "카드를 등록했습니다. 첫 결제를 처리 중입니다.",
   };
 }
@@ -709,6 +711,7 @@ async function enqueueInitialCharge(
     },
     { dedupeKey: `initial-charge:${attempt.id}` },
   );
+  return attempt.id;
 }
 
 // Issues the new card's key and swaps it in for the old one, under the

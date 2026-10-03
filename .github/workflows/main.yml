@@ -77,8 +77,12 @@ jobs:
       - run: pnpm test:payments
       # Only the server binaries are needed; the script runs its own cluster
       # on a private socket.
-      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-16
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-16 postgresql-16-cron
       - run: pnpm test:payments:db
+        env:
+          NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
+
+      - run: bash scripts/test-payment-schedules-db.sh
         env:
           NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
 

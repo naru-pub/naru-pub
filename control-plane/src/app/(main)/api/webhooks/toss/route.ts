@@ -206,7 +206,7 @@ export async function POST(request: NextRequest) {
     // A cancel, or an order Toss ended without approving it (ABORTED,
     // EXPIRED): reconciliation brings the ledger, the paid time and the plan
     // in line under the account lock, as it does for every other path. It is
-    // an Absurd task, executed by the run-payment-jobs consumer; the webhook is
+    // an Absurd task, executed by the continuous Absurd worker; the webhook is
     // answered either way. A key that frees is deleted by the cron, not here
     // inside Toss's 10 seconds.
     const action = webhookLedgerAction(payment.status);

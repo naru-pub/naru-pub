@@ -1,3 +1,4 @@
+import { runPaymentWorker } from "@/lib/payments/payment-jobs";
 import { db } from "@/lib/database";
 import { closeAccountLockPool } from "@/lib/payments/account-lock";
 import { closeFederationDatabase, federation } from "@/lib/federation";
@@ -34,7 +35,10 @@ async function main() {
   process.on("SIGINT", shutdownInt);
 
   try {
-    await registerJobs("worker", [{ name: "worker", everySeconds: 60 }]);
+    await registerJobs("worker", [
+      { name: "worker", everySeconds: 60 },
+      { name: "subscription-charger", everySeconds: 3600 },
+    ]);
   } catch (error) {
     console.error("[worker] could not register its heartbeat:", error);
   }
@@ -50,8 +54,16 @@ async function main() {
   abort.signal.addEventListener("abort", () => clearInterval(watch));
 
   try {
-    await federation.startQueue(undefined, { signal: abort.signal });
-    console.log("[worker] Queue listener exited");
+    // If either listener exits, drain the other before closing their shared DB.
+    const listeners = await Promise.allSettled([
+      federation
+        .startQueue(undefined, { signal: abort.signal })
+        .finally(() => abort.abort()),
+      runPaymentWorker(abort.signal).finally(() => abort.abort()),
+    ]);
+    for (const result of listeners)
+      if (result.status === "rejected") throw result.reason;
+    console.log("[worker] Queue listeners exited");
   } finally {
     clearInterval(watch);
     await Promise.allSettled(heartbeatRuns);

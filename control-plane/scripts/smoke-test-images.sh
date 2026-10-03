@@ -118,6 +118,8 @@ for service in worker cron; do
   fi
 done
 
+wait_for "payment worker startup" 20 sh -c \
+  "docker logs '$run-worker' 2>&1 | grep -q 'payments-worker.*Started'"
 echo "Checking graceful worker shutdown..."
 docker stop --timeout 20 "$run-worker" >/dev/null
 if [[ "$(docker inspect -f '{{.State.ExitCode}}' "$run-worker")" != 0 ]]; then
@@ -126,6 +128,11 @@ if [[ "$(docker inspect -f '{{.State.ExitCode}}' "$run-worker")" != 0 ]]; then
 fi
 if ! docker logs "$run-worker" 2>&1 | grep -q 'Database connections closed'; then
   echo "Worker did not finish closing its database connections." >&2
+  exit 1
+fi
+
+if ! docker logs "$run-worker" 2>&1 | grep -q 'payments-worker.*Drained'; then
+  echo "Worker did not drain its payment tasks." >&2
   exit 1
 fi
 
