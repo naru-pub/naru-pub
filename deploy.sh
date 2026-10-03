@@ -35,6 +35,13 @@
 # here and needs Docker running; OrbStack is started if it is not.
 set -Eeuo pipefail
 
+# Opt into web downtime only for migrations incompatible with the serving slot.
+DEPLOY_DOWNTIME=${DEPLOY_DOWNTIME:-0}
+case "$DEPLOY_DOWNTIME" in
+  0|1) ;;
+  *) echo "DEPLOY_DOWNTIME must be 0 or 1." >&2; exit 2 ;;
+esac
+
 DEPLOY_HOST=${DEPLOY_HOST:-naru-pub-deploy}
 # Expanded by the server's shell, not this one.
 REMOTE_DIR=${REMOTE_DIR:-'~/Git/naru-pub'}
@@ -221,7 +228,7 @@ fi
 # deployed. Every later deploy leaves moving the checkout to deploy-server.sh,
 # which does it under its lock.
 echo "Switching the server to $COMMIT..."
-remote "test -x $REMOTE_DIR/deploy-server.sh || (cd $REMOTE_DIR && git fetch --quiet origin && git merge --ff-only --quiet $COMMIT) && $REMOTE_DIR/deploy-server.sh $COMMIT"
+remote "test -x $REMOTE_DIR/deploy-server.sh || (cd $REMOTE_DIR && git fetch --quiet origin && git merge --ff-only --quiet $COMMIT) && DEPLOY_DOWNTIME=$DEPLOY_DOWNTIME $REMOTE_DIR/deploy-server.sh $COMMIT"
 
 # The server has the images now, and any copies built here only existed to be
 # sent there. Keeping the ones just deployed makes a retry cheap; the build

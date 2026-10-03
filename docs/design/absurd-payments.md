@@ -74,8 +74,10 @@ alone cannot eliminate that external uncertainty.
 Downtime is acceptable and backward compatibility is not required. This is a
 repository-wide preference recorded in `AGENTS.md`.
 
-`deploy-server.sh` stops both web slots and the cron/worker processes before
-running migrations. The Absurd migration imports unfinished jobs, schedules,
+Ordinary deployments keep the active web slot serving while background
+processes stop and compatible migrations run. Breaking migrations use
+`DEPLOY_DOWNTIME=1 ./deploy.sh`, which stops both web slots as well. The Absurd
+queue adoption required this breaking cutover: it imports unfinished jobs, schedules,
 remaining retry budgets, and terminal deduplication history, then drops
 `payment_jobs`. Claims left by stopped workers do not delay the cutover. No
 compatibility trigger or legacy queue remains.

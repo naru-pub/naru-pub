@@ -24,6 +24,12 @@ export PATH="$HOME/.orbstack/bin:$PATH"
 
 cd "$(dirname "$0")"
 
+DEPLOY_DOWNTIME=${DEPLOY_DOWNTIME:-0}
+case "$DEPLOY_DOWNTIME" in
+  0|1) ;;
+  *) echo "DEPLOY_DOWNTIME must be 0 or 1." >&2; exit 2 ;;
+esac
+
 STATE_DIR=.deploy-state
 NGINX_DIR="$STATE_DIR/nginx"
 ACTIVE_FILE="$STATE_DIR/active-slot"
@@ -424,10 +430,19 @@ docker tag "$CONTROL_PLANE_IMAGE" naru-pub-control-plane:current
 docker tag "$JOBS_IMAGE" naru-pub-control-plane-jobs:current
 docker tag "$PROXY_IMAGE" naru-pub-proxy:current
 
-echo "Stopping application and background processes before migrations (downtime is acceptable)..."
-# Breaking migrations are allowed. No old producer or consumer may continue
-# using the previous schema while the new jobs image migrates it.
-docker compose stop --timeout 300 control-plane-blue control-plane-green cron worker
+# Ordinary releases keep the active HTTP slot serving until its replacement
+# passes health checks. Breaking migrations explicitly opt into a full cutover.
+case "$DEPLOY_DOWNTIME" in
+  0)
+    echo "Keeping the active web slot serving; stopping background processes before migrations..."
+    docker compose stop --timeout 300 cron worker
+    ;;
+  1)
+    echo "Stopping application and background processes for a breaking schema cutover..."
+    docker compose stop --timeout 300 control-plane-blue control-plane-green cron worker
+    ;;
+  *) echo "DEPLOY_DOWNTIME must be 0 or 1." >&2; exit 2 ;;
+esac
 
 echo "Running migrations..."
 # In the jobs image, through the cron service's settings: the web image is only

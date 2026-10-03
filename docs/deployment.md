@@ -89,17 +89,20 @@ For each deployment, `deploy-server.sh`:
    built from;
 2. pulls that commit's images from ghcr.io unless they are already loaded;
 3. points the `:current` tags at that commit's images;
-4. stops both web slots and the cron/worker processes, then runs database
-   migrations from the new jobs image;
+4. keeps the active web slot serving, stops cron/worker, and runs compatible
+   database migrations from the new jobs image;
 5. starts the inactive slot and waits for the control plane, database, and
    hosted-site proxy to become healthy;
 6. reloads nginx to atomically direct new requests to the healthy slot;
 7. recreates the cron and worker processes from the new jobs image; and
 8. stops the previous slot and removes release images nothing can come back to.
 
-Downtime is acceptable, and backward compatibility is not a requirement
-(see `AGENTS.md`). Stopping old processes before migration permits direct
-schema cutovers. The Absurd payment migration imports existing work and
+Ordinary deployments keep the active control plane serving until the new slot
+is healthy and traffic switches. For a breaking migration, run
+`DEPLOY_DOWNTIME=1 ./deploy.sh` (or set the same variable when running
+`deploy-server.sh` directly). This stops both web slots as well as background
+processes before migration. Backward compatibility is not required for these
+explicit cutovers; downtime remains acceptable when needed (see `AGENTS.md`). The Absurd payment migration imports existing work and
 removes the old queue; see [the payment deployment notes](design/absurd-payments.md#deployment).
 
 After the checkout moves, the script re-executes the checked-in copy once
@@ -127,9 +130,11 @@ or roll back cron and worker code. After a breaking migration, use a forward
 fix; an older image may no longer work with the current schema. Backward
 compatibility is not maintained solely to support rollback.
 
-Both web slots are stopped during migration. The stable gateway and hosted-site
-proxy can remain running, but control-plane requests are unavailable until the
-new slot starts and passes its health checks.
+With `DEPLOY_DOWNTIME=1`, control-plane requests are unavailable until the new
+slot starts and passes its health checks. The stable gateway and hosted-site
+proxy can remain running. Use this mode for schema changes that the old web
+code cannot safely use; ordinary releases must be compatible with the schema
+while the previous slot serves.
 
 Runtime state is stored under `.deploy-state/` and must not be committed. If the
 active-slot file is lost, inspect the nginx configuration and restore

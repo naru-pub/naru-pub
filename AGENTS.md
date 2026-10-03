@@ -2,10 +2,11 @@
 
 ## Deployment Preferences
 
-Downtime is acceptable, and backward compatibility is not a requirement.
-Prefer stopping old application and background processes before breaking
-migrations instead of maintaining compatibility bridges. Preserve payment
-records and unfinished durable work during cutovers.
+Avoid control-plane downtime for ordinary, schema-compatible deployments.
+For breaking migrations, downtime is acceptable and backward compatibility
+is not a requirement: deploy with `DEPLOY_DOWNTIME=1` to stop old application
+and background processes instead of maintaining compatibility bridges.
+Preserve payment records and unfinished durable work during cutovers.
 
 ## Kysely Migrations
 
