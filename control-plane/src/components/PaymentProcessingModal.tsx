@@ -69,7 +69,7 @@ export function PaymentProcessingModal({ paymentId }: { paymentId: string }) {
   function close() {
     setClosed(true);
     dialog.current?.close();
-    router.replace("/support/payments", { scroll: false });
+    router.replace("/support", { scroll: false });
   }
   return (
     <dialog
@@ -113,7 +113,7 @@ export function PaymentProcessingModal({ paymentId }: { paymentId: string }) {
         onClick={close}
         variant={state === "processing" ? "outline" : "default"}
       >
-        {state === "processing" ? "닫고 결제 내역 보기" : "확인"}
+        {state === "processing" ? "닫기" : "확인"}
       </Button>
     </dialog>
   );

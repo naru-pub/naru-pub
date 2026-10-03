@@ -39,7 +39,7 @@ function Callback() {
           if (res.ok && data.success) {
             router.replace(
               data.chargeQueued
-                ? `/support/payments?processing=${encodeURIComponent(data.paymentId)}`
+                ? `/support?processing=${encodeURIComponent(data.paymentId)}`
                 : "/support?support=success",
             );
             return;

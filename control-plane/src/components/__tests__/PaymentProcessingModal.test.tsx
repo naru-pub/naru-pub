@@ -42,7 +42,7 @@ beforeEach(() => {
 afterEach(() => {
   jest.useRealTimers();
 });
-test("polls pending approval until completion, then refreshes history and stops", async () => {
+test("polls pending approval until completion, then refreshes support and stops", async () => {
   fetchMock
     .mockResolvedValueOnce(response("processing"))
     .mockResolvedValueOnce(response("completed"));
@@ -92,8 +92,8 @@ test("closing pending processing stops polling and removes the modal URL", async
   fetchMock.mockResolvedValue(response("processing"));
   render(<PaymentProcessingModal paymentId="payment" />);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-  fireEvent.click(screen.getByRole("button", { name: "닫고 결제 내역 보기" }));
-  expect(router.replace).toHaveBeenCalledWith("/support/payments", {
+  fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+  expect(router.replace).toHaveBeenCalledWith("/support", {
     scroll: false,
   });
   await act(async () => {

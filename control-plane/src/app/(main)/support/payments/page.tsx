@@ -1,5 +1,3 @@
-import { PaymentProcessingModal } from "@/components/PaymentProcessingModal";
-import { parseUuid } from "@/lib/uuid";
 import { Fragment } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -90,11 +88,7 @@ function refundBlockedLabel(reason: string) {
   }
 }
 
-export default async function PaymentsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ processing?: string }>;
-}) {
+export default async function PaymentsPage() {
   const { user } = await validateRequest();
 
   if (!user) {
@@ -132,10 +126,6 @@ export default async function PaymentsPage({
     .limit(100)
     .execute();
 
-  const processingId = parseUuid((await searchParams).processing);
-  const processingPayment = payments.find(
-    (payment) => payment.id === processingId,
-  );
   const now = new Date();
   const refundState = new Map(
     payments.map((payment) => [
@@ -152,12 +142,6 @@ export default async function PaymentsPage({
 
   return (
     <div className="bg-background min-h-screen">
-      {processingPayment && (
-        <PaymentProcessingModal
-          key={processingPayment.id}
-          paymentId={processingPayment.id}
-        />
-      )}
       <div className="max-w-5xl mx-auto p-6 space-y-6">
         <div className="flex items-center">
           <Button asChild variant="ghost" size="sm">

@@ -1,3 +1,5 @@
+import { PaymentProcessingModal } from "@/components/PaymentProcessingModal";
+import { parseUuid } from "@/lib/uuid";
 import Link from "next/link";
 import { Heart, ReceiptText } from "lucide-react";
 
@@ -77,7 +79,11 @@ function SignedOutSupportCard() {
   );
 }
 
-export default async function SupportPage() {
+export default async function SupportPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ processing?: string }>;
+}) {
   const { user } = await validateRequest();
 
   if (!user) {
@@ -91,6 +97,16 @@ export default async function SupportPage() {
       </div>
     );
   }
+
+  const processingId = parseUuid((await searchParams).processing);
+  const processingPayment = processingId
+    ? await db
+        .selectFrom("payments")
+        .select("id")
+        .where("id", "=", processingId)
+        .where("user_id", "=", user.id)
+        .executeTakeFirst()
+    : null;
 
   const entitlement = await getUserEntitlement(user.id);
   const subscriptionRow = await plansOf(db, user.id)
@@ -108,6 +124,12 @@ export default async function SupportPage() {
 
   return (
     <div className="bg-background min-h-screen">
+      {processingPayment && (
+        <PaymentProcessingModal
+          key={processingPayment.id}
+          paymentId={processingPayment.id}
+        />
+      )}
       <div className="max-w-4xl mx-auto p-6 space-y-4">
         <SupportCard
           billingClientKey={process.env.TOSS_BILLING_CLIENT_KEY ?? ""}
