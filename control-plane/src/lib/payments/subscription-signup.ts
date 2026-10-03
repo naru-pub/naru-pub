@@ -125,6 +125,7 @@ function latestRegistration(executor: Executor, userId: string) {
     .selectFrom("card_registrations")
     .selectAll()
     .where("user_id", "=", userId)
+    .orderBy("created_at", "desc")
     .orderBy("id", "desc")
     .limit(1)
     .executeTakeFirst();

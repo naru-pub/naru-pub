@@ -3599,6 +3599,45 @@ integration("payments against the database", () => {
       return { userId, customerKey };
     }
 
+    test("a legacy UUIDv4 registration cannot supersede a newer UUIDv7 signup", async () => {
+      const userId = await makeUser();
+      const legacyId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+      await db
+        .insertInto("card_registrations")
+        .values({
+          id: legacyId,
+          user_id: userId,
+          kind: "signup",
+          billing_interval: "month",
+          created_at: new Date(Date.now() - DAY),
+        })
+        .execute();
+      const prepared = await prepareSubscription({ userId, interval: "month" });
+      if (!prepared.ok) throw new Error(prepared.message);
+      toss.issueBillingKey.mockResolvedValue({
+        billingKey: "new-registration-key",
+        customerKey: prepared.customerKey,
+      });
+      expect(
+        await acceptSubscription({
+          userId,
+          authKey: "new-auth",
+          customerKey: prepared.customerKey,
+          registrationId: prepared.registrationId,
+        }),
+      ).toMatchObject({ ok: true, chargeQueued: true });
+      expect(toss.issueBillingKey).toHaveBeenCalledTimes(1);
+      expect(
+        await acceptSubscription({
+          userId,
+          authKey: "old-auth",
+          customerKey: prepared.customerKey,
+          registrationId: legacyId,
+        }),
+      ).toMatchObject({ ok: false, status: 409 });
+      expect(toss.issueBillingKey).toHaveBeenCalledTimes(1);
+    });
+
     // The callback of the account's latest registration.
     async function confirm(userId: string, customerKey: string) {
       const registration = await db
