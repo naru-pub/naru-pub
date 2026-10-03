@@ -60,13 +60,13 @@ const email = require("@/lib/email") as jest.Mocked<
 >;
 const {
   addPaymentGrace,
-  applyOneTimePayment,
-  applySuccessfulCharge,
   endPlan,
   MAX_PAYMENT_RETRY_ATTEMPTS,
   scheduleSubscriptionStart,
 } =
   require("@/lib/payments/subscriptions") as typeof import("@/lib/payments/subscriptions");
+const { applyVerifiedTossPayment } =
+  require("@/lib/payments/payment-facts") as typeof import("@/lib/payments/payment-facts");
 const { chargeDueSubscriptions, enqueueDueRenewals } =
   require("@/lib/payments/subscription-renewals") as typeof import("@/lib/payments/subscription-renewals");
 const {
@@ -160,6 +160,55 @@ function tossPayment(
     totalAmount,
     ...extra,
   };
+}
+
+// Test fixtures prepare a recorded order before applying the same facts as
+// production. Purchase periods are derived by payment-facts, never passed in.
+async function grantOneTimeFixture(opts: {
+  userId: string;
+  amount: number;
+  years: number;
+  payment: TossPaymentResult;
+  paymentId?: string;
+}) {
+  const id =
+    opts.paymentId ??
+    (await makePendingPayment({
+      userId: opts.userId,
+      subscriptionId: null,
+      attemptKey: `one_time:${opts.years}:${opts.payment.orderId}`,
+      orderId: opts.payment.orderId,
+      amount: opts.amount,
+    }));
+  const result = await applyVerifiedTossPayment(id, opts.payment);
+  if (result.state !== "done") throw new Error("Fixture was not approved");
+  return result;
+}
+async function grantRecurringFixture(opts: {
+  subscriptionId: string;
+  userId: string;
+  interval: "month" | "year";
+  amount: number;
+  from: Date;
+  payment: TossPaymentResult;
+  paymentId?: string;
+  notice: "thank_you" | "receipt";
+}) {
+  const id =
+    opts.paymentId ??
+    (await makePendingPayment({
+      userId: opts.userId,
+      subscriptionId: opts.subscriptionId,
+      attemptKey: `subscription:${opts.subscriptionId}:${opts.payment.orderId}`,
+      orderId: opts.payment.orderId,
+      amount: opts.amount,
+    }));
+  const result = await applyVerifiedTossPayment(id, opts.payment, {
+    from: opts.from,
+    notice: opts.notice,
+  });
+  if (result.state !== "done") throw new Error("Fixture was not approved");
+  return result;
 }
 
 async function makeUser(supporterUntil: Date | null = null) {
@@ -438,7 +487,7 @@ integration("payments against the database", () => {
         currentPeriodEnd: periodEnd,
       });
 
-      const { periodStart, periodEnd: granted } = await applySuccessfulCharge({
+      const { periodStart, periodEnd: granted } = await grantRecurringFixture({
         notice: "receipt",
         subscriptionId: subId,
         userId,
@@ -460,7 +509,7 @@ integration("payments against the database", () => {
         billingKey: null,
       });
 
-      await applySuccessfulCharge({
+      await grantRecurringFixture({
         notice: "receipt",
         subscriptionId: subId,
         userId,
@@ -489,7 +538,7 @@ integration("payments against the database", () => {
         nextBillingAt: paidThrough,
       });
 
-      const { periodStart } = await applyOneTimePayment({
+      const { periodStart } = await grantOneTimeFixture({
         userId,
         amount: 12000,
         years: 1,
@@ -779,6 +828,210 @@ integration("payments against the database", () => {
     });
   });
 
+  describe("applying verified Toss facts", () => {
+    async function order() {
+      const userId = await makeUser();
+      const orderId = `verified-${userId}`;
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: `one_time:1:${orderId}`,
+        orderId,
+        amount: 12000,
+      });
+      return { userId, orderId, paymentId };
+    }
+
+    test.each([
+      ["order", { orderId: "another-order" }],
+      ["amount", { totalAmount: 1 }],
+    ])("rejects a mismatched %s before writing any facts", async (_, extra) => {
+      const { userId, orderId, paymentId } = await order();
+      await expect(
+        applyVerifiedTossPayment(paymentId, tossPayment(orderId, 12000, extra)),
+      ).rejects.toThrow("mismatch");
+      const row = await db
+        .selectFrom("payments")
+        .select(["status", "raw", "toss_payment_key"])
+        .where("id", "=", paymentId)
+        .executeTakeFirstOrThrow();
+      expect(row).toEqual({
+        status: "pending",
+        raw: null,
+        toss_payment_key: null,
+      });
+      expect(await supporterUntil(userId)).toBeNull();
+      expect(
+        await db.selectFrom("payment_transactions").selectAll().execute(),
+      ).toHaveLength(0);
+      expect(
+        await db.selectFrom("absurd.t_payments").selectAll().execute(),
+      ).toHaveLength(0);
+    });
+
+    test("rejects a different payment key or MID for an existing order", async () => {
+      const { userId, orderId, paymentId } = await order();
+      await applyVerifiedTossPayment(
+        paymentId,
+        tossPayment(orderId, 12000, { mId: "original-mid" }),
+      );
+      const until = await supporterUntil(userId);
+      // A response omitting MID must not erase the identity already verified.
+      await applyVerifiedTossPayment(paymentId, tossPayment(orderId, 12000));
+      for (const extra of [
+        { paymentKey: "another-key" },
+        { mId: "another-mid" },
+      ]) {
+        await expect(
+          applyVerifiedTossPayment(
+            paymentId,
+            tossPayment(orderId, 12000, extra),
+          ),
+        ).rejects.toThrow("mismatch");
+      }
+      expect(await supporterUntil(userId)).toEqual(until);
+      expect(
+        (
+          await db
+            .selectFrom("payments")
+            .select("toss_mid")
+            .where("id", "=", paymentId)
+            .executeTakeFirstOrThrow()
+        ).toss_mid,
+      ).toBe("original-mid");
+    });
+
+    test("provider metadata, ledger, access, events and notification roll back together", async () => {
+      const { userId, orderId, paymentId } = await order();
+      await expect(
+        db.transaction().execute(async (transaction) => {
+          await applyVerifiedTossPayment(
+            paymentId,
+            tossPayment(orderId, 12000),
+            { transaction },
+          );
+          throw new Error("crash before commit");
+        }),
+      ).rejects.toThrow("crash before commit");
+      const row = await db
+        .selectFrom("payments")
+        .select(["status", "raw", "toss_payment_key", "period_end"])
+        .where("id", "=", paymentId)
+        .executeTakeFirstOrThrow();
+      expect(row).toEqual({
+        status: "pending",
+        raw: null,
+        toss_payment_key: null,
+        period_end: null,
+      });
+      expect(await supporterUntil(userId)).toBeNull();
+      expect(
+        await db.selectFrom("payment_transactions").selectAll().execute(),
+      ).toHaveLength(0);
+      expect(
+        await db.selectFrom("payment_events").selectAll().execute(),
+      ).toHaveLength(0);
+      expect(
+        await db.selectFrom("absurd.t_payments").selectAll().execute(),
+      ).toHaveLength(0);
+      expect(
+        await applyVerifiedTossPayment(paymentId, tossPayment(orderId, 12000)),
+      ).toMatchObject({ state: "done", granted: true });
+    });
+
+    test("repeated responses and reconciliation grant the same order once", async () => {
+      const { userId, orderId, paymentId } = await order();
+      const fact = tossPayment(orderId, 12000);
+      const applied = await Promise.all([
+        applyVerifiedTossPayment(paymentId, fact),
+        applyVerifiedTossPayment(paymentId, fact),
+      ]);
+      expect(
+        applied.filter((result) => result.state === "done" && result.granted),
+      ).toHaveLength(1);
+      const until = await supporterUntil(userId);
+      toss.getPaymentByOrderId.mockResolvedValue(fact);
+      expect(await reconcilePayment(paymentId)).toEqual({ state: "done" });
+      expect(await supporterUntil(userId)).toEqual(until);
+      expect(
+        await db.selectFrom("payment_transactions").selectAll().execute(),
+      ).toHaveLength(1);
+      expect(
+        await db
+          .selectFrom("payment_events")
+          .selectAll()
+          .where("kind", "=", "charge_succeeded")
+          .execute(),
+      ).toHaveLength(1);
+      expect(
+        await db.selectFrom("absurd.t_payments").selectAll().execute(),
+      ).toHaveLength(1);
+    });
+
+    test("older unpaid facts cannot overwrite an approval or refund", async () => {
+      const { userId, orderId, paymentId } = await order();
+      await applyVerifiedTossPayment(paymentId, tossPayment(orderId, 12000));
+      const until = await supporterUntil(userId);
+      await applyVerifiedTossPayment(
+        paymentId,
+        tossPayment(orderId, 12000, { status: "EXPIRED" }),
+      );
+      expect(await supporterUntil(userId)).toEqual(until);
+      await applyVerifiedTossPayment(
+        paymentId,
+        tossPayment(orderId, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000, transactionKey: "verified-cancel" }],
+        }),
+      );
+      await applyVerifiedTossPayment(
+        paymentId,
+        tossPayment(orderId, 12000, { status: "IN_PROGRESS" }),
+      );
+      await applyVerifiedTossPayment(paymentId, tossPayment(orderId, 12000));
+      const row = await db
+        .selectFrom("payments")
+        .select(["status", "refunded_amount"])
+        .where("id", "=", paymentId)
+        .executeTakeFirstOrThrow();
+      expect(row).toEqual({ status: "canceled", refunded_amount: 12000 });
+      expect(await supporterUntil(userId)).toBeNull();
+    });
+
+    test("replaying an older partial cancel cannot reduce the refund ledger", async () => {
+      const { userId, orderId, paymentId } = await order();
+      await applyVerifiedTossPayment(paymentId, tossPayment(orderId, 12000));
+      const first = { cancelAmount: 5000, transactionKey: "verified-partial" };
+      const second = { cancelAmount: 7000, transactionKey: "verified-rest" };
+      await applyVerifiedTossPayment(
+        paymentId,
+        tossPayment(orderId, 12000, {
+          status: "CANCELED",
+          cancels: [first, second],
+        }),
+      );
+      const result = await applyVerifiedTossPayment(
+        paymentId,
+        tossPayment(orderId, 12000, {
+          status: "PARTIAL_CANCELED",
+          cancels: [first],
+        }),
+      );
+      expect(result).toMatchObject({ state: "refunded", amount: 12000 });
+      expect(
+        await db.selectFrom("payment_transactions").selectAll().execute(),
+      ).toHaveLength(3);
+      expect(
+        await db
+          .selectFrom("payment_events")
+          .selectAll()
+          .where("kind", "=", "refunded")
+          .execute(),
+      ).toHaveLength(1);
+      expect(await supporterUntil(userId)).toBeNull();
+    });
+  });
+
   describe("reconciliation", () => {
     // An ambiguous renewal resolved after a one-time year was approved beside
     // the plan: the renewal is granted after that year, not over it.
@@ -797,7 +1050,7 @@ integration("payments against the database", () => {
         orderId: "renewal-order",
         amount: 1000,
       });
-      const { periodEnd: prepaidUntil } = await applyOneTimePayment({
+      const { periodEnd: prepaidUntil } = await grantOneTimeFixture({
         userId,
         amount: 12000,
         years: 1,
@@ -830,7 +1083,7 @@ integration("payments against the database", () => {
         orderId: "month-order",
         amount: 1000,
       });
-      await applySuccessfulCharge({
+      await grantRecurringFixture({
         notice: "receipt",
         subscriptionId: subId,
         userId,
@@ -840,7 +1093,7 @@ integration("payments against the database", () => {
         payment: tossPayment("month-order", 1000),
         paymentId: monthId,
       });
-      const year = await applyOneTimePayment({
+      const year = await grantOneTimeFixture({
         userId,
         amount: 12000,
         years: 1,
@@ -1206,7 +1459,7 @@ integration("payments against the database", () => {
         orderId,
         amount: 12000,
       });
-      await applyOneTimePayment({
+      await grantOneTimeFixture({
         userId,
         amount: 12000,
         years: 1,
@@ -1426,7 +1679,7 @@ integration("payments against the database", () => {
         orderId,
         amount: 12000,
       });
-      await applyOneTimePayment({
+      await grantOneTimeFixture({
         userId,
         amount: 12000,
         years: 1,
@@ -1554,7 +1807,7 @@ integration("payments against the database", () => {
         orderId: `refund-order-${userId}`,
         amount: 12000,
       });
-      await applyOneTimePayment({
+      await grantOneTimeFixture({
         userId,
         amount: 12000,
         years: 1,
@@ -1665,6 +1918,69 @@ integration("payments against the database", () => {
       expect(await supporterUntil(userId)).toBeNull();
     });
 
+    test("a verified cancel response commits refund facts without another lookup", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      const subId = await makeSubscription(userId, { status: "active" });
+      toss.cancelPayment.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000, transactionKey: "direct-refund" }],
+        }),
+      );
+      toss.getPaymentByOrderId.mockRejectedValue(
+        new Error("lookup unavailable"),
+      );
+      expect(
+        await refundPayment({
+          paymentId,
+          overridePolicy: false,
+          reason: "test",
+        }),
+      ).toMatchObject({ subscriptionCanceled: true });
+      expect(toss.getPaymentByOrderId).not.toHaveBeenCalled();
+      expect(await supporterUntil(userId)).toBeNull();
+      expect((await subscription(subId)).status).toBe("canceled");
+      expect(
+        await db
+          .selectFrom("payment_transactions")
+          .selectAll()
+          .where("payment_id", "=", paymentId)
+          .where("kind", "=", "cancel")
+          .execute(),
+      ).toHaveLength(1);
+      await runDueJobs();
+      expect(email.sendPaymentCanceledEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendPaymentCanceledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ subscriptionCanceled: true }),
+      );
+    });
+
+    test("a mismatched cancellation response cannot update the account", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      const subId = await makeSubscription(userId, { status: "active" });
+      const before = await supporterUntil(userId);
+      toss.cancelPayment.mockResolvedValue(
+        tossPayment("another-refund-order", 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+      await expect(
+        refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
+      ).rejects.toThrow("mismatch");
+      expect(await supporterUntil(userId)).toEqual(before);
+      expect((await subscription(subId)).status).toBe("active");
+      expect(
+        await db
+          .selectFrom("payment_transactions")
+          .selectAll()
+          .where("kind", "=", "cancel")
+          .execute(),
+      ).toHaveLength(0);
+    });
+
     test("a refund Toss refused is reported, and can be tried again", async () => {
       const userId = await makeUser();
       const paymentId = await paidPayment(userId);
@@ -1683,7 +1999,10 @@ integration("payments against the database", () => {
       ).rejects.toBe(refusal);
 
       toss.cancelPayment.mockResolvedValueOnce(
-        tossPayment(`refund-order-${userId}`, 12000, { status: "CANCELED" }),
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
       );
       toss.getPaymentByOrderId.mockResolvedValue(
         tossPayment(`refund-order-${userId}`, 12000, {
@@ -1931,7 +2250,7 @@ integration("payments against the database", () => {
         orderId,
         amount: 12000,
       });
-      await applyOneTimePayment({
+      await grantOneTimeFixture({
         userId,
         amount: 12000,
         years: 1,
@@ -2249,7 +2568,7 @@ integration("payments against the database", () => {
     test("applying a payment twice grants it once", async () => {
       const { userId, orderId, paymentId } = await authenticated();
       const apply = () =>
-        applyOneTimePayment({
+        grantOneTimeFixture({
           userId,
           amount: 12000,
           years: 1,
@@ -3864,7 +4183,7 @@ integration("payments against the database", () => {
         .execute();
 
       await expect(
-        applyOneTimePayment({
+        grantOneTimeFixture({
           userId,
           amount: 12000,
           years: 1,
@@ -4754,7 +5073,7 @@ integration("payments against the database", () => {
         await setPlanStartedAt(subId, new Date(Date.now() - 10 * DAY));
         const approvedAt = new Date(Date.now() - 30 * DAY);
 
-        await applyOneTimePayment({
+        await grantOneTimeFixture({
           userId,
           amount: 12000,
           years: 1,
@@ -5397,7 +5716,7 @@ integration("payments against the database", () => {
       // The renewal's lookup fails; the reconciler grants the same order at
       // that moment.
       toss.getPaymentByOrderId.mockImplementationOnce(async () => {
-        await applySuccessfulCharge({
+        await grantRecurringFixture({
           notice: "receipt",
           subscriptionId: subId,
           userId,

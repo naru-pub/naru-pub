@@ -30,6 +30,29 @@ Web requests only enqueue; notifications may arrive on the next minute run.
 The hourly subscription producer also drains a batch after enqueueing renewals.
 No new broker, service, or queue implementation is required.
 
+## Applying provider facts
+
+`payment-facts.ts` exposes `applyVerifiedTossPayment(paymentId, response)`.
+Charge/confirm responses, cancellation responses, and reconciliation lookups
+all use it; webhooks still trigger a server-side lookup rather than applying
+untrusted webhook bodies. Purchase kind, amount and billing interval come
+from the recorded order and subscription.
+
+One database transaction locks the current payment, validates the order id,
+amount and existing provider identity, records provider metadata and ledger
+entries, updates the subscription and paid time, records events, and spawns
+notification tasks. Duplicate approvals do not extend access or enqueue another
+receipt. Older unpaid/approval observations cannot undo a recorded refund, and
+older cancellation snapshots cannot reduce the accumulated refund ledger.
+
+Renewal declines apply provider facts inside the transaction that updates their
+retry policy. Definitive declines with no provider order and local expiry of
+orders Toss never saw remain policy decisions in their existing producers.
+External calls, key deletion and email delivery happen outside this transaction.
+A successful refund response is applied directly; uncertain cancellation results
+still use reconciliation. The account locks, database constraints and recovery
+sweeps continue to protect operations around the provider call.
+
 ## Refund recovery
 
 Acceptance commits `payments.refund_requested_at`, the specific

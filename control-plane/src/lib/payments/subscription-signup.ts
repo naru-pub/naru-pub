@@ -1,3 +1,4 @@
+import { applyVerifiedTossPayment } from "@/lib/payments/payment-facts";
 import { randomUUID } from "crypto";
 import {
   LIVE_SUBSCRIPTION_STATUSES,
@@ -31,7 +32,6 @@ import {
   scheduledRecurringStart,
 } from "@/lib/payments/support-purchases";
 import {
-  applySuccessfulCharge,
   endPlan,
   plansOf,
   retireUnusedSignupKey,
@@ -42,7 +42,6 @@ import {
   BillingInterval,
   describeTossError,
   withNewOrderId,
-  paymentProviderMetadata,
   PLAN_AMOUNTS,
   PLAN_ORDER_NAMES,
   TossApiError,
@@ -619,7 +618,6 @@ async function confirmAdoptedSignup(opts: {
 }): Promise<ConfirmOutcome> {
   const { sub, userId, userRow } = opts;
   const interval = sub.billing_interval as BillingInterval;
-
   const now = new Date();
   const scheduledStart = scheduledRecurringStart(
     userRow.supporter_until ?? null,
@@ -690,22 +688,27 @@ async function confirmAdoptedSignup(opts: {
     );
   }
   if (outcome.kind === "declined") {
-    await failFirstCharge({
-      userId,
-      subscriptionId: sub.id,
-      paymentId: attempt.id,
-      amount: sub.amount,
-      reason: outcome.payment
-        ? `Toss 상태 ${outcome.payment.status}`
-        : describeTossError(outcome.error),
-      set: outcome.payment
-        ? {
-            ...paymentProviderMetadata(outcome.payment, "billing"),
-            toss_payment_key: outcome.payment.paymentKey,
-            raw: JSON.stringify(outcome.payment),
-          }
-        : { raw: JSON.stringify({ error: describeTossError(outcome.error) }) },
-    });
+    if (outcome.payment) {
+      const result = await applyVerifiedTossPayment(
+        attempt.id,
+        outcome.payment,
+        {
+          failureSummary: `정기 결제 첫 결제 실패 ${won(sub.amount)}: Toss 상태 ${outcome.payment.status} · 등록한 카드는 폐기`,
+        },
+      );
+      await deleteRetiredBillingKey(result.retiredKey);
+    } else {
+      await failFirstCharge({
+        userId,
+        subscriptionId: sub.id,
+        paymentId: attempt.id,
+        amount: sub.amount,
+        reason: describeTossError(outcome.error),
+        set: {
+          raw: JSON.stringify({ error: describeTossError(outcome.error) }),
+        },
+      });
+    }
     return fail(
       402,
       outcome.error instanceof TossApiError && outcome.error.message
@@ -717,14 +720,8 @@ async function confirmAdoptedSignup(opts: {
 
   // The thank-you goes with the grant (lib/payments/payment-jobs); a doubled callback,
   // or the reconciler settling this order first, finds it already owed.
-  await applySuccessfulCharge({
-    subscriptionId: sub.id,
-    userId,
-    interval,
-    amount: sub.amount,
+  await applyVerifiedTossPayment(attempt.id, payment, {
     from: now,
-    payment,
-    paymentId: attempt.id,
     notice: "thank_you",
   });
 

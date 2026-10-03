@@ -1,3 +1,4 @@
+import { applyVerifiedTossPayment } from "@/lib/payments/payment-facts";
 import { db } from "@/lib/database";
 import type {
   PaymentStatus,
@@ -26,7 +27,6 @@ import {
 } from "@/lib/payments/payment-events";
 import {
   addPaymentGrace,
-  applySuccessfulCharge,
   MAX_PAYMENT_RETRY_ATTEMPTS,
 } from "@/lib/payments/subscriptions";
 import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
@@ -204,10 +204,19 @@ async function markAttemptFailed(opts: {
   nextStatus: SubscriptionStatus;
   error: unknown;
   keepAttemptStatus?: boolean;
+  payment?: TossPaymentResult | null;
 }): Promise<{ jobs: Array<string | null> }> {
   const now = new Date();
   return db.transaction().execute(async (trx) => {
-    if (!opts.keepAttemptStatus) {
+    const reason =
+      opts.error instanceof Error ? opts.error.message : String(opts.error);
+    const summary = `갱신 결제 실패 ${won(opts.sub.amount)} (${opts.failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}회): ${reason}`;
+    if (opts.payment) {
+      await applyVerifiedTossPayment(opts.attempt.id, opts.payment, {
+        transaction: trx,
+        failureSummary: summary,
+      });
+    } else if (!opts.keepAttemptStatus) {
       await trx
         .updateTable("payments")
         .set({
@@ -235,15 +244,14 @@ async function markAttemptFailed(opts: {
       .where("id", "=", opts.sub.id)
       .where("status", "in", ["active", "scheduled"])
       .executeTakeFirst();
-    const reason =
-      opts.error instanceof Error ? opts.error.message : String(opts.error);
-    await recordPaymentEvent(trx, {
-      kind: "charge_failed",
-      userId: opts.sub.user_id,
-      paymentId: opts.attempt.id,
-      subscriptionId: opts.sub.id,
-      summary: `갱신 결제 실패 ${won(opts.sub.amount)} (${opts.failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}회): ${reason}`,
-    });
+    if (!opts.payment)
+      await recordPaymentEvent(trx, {
+        kind: "charge_failed",
+        userId: opts.sub.user_id,
+        paymentId: opts.attempt.id,
+        subscriptionId: opts.sub.id,
+        summary,
+      });
     const wentPastDue =
       Number(updated.numUpdatedRows ?? 0) > 0 && opts.nextStatus === "past_due";
     if (wentPastDue) {
@@ -454,7 +462,12 @@ export async function renewSubscription(
 
 type ChargeOutcome =
   | { state: "paid"; payment: TossPaymentResult }
-  | { state: "refused"; error: unknown; keepAttemptStatus: boolean }
+  | {
+      state: "refused";
+      error: unknown;
+      keepAttemptStatus: boolean;
+      payment?: TossPaymentResult | null;
+    }
   // sent: whether a charge for this order has ever gone to Toss. An order
   // only looked up (Toss down before anything was sent) cannot have charged.
   | { state: "unknown"; error: unknown; sent: boolean };
@@ -505,7 +518,12 @@ async function chargeAttempt(
     return { state: "paid", payment: outcome.payment };
   }
   if (outcome.kind === "declined") {
-    return { state: "refused", error: outcome.error, keepAttemptStatus: false };
+    return {
+      state: "refused",
+      error: outcome.error,
+      keepAttemptStatus: false,
+      payment: outcome.payment,
+    };
   }
   return { state: "unknown", error: outcome.error, sent: outcome.sent };
 }
@@ -557,8 +575,6 @@ async function chargeSubscription(
   now: Date,
   newCard: boolean,
 ) {
-  const interval = sub.billing_interval as BillingInterval;
-
   // Not charged, and nothing counted against the card: the plan stays due,
   // and the operators hear of it once a day (renewal jobs are daily).
   const midProblem = keyMidProblem(sub.key_mid);
@@ -592,14 +608,8 @@ async function chargeSubscription(
       : now;
     const base = periodEnd > now ? periodEnd : now;
     try {
-      await applySuccessfulCharge({
-        subscriptionId: sub.id,
-        userId: sub.user_id,
-        interval,
-        amount: sub.amount,
+      await applyVerifiedTossPayment(attempt.id, outcome.payment, {
         from: base,
-        payment: outcome.payment,
-        paymentId: attempt.id,
         notice: "receipt",
       });
     } catch (error) {
@@ -632,6 +642,7 @@ async function chargeSubscription(
     nextStatus,
     error: outcome.error,
     keepAttemptStatus: outcome.keepAttemptStatus,
+    payment: outcome.payment,
   });
 
   console.error(

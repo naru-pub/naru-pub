@@ -1,3 +1,7 @@
+import {
+  applyVerifiedTossPayment,
+  TossPaymentMismatchError,
+} from "@/lib/payments/payment-facts";
 import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 import { db } from "@/lib/database";
 import { enqueueJob } from "@/lib/payments/payment-jobs";
@@ -149,10 +153,8 @@ export type RefundOutcome = {
   subscriptionCanceled: boolean;
 };
 
-// Performs the refund end to end: cancel at Toss, then re-read the payment from
-// Toss so the ledger, supporter_until and the subscription all move in the one
-// reconciliation path that every other refund (webhook, daily sync) goes
-// through.
+// Cancel at Toss, then apply its verified response through the same transaction
+// as webhooks and reconciliation. Only ambiguous calls need another lookup.
 type RefundRequest = {
   paymentId: string;
   /** Operators may refund outside the policy window; owners may not. */
@@ -347,18 +349,26 @@ async function finishRefund(
   }
 
   // Toss accepted the cancel, so the refund has happened whatever the
-  // lookup that follows says: a failed lookup is caught up by the webhook and
-  // the refund sweep, and must not tell the supporter the refund failed.
-  if (!refunded) {
-    refunded = await reconcilePayment(payment.id).catch((error) => {
-      console.error(
-        `Refund of payment ${payment.id}: Toss canceled it, but reconciling failed`,
-        error,
-      );
-      return null;
-    });
+  // local transaction does: a failed commit is caught up by the durable task
+  // or sweep, and must not tell the supporter that Toss refused the refund.
+  if (canceled.kind === "canceled") {
+    refunded = await applyVerifiedTossPayment(payment.id, canceled.payment)
+      .then(async (result) => {
+        await deleteRetiredBillingKey(result.retiredKey);
+        return result;
+      })
+      .catch((error) => {
+        if (error instanceof TossPaymentMismatchError) throw error;
+        console.error(
+          `Refund of payment ${payment.id}: Toss canceled it, but applying its response failed`,
+          error,
+        );
+        return null;
+      });
   }
-  await stopRecurringBilling(payment.user_id, planRunningBefore);
+  if (refunded?.state !== "refunded" || refunded.amount === 0) {
+    await stopRecurringBilling(payment.user_id, planRunningBefore);
+  }
   // Whichever of this refund, its own reconciliation or the webhook it set
   // off got there first, the plan that was running is what the supporter
   // asked about.

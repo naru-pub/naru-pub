@@ -8,11 +8,10 @@ import {
   describeTossError,
   isDefinitiveTossFailure,
   oneTimeYearsForAmount,
-  paymentProviderMetadata,
   TossApiError,
 } from "@/lib/payments/toss";
 import { confirmOrder } from "@/lib/payments/toss-gateway";
-import { applyOneTimePayment } from "@/lib/payments/subscriptions";
+import { applyVerifiedTossPayment } from "@/lib/payments/payment-facts";
 import { notePaymentEvent, won } from "@/lib/payments/payment-events";
 import { oneTimeOrderSuperseded } from "@/lib/payments/payment-reconciliation";
 import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
@@ -128,35 +127,34 @@ export async function POST(request: NextRequest) {
         });
         if (outcome.kind !== "approved") {
           const declined = outcome.kind === "declined";
-          await notePaymentEvent({
-            kind: declined ? "charge_failed" : "charge_unresolved",
-            userId: user.id,
-            paymentId: pendingPayment.id,
-            summary: `한 번만 결제 ${won(pendingPayment.amount)} 승인 ${declined ? "실패" : "결과 불분명"}: ${
-              outcome.kind === "unknown" && outcome.tossStatus
-                ? `Toss 상태 ${outcome.tossStatus}`
-                : describeTossError(outcome.error)
-            }`,
-          });
+          if (outcome.kind !== "declined" || !outcome.payment)
+            await notePaymentEvent({
+              kind: declined ? "charge_failed" : "charge_unresolved",
+              userId: user.id,
+              paymentId: pendingPayment.id,
+              summary: `한 번만 결제 ${won(pendingPayment.amount)} 승인 ${declined ? "실패" : "결과 불분명"}: ${
+                outcome.kind === "unknown" && outcome.tossStatus
+                  ? `Toss 상태 ${outcome.tossStatus}`
+                  : describeTossError(outcome.error)
+              }`,
+            });
           if (outcome.kind === "declined") {
             const ended = outcome.payment;
-            await db
-              .updateTable("payments")
-              .set({
-                ...(ended
-                  ? {
-                      ...paymentProviderMetadata(ended, "one-time"),
-                      toss_payment_key: ended.paymentKey,
-                    }
-                  : {}),
-                status: "failed",
-                raw: JSON.stringify(
-                  ended ?? { error: describeTossError(outcome.error) },
-                ),
-              })
-              .where("id", "=", pendingPayment.id)
-              .where("status", "=", "pending")
-              .execute();
+            if (ended) {
+              await applyVerifiedTossPayment(pendingPayment.id, ended);
+            } else {
+              await db
+                .updateTable("payments")
+                .set({
+                  status: "failed",
+                  raw: JSON.stringify({
+                    error: describeTossError(outcome.error),
+                  }),
+                })
+                .where("id", "=", pendingPayment.id)
+                .where("status", "=", "pending")
+                .execute();
+            }
           }
           const message =
             outcome.kind === "declined" && outcome.error instanceof TossApiError
@@ -169,13 +167,7 @@ export async function POST(request: NextRequest) {
         }
         const payment = outcome.payment;
 
-        const period = await applyOneTimePayment({
-          userId: user.id,
-          amount: pendingPayment.amount,
-          years,
-          payment,
-          paymentId: pendingPayment.id,
-        });
+        await applyVerifiedTossPayment(pendingPayment.id, payment);
 
         // The grant owes the thank-you (lib/payments/payment-jobs); a doubled callback,
         // or the reconciler settling this order first, finds it already owed.

@@ -5,7 +5,7 @@ import { mailRecipient } from "@/lib/payments/payment-mails";
 // Mails the supporter a receipt for a recurring charge that just landed: a
 // renewal, a scheduled first charge, or either one settled late by the
 // reconciler. The signup's own first charge is answered by its thank-you mail
-// instead. Call it only when applySuccessfulCharge reports `granted`, so one
+// instead. The shared fact transaction enqueues it only on a new grant, so one
 // payment gets one receipt. Run as a payment job (lib/payments/payment-jobs): a failed
 // send throws, and the job is tried again; it never undoes the charge.
 export async function sendChargeReceipt(paymentId: string): Promise<void> {

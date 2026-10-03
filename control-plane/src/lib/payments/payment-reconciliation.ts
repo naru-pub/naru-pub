@@ -1,35 +1,23 @@
 import { randomUUID } from "crypto";
 import {
-  isOneOf,
-  LIVE_SUBSCRIPTION_STATUSES,
   ONE_TIME_BLOCKING_STATUSES,
   type PaymentStatus,
 } from "@/lib/payments/payment-states";
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import {
-  BillingInterval,
   describeTossError,
-  oneTimeYearsForAmount,
   OtherMidError,
   paymentFlowForRecord,
   paymentOfOtherMid,
-  paymentProviderMetadata,
   TossPaymentResult,
 } from "@/lib/payments/toss";
-import {
-  applyOneTimePayment,
-  applySuccessfulCharge,
-  endPlan,
-  retireUnusedSignupKey,
-} from "@/lib/payments/subscriptions";
+import { retireUnusedSignupKey } from "@/lib/payments/subscriptions";
 import { withAccountLock } from "@/lib/payments/account-lock";
 import { confirmOrder, lookupOrder } from "@/lib/payments/toss-gateway";
 import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payments/payment-events";
-import { enqueueJob } from "@/lib/payments/payment-jobs";
-import { recordCancels } from "@/lib/payments/payment-ledger";
-import { lockPaidTime, recomputePaidTime } from "@/lib/payments/paid-time";
+import { applyVerifiedTossPayment } from "@/lib/payments/payment-facts";
 
 // An order Toss has never heard of is given up after this long. A one-time
 // order exists at Toss only once the buyer has opened the payment window,
@@ -161,269 +149,12 @@ async function reconcilePaymentCore(
   ) {
     tossPayment = await confirmAuthenticatedPayment(payment, tossPayment);
   }
-  // 나루 sells no partial refunds; a partial cancel made in the Toss
-  // dashboard undoes the purchase like a full one (supporterUntilFromLedger),
-  // so it is recorded as canceled, with the amount Toss gave back.
-  const tossStatus = tossPayment.status.toLowerCase();
-  const status = tossStatus === "partial_canceled" ? "canceled" : tossStatus;
-
-  // Persist the provider's current transaction identity even when the ledger
-  // was already marked done; this backfills MID data for historic rows during
-  // normal reconciliation.
-  await db
-    .updateTable("payments")
-    .set({
-      ...paymentProviderMetadata(
-        tossPayment,
-        paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
-      ),
-      toss_payment_key: tossPayment.paymentKey,
-      raw: JSON.stringify(tossPayment),
-    })
-    .where("id", "=", payment.id)
-    .execute();
-
-  if (status !== "done") {
-    const finalStatuses: PaymentStatus[] = [
-      "canceled",
-      "aborted",
-      "expired",
-      "failed",
-    ];
-    if (isOneOf(finalStatuses, status)) {
-      // Read from the ledger, which keeps each cancel Toss reports once.
-      let refundedAmount = 0;
-      let refundedAt: Date | null = null;
-
-      const { retiredKey, subscriptionCanceled } = await db
-        .transaction()
-        .execute(async (trx) => {
-          // Read under a lock, so of two reconciliations that see the same
-          // refund — the refund call's own and the webhook it set off — only
-          // one finds it new.
-          const before = await trx
-            .selectFrom("payments")
-            .select("refunded_amount")
-            .where("id", "=", payment.id)
-            .forUpdate()
-            .executeTakeFirstOrThrow();
-          // The user next, before the ledger is read: a charge granted while
-          // this runs holds this lock (payments, users, subscriptions), so its
-          // period is in the ledger read below rather than overwritten by a
-          // supporter_until recomputed without it.
-          await lockPaidTime(trx, payment.user_id);
-          ({ refundedAmount, refundedAt } = await recordCancels(trx, {
-            paymentId: payment.id,
-            payment: tossPayment,
-            fallbackAt: new Date(),
-          }));
-          await trx
-            .updateTable("payments")
-            .set({
-              ...paymentProviderMetadata(
-                tossPayment,
-                paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
-              ),
-              toss_payment_key: tossPayment.paymentKey,
-              status,
-              refunded_amount: refundedAmount,
-              refunded_at: refundedAt,
-              raw: JSON.stringify(tossPayment),
-            })
-            .where("id", "=", payment.id)
-            .execute();
-
-          // Refunding takes back the time the refunded money paid for. Without
-          // this a chargeback bought a free supporter year: the money went back
-          // and the entitlement stayed. Recomputed from the ledger rather than
-          // subtracted, so a refund cannot disturb periods other payments paid
-          // for. Only when this reconciliation found new refunded money: an
-          // order that simply failed or expired paid for nothing and changes
-          // nothing.
-          const newlyRefunded = refundedAmount > before.refunded_amount;
-          const recomputed = newlyRefunded
-            ? await recomputePaidTime(trx, payment.user_id)
-            : null;
-
-          // A refund ends the billing relationship, not just this one charge:
-          // the recurring plan the account had when the money went back must
-          // not charge the card again — the refunded renewal's own plan, or
-          // one running beside a refunded one-time payment. Done here, the
-          // first time the refund is seen, so a refund made in the Toss
-          // dashboard or one whose cancel call got no answer stops it as well
-          // as one made through refundPayment. Its cancel is told in the
-          // refund's own mail.
-          //
-          // Only a plan that already existed when the refund happened: one the
-          // supporter started since — before a late webhook or the refund sweep
-          // brought the refund in — is theirs to keep.
-          let stopped: { id: string; retiredKey: string | null } | null = null;
-          if (newlyRefunded) {
-            const refundedBy = refundedAt ?? new Date();
-            const query = trx
-              .selectFrom("subscriptions")
-              .select("id")
-              .where("user_id", "=", payment.user_id)
-              .where("status", "in", LIVE_SUBSCRIPTION_STATUSES);
-            // An accepted local refund targets the plan captured at request
-            // time. Dashboard refunds still use the provider's cancel time.
-            const live = payment.refund_requested_at
-              ? payment.refund_subscription_id
-                ? await query
-                    .where("id", "=", payment.refund_subscription_id)
-                    .executeTakeFirst()
-                : undefined
-              : await query
-                  .where("created_at", "<=", refundedBy)
-                  .executeTakeFirst();
-            const ended = live
-              ? await endPlan(trx, live.id, {
-                  summary: () => "환불에 따라 정기 결제도 취소",
-                  at: refundedBy,
-                })
-              : null;
-            if (live && ended) {
-              stopped = { id: live.id, retiredKey: ended.retiredKey };
-            }
-          }
-          // A plan the refund leaves running — one started after the refund —
-          // must charge when the paid time it now has ends. Its own dates may
-          // still point past that (prepaid time a scheduled start waited for),
-          // and left there it shows as running while access is gone. Pulled
-          // back, never pushed out; with no paid time left it is charged on
-          // the next run.
-          if (newlyRefunded && !stopped) {
-            const due =
-              recomputed && recomputed > new Date() ? recomputed : new Date();
-            await trx
-              .updateTable("subscriptions")
-              .set({
-                current_period_end: due,
-                next_billing_at: due,
-                updated_at: new Date(),
-              })
-              .where("user_id", "=", payment.user_id)
-              .where("status", "in", ["active", "scheduled"])
-              .where("next_billing_at", ">", due)
-              .execute();
-          }
-          if (newlyRefunded) {
-            await recordPaymentEvent(trx, {
-              kind: "refunded",
-              userId: payment.user_id,
-              paymentId: payment.id,
-              subscriptionId: payment.subscription_id ?? stopped?.id,
-              summary: `환불 ${won(refundedAmount)} / ${won(payment.amount)} (주문 ${payment.order_id}) · 이용 기한은 ${recomputed ? recomputed.toISOString().slice(0, 10) : "없음"}으로 다시 계산${stopped ? " · 정기 결제 취소" : ""}`,
-            });
-          } else if (status !== payment.status && refundedAmount === 0) {
-            await recordPaymentEvent(trx, {
-              kind: status === "expired" ? "order_expired" : "charge_failed",
-              userId: payment.user_id,
-              paymentId: payment.id,
-              subscriptionId: payment.subscription_id,
-              summary: `주문 ${payment.order_id} (${won(payment.amount)}): Toss 상태 ${tossPayment.status}`,
-            });
-          }
-
-          // Enqueued with the refund it reports, once per refunded amount.
-          const noticeJob = newlyRefunded
-            ? await enqueueJob(
-                trx,
-                {
-                  kind: "payment_canceled",
-                  paymentId: payment.id,
-                  subscriptionCanceled: !!stopped,
-                },
-                {
-                  dedupeKey: `payment_canceled:${payment.id}:${refundedAmount}`,
-                },
-              )
-            : null;
-
-          if (stopped) {
-            return {
-              noticeJob,
-              subscriptionCanceled: true,
-              retiredKey: stopped.retiredKey,
-            };
-          }
-          if (initialAttempt && refundedAmount === 0) {
-            return {
-              noticeJob,
-              subscriptionCanceled: false,
-              retiredKey: await retireUnusedSignupKey(
-                trx,
-                payment.subscription_id!,
-              ),
-            };
-          }
-          return {
-            noticeJob,
-            subscriptionCanceled: false,
-            retiredKey: null,
-          };
-        });
-      if (!opts.deferKeyDeletion) await deleteRetiredBillingKey(retiredKey);
-
-      if (status === "canceled") {
-        return {
-          state: "refunded",
-          amount: refundedAmount,
-          subscriptionCanceled,
-        };
-      }
-      return { state: "failed", status };
-    }
-    return { state: "pending" };
-  }
-
-  if (payment.status !== "pending") return { state: "done" };
-
-  if (payment.attempt_key?.startsWith("one_time:")) {
-    const years = oneTimeYearsForAmount(payment.amount);
-    if (years === null) {
-      throw new Error(`Payment ${payment.id} has an invalid one-time amount`);
-    }
-    // The buyer's own confirm never got this far — they left before the
-    // callback ran, or it failed — so the grant's thank-you is theirs.
-    await applyOneTimePayment({
-      userId: payment.user_id,
-      amount: payment.amount,
-      years,
-      payment: tossPayment,
-      paymentId: payment.id,
-    });
-    return { state: "done" };
-  }
-
-  if (!payment.subscription_id) {
-    throw new Error(`Payment ${payment.id} has no subscription`);
-  }
-  const subscription = await db
-    .selectFrom("subscriptions")
-    .select(["billing_interval", "current_period_end"])
-    .where("id", "=", payment.subscription_id)
-    .where("user_id", "=", payment.user_id)
-    .executeTakeFirstOrThrow();
-  const now = new Date();
-  const currentEnd = subscription.current_period_end
-    ? new Date(subscription.current_period_end)
-    : now;
-  const from = initialAttempt || currentEnd < now ? now : currentEnd;
-
-  // The charge's own run left it unresolved, so nobody has told the
-  // supporter about it yet: a receipt goes with the grant.
-  await applySuccessfulCharge({
-    subscriptionId: payment.subscription_id,
-    userId: payment.user_id,
-    interval: subscription.billing_interval as BillingInterval,
-    amount: payment.amount,
-    from,
-    payment: tossPayment,
-    paymentId: payment.id,
-    notice: "receipt",
-  });
-  return { state: "done" };
+  const result = await applyVerifiedTossPayment(payment.id, tossPayment);
+  if (!opts.deferKeyDeletion) await deleteRetiredBillingKey(result.retiredKey);
+  if (result.state === "done" || result.state === "pending")
+    return { state: result.state };
+  const { retiredKey: _, ...outcome } = result;
+  return outcome;
 }
 
 // True when this one-time order should not be approved: another one-time
