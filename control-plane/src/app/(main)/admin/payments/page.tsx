@@ -28,6 +28,7 @@ import { RECOVERABLE_STATUSES } from "@/lib/payments/payment-reconciliation";
 import { requireOperator } from "../_components/requireOperator";
 
 const taskLabels: Record<PaymentJob["kind"], string> = {
+  confirm_one_time: "한 번만 결제 승인",
   initial_subscription_charge: "정기 결제 첫 청구",
   refund_payment: "환불",
   renew_subscription: "정기 결제 갱신",

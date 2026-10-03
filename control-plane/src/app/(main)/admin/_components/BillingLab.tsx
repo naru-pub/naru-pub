@@ -311,8 +311,8 @@ export function BillingLab({
           <Badge variant="outline">Toss 테스트 키</Badge>
         </h2>
         <p className="text-sm text-muted-foreground">
-          cron·대사·환불·웹훅의 실제 코드를 지금 실행하고, Toss가 무엇을 답했고
-          나루가 무엇을 바꿨는지 보여 줍니다. 모든 Toss 키가 테스트 키(test_…)일
+          청구·환불 요청을 접수하고 대사·웹훅을 실행합니다. 접수한 요청의 결과는
+          결제 내역에서 확인해 주세요. 모든 Toss 키가 테스트 키(test_…)일
           때만 나타납니다. 구독은 /support에서 Toss 테스트 카드로 먼저 만드세요.
         </p>
       </div>
@@ -371,14 +371,14 @@ export function BillingLab({
               size="sm"
               disabled={pending || !subscriptionId}
               onClick={() =>
-                run(withCode("갱신 청구"), {
+                run(withCode("갱신 청구 접수"), {
                   action: "charge",
                   subscriptionId,
                   testCode,
                 })
               }
             >
-              지금 갱신 청구
+              갱신 청구 접수
             </Button>
             <Button
               variant="outline"

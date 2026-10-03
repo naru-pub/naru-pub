@@ -150,6 +150,10 @@ export default function SupportCard({
           ? `결제해 주셔서 감사합니다! ${untilLabel}까지 이용할 수 있습니다.`
           : "결제해 주셔서 감사합니다!",
       );
+    } else if (support === "payment-pending") {
+      toast(
+        "결제를 접수했습니다. 처리 결과는 결제 내역에서 확인할 수 있습니다.",
+      );
     } else if (support === "pending") {
       toast.success(
         "카드를 등록했습니다. 첫 결제를 처리 중이며 결과는 결제 내역에서 확인할 수 있습니다.",

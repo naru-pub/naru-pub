@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import {
   ONE_TIME_BLOCKING_STATUSES,
   type PaymentStatus,
@@ -6,17 +5,16 @@ import {
 import { db } from "@/lib/database";
 import type { Executor } from "@/lib/entitlements";
 import {
-  describeTossError,
   OtherMidError,
   paymentFlowForRecord,
   paymentOfOtherMid,
-  TossPaymentResult,
 } from "@/lib/payments/toss";
 import { retireUnusedSignupKey } from "@/lib/payments/subscriptions";
 import { withAccountLock } from "@/lib/payments/account-lock";
-import { confirmOrder, lookupOrder } from "@/lib/payments/toss-gateway";
+import { lookupOrder } from "@/lib/payments/toss-gateway";
 import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payments/payment-events";
+import { enqueueOneTimeConfirmation } from "@/lib/payments/one-time-payments";
 import { applyVerifiedTossPayment } from "@/lib/payments/payment-facts";
 
 // An order Toss has never heard of is given up after this long. A one-time
@@ -133,7 +131,7 @@ async function reconcilePaymentCore(
     }
     return { state: "pending" };
   }
-  let tossPayment = found.payment;
+  const tossPayment = found.payment;
 
   if (
     tossPayment.orderId !== payment.order_id ||
@@ -147,7 +145,7 @@ async function reconcilePaymentCore(
     payment.attempt_key?.startsWith("one_time:") &&
     !(await oneTimeOrderSuperseded(payment))
   ) {
-    tossPayment = await confirmAuthenticatedPayment(payment, tossPayment);
+    await enqueueOneTimeConfirmation(payment.id, tossPayment.paymentKey);
   }
   const result = await applyVerifiedTossPayment(payment.id, tossPayment);
   if (!opts.deferKeyDeletion) await deleteRetiredBillingKey(result.retiredKey);
@@ -239,7 +237,7 @@ export async function settlePendingCharges(userId: string): Promise<boolean> {
 }
 
 // Settles the account's pending one-time orders before a new purchase is
-// decided: one the buyer authenticated is confirmed (or not, if superseded),
+// decided: one the buyer authenticated is queued for confirmation unless superseded,
 // one Toss approved is granted. False when one may still be approved — its
 // confirm is still running at Toss, so it would land beside whatever is
 // bought now: a second year, or a new plan switched straight off. An order
@@ -248,7 +246,14 @@ export async function settlePendingCharges(userId: string): Promise<boolean> {
 export async function settleOneTimeOrders(userId: string): Promise<boolean> {
   const pending = () =>
     openOneTimeOrders(db, userId)
-      .select(["id", "user_id", "created_at", "charge_attempted_at", "raw"])
+      .select([
+        "id",
+        "user_id",
+        "created_at",
+        "charge_attempted_at",
+        "raw",
+        "toss_payment_key",
+      ])
       .execute();
   for (const payment of await pending()) {
     await reconcilePayment(payment.id).catch((error) =>
@@ -258,53 +263,15 @@ export async function settleOneTimeOrders(userId: string): Promise<boolean> {
   for (const payment of await pending()) {
     const tossStatus = storedTossStatus(payment.raw);
     if (
-      tossStatus === "IN_PROGRESS" &&
+      (tossStatus === "IN_PROGRESS" || payment.toss_payment_key != null) &&
       Date.now() - lastAttemptAt(payment).getTime() <= UNCONFIRMED_EXPIRY_MS &&
-      !(await oneTimeOrderSuperseded(payment))
+      (payment.charge_attempted_at != null ||
+        !(await oneTimeOrderSuperseded(payment)))
     ) {
       return false;
     }
   }
   return true;
-}
-
-// A one-time payment the buyer authenticated but nobody confirmed: they
-// closed the tab before the callback ran, or its confirm failed in a way that
-// left the payment open. Toss expires it 10 minutes after authentication, so
-// the reconciler confirms it itself, for the amount recorded at prepare.
-//
-// Under a key of its own, not the order id the callback's first confirm used:
-// Toss keys idempotency on the key, the secret key, the URL and the method, so
-// that key would only replay the callback's answer — an error, or the payment
-// would not still be IN_PROGRESS — until the 10 minutes ran out. A new key
-// cannot approve the payment twice: Toss refuses a second approval
-// (ALREADY_PROCESSED_PAYMENT), and one still running (ALREADY_PROCESSING_
-// REQUEST). Anything but an approval leaves the payment as Toss reported it,
-// to be settled when Toss moves it on.
-async function confirmAuthenticatedPayment(
-  payment: { id: string; order_id: string; amount: number },
-  inProgress: TossPaymentResult,
-): Promise<TossPaymentResult> {
-  const outcome = await confirmOrder({
-    paymentKey: inProgress.paymentKey,
-    orderId: payment.order_id,
-    amount: payment.amount,
-    firstKey: `${payment.order_id}:${randomUUID()}`,
-    retryOnce: false,
-    beforeSend: async () => {
-      await db
-        .updateTable("payments")
-        .set({ charge_attempted_at: new Date() })
-        .where("id", "=", payment.id)
-        .execute();
-    },
-  });
-  if (outcome.kind === "approved") return outcome.payment;
-  if (outcome.kind === "declined" && outcome.payment) return outcome.payment;
-  console.error(
-    `Reconciling payment ${payment.id}: confirming the authenticated payment did not approve it: ${describeTossError(outcome.error)}`,
-  );
-  return inProgress;
 }
 
 // Asks Toss what became of a payment and brings the ledger, the account's

@@ -1,10 +1,16 @@
+import { uuidv7 } from "@/lib/uuid";
 import { scheduledRecurringStart } from "@/lib/payments/support-purchases";
 import { scheduleSubscriptionStart } from "@/lib/payments/subscriptions";
 import { recordPaymentEvent } from "@/lib/payments/payment-events";
 import { chargeableKey } from "@/lib/payments/billing-keys";
-import { chargeOrder } from "@/lib/payments/toss-gateway";
+import {
+  chargeOrder,
+  confirmOrder,
+  lookupOrder,
+} from "@/lib/payments/toss-gateway";
 import {
   describeTossError,
+  oneTimeYearsForAmount,
   PLAN_ORDER_NAMES,
   type BillingInterval,
 } from "@/lib/payments/toss";
@@ -17,6 +23,7 @@ import {
 import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
 import {
   reconcilePayment,
+  oneTimeOrderSuperseded,
   type ReconciliationResult,
 } from "@/lib/payments/payment-reconciliation";
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payments/payment-states";
@@ -50,6 +57,7 @@ import { mailRecipient } from "@/lib/payments/payment-mails";
 // payment-job-v1 is versioned: preserve its handler until its tasks drain.
 
 export type PaymentJob =
+  | { kind: "confirm_one_time"; paymentId: string }
   | {
       kind: "initial_subscription_charge";
       paymentId: string;
@@ -93,6 +101,8 @@ export type PaymentJob =
       kind: "renew_subscription";
       subscriptionId: string;
       cardRegistrationId?: string;
+      lab?: boolean;
+      testCode?: string;
     };
 
 export const MAX_ATTEMPTS = 8;
@@ -177,6 +187,8 @@ export async function runDueJobs(
 
 async function handle(job: PaymentJob): Promise<void> {
   switch (job.kind) {
+    case "confirm_one_time":
+      return confirmOneTime(job.paymentId);
     case "initial_subscription_charge":
       return chargeInitialSubscription(job);
     case "refund_payment": {
@@ -206,9 +218,18 @@ async function handle(job: PaymentJob): Promise<void> {
       // Imported here: renewals enqueue jobs themselves.
       const { renewSubscription } =
         await import("@/lib/payments/subscription-renewals");
-      return renewSubscription(job.subscriptionId, new Date(), {
-        cardRegistrationId: job.cardRegistrationId,
-      });
+      const run = () =>
+        renewSubscription(job.subscriptionId, new Date(), {
+          cardRegistrationId: job.cardRegistrationId,
+          lab: job.lab,
+        });
+      if (job.lab) {
+        if (!isTossTestMode())
+          throw new Error("Billing lab renewal requires Toss test mode");
+        const outcome = await withTossLab({ testCode: job.testCode }, run);
+        if (outcome.error) throw outcome.error;
+      } else await run();
+      return;
     }
     case "reconcile_payment": {
       // Imported here: reconciliation enqueues jobs itself.
@@ -597,5 +618,120 @@ async function chargeInitialSubscription(
       from: now,
       notice: "thank_you",
     });
+  });
+}
+
+// One executor for callback approvals and authenticated orders found by sweeps.
+async function confirmOneTime(paymentId: string): Promise<void> {
+  const owner = await db
+    .selectFrom("payments")
+    .select("user_id")
+    .where("id", "=", paymentId)
+    .executeTakeFirstOrThrow();
+  await withAccountLock(owner.user_id, { waitMs: 0 }, async () => {
+    const payment = await db
+      .selectFrom("payments")
+      .selectAll()
+      .where("id", "=", paymentId)
+      .executeTakeFirstOrThrow();
+    if (payment.status !== "pending") return;
+    if (
+      payment.subscription_id ||
+      !payment.attempt_key?.startsWith("one_time:") ||
+      oneTimeYearsForAmount(payment.amount) === null ||
+      !payment.toss_payment_key
+    )
+      throw new Error("One-time confirmation identity mismatch");
+    // A previous approval may have succeeded before the ledger committed.
+    // Resolve that first, even if the account's eligibility changed meanwhile.
+    if (payment.charge_attempted_at) {
+      const found = await lookupOrder(payment.order_id, "one-time");
+      if (found.kind === "unknown") throw found.error;
+      if (
+        found.kind === "found" &&
+        (found.payment.orderId !== payment.order_id ||
+          found.payment.totalAmount !== payment.amount ||
+          found.payment.paymentKey !== payment.toss_payment_key)
+      )
+        throw new Error("One-time payment lookup identity mismatch");
+      if (found.kind === "found" && found.payment.status !== "IN_PROGRESS") {
+        const result = await applyVerifiedTossPayment(
+          payment.id,
+          found.payment,
+        );
+        if (result.state === "pending")
+          throw new Error("One-time approval is still pending");
+        return;
+      }
+    }
+    const account = await db
+      .selectFrom("users")
+      .select("deleted_at")
+      .where("id", "=", payment.user_id)
+      .executeTakeFirstOrThrow();
+    if (account.deleted_at || (await oneTimeOrderSuperseded(payment))) {
+      if (payment.charge_attempted_at)
+        throw new Error("Superseded one-time approval outcome is unresolved");
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .updateTable("payments")
+          .set({ status: "expired" })
+          .where("id", "=", payment.id)
+          .where("status", "=", "pending")
+          .execute();
+        await recordPaymentEvent(trx, {
+          kind: "order_expired",
+          userId: payment.user_id,
+          paymentId: payment.id,
+          summary:
+            "계정 삭제나 다른 결제로 보내지 않은 한 번만 결제 주문을 종료",
+        });
+      });
+      return;
+    }
+    const outcome = await confirmOrder({
+      paymentKey: payment.toss_payment_key,
+      orderId: payment.order_id,
+      amount: payment.amount,
+      firstKey: payment.charge_attempted_at
+        ? `${payment.order_id}:${uuidv7()}`
+        : payment.order_id,
+      retryOnce: true,
+      beforeSend: async () => {
+        await db
+          .updateTable("payments")
+          .set({ charge_attempted_at: new Date() })
+          .where("id", "=", payment.id)
+          .execute();
+      },
+    });
+    if (
+      outcome.kind === "approved" ||
+      (outcome.kind === "declined" && outcome.payment)
+    ) {
+      await applyVerifiedTossPayment(payment.id, outcome.payment!);
+      return;
+    }
+    await db.transaction().execute(async (trx) => {
+      if (outcome.kind === "declined")
+        await trx
+          .updateTable("payments")
+          .set({
+            status: "failed",
+            raw: JSON.stringify({ error: describeTossError(outcome.error) }),
+          })
+          .where("id", "=", payment.id)
+          .where("status", "=", "pending")
+          .execute();
+      await recordPaymentEvent(trx, {
+        kind:
+          outcome.kind === "declined" ? "charge_failed" : "charge_unresolved",
+        userId: payment.user_id,
+        paymentId: payment.id,
+        summary: `한 번만 결제 ${won(payment.amount)} 승인: ${describeTossError(outcome.error)}`,
+      });
+    });
+    if (outcome.kind === "unknown")
+      throw new Error("One-time approval outcome is unknown");
   });
 }

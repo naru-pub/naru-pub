@@ -9,10 +9,8 @@ import { enqueueJob } from "@/lib/payments/payment-jobs";
 import { sql } from "kysely";
 import {
   BillingInterval,
-  chargeBillingKey,
   configuredMid,
   describeTossError,
-  getPaymentByOrderId,
   isTossLiveMode,
   withNewOrderId,
   PLAN_ORDER_NAMES,
@@ -29,7 +27,7 @@ import {
   addPaymentGrace,
   MAX_PAYMENT_RETRY_ATTEMPTS,
 } from "@/lib/payments/subscriptions";
-import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
+import { withAccountLock } from "@/lib/payments/account-lock";
 import { renewalCutoff } from "@/lib/payments/renewal-time";
 export { RENEWAL_HOUR_KST, renewalCutoff } from "@/lib/payments/renewal-time";
 
@@ -363,55 +361,6 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
   );
 }
 
-// `subscriptionIds` limits the run to those subscriptions (a card change, the
-// billing lab), which are charged even if tried earlier today; the cron
-// charges everything due by `dueBy` (renewalCutoff: the last 09:00 KST).
-// `newCard` is set by a card change charging right after the swap.
-//
-// Each subscription is charged inside its account's lock (lib/payments/account-lock),
-// taken without waiting: an account busy with another payment operation —
-// its supporter changing the card, a refund — is left for the next run.
-export async function chargeDueSubscriptions(
-  now = new Date(),
-  opts: { subscriptionIds?: string[]; newCard?: boolean; dueBy?: Date } = {},
-) {
-  const explicit = opts.subscriptionIds != null;
-  const only = opts.subscriptionIds ?? null;
-  const dueBy = opts.dueBy ?? now;
-  const due = (await dueSubscriptions(now, { only, explicit, dueBy })).rows;
-  let busy = 0;
-  for (const listed of due) {
-    try {
-      await withAccountLock(listed.user_id, { waitMs: 0 }, async () => {
-        // Read again under the lock: whatever ran on the account before it
-        // may have charged, canceled or switched it.
-        const [sub] = (
-          await dueSubscriptions(now, { only: [listed.id], explicit, dueBy })
-        ).rows;
-        if (!sub) return;
-        await chargeSubscription(sub, now, opts.newCard ?? false);
-      });
-    } catch (error) {
-      if (error instanceof AccountBusyError) {
-        busy += 1;
-        console.log(
-          `[charge-subscriptions] user ${listed.user_id}: busy with another payment operation; next run`,
-        );
-        continue;
-      }
-      // One subscription's failure — a database error, a bug — must not
-      // hold up the due renewals behind it.
-      console.error(
-        `[charge-subscriptions] user ${listed.user_id}: renewal failed with an error`,
-        error,
-      );
-    }
-  }
-  console.log(
-    `[charge-subscriptions] ${due.length} subscription(s) due, ${busy} busy`,
-  );
-}
-
 // The hourly renewal run: one renew_subscription payment job per plan due by
 // the last 09:00 KST (lib/payments/payment-jobs), run right away. The dedupe key is the
 // plan and that day's cutoff, so a plan gets one try a day however often the
@@ -445,7 +394,13 @@ export async function enqueueDueRenewals(now = new Date()): Promise<{
 export async function renewSubscription(
   subscriptionId: string,
   now = new Date(),
-  opts: { cardRegistrationId?: string } = {},
+  opts: {
+    cardRegistrationId?: string;
+    lab?: boolean;
+    dueBy?: Date;
+    explicit?: boolean;
+    newCard?: boolean;
+  } = {},
 ): Promise<void> {
   const owner = await db
     .selectFrom("subscriptions")
@@ -454,8 +409,11 @@ export async function renewSubscription(
     .executeTakeFirst();
   if (!owner) return;
   await withAccountLock(owner.user_id, { waitMs: 0 }, async () => {
-    const explicit = opts.cardRegistrationId != null;
-    if (explicit) {
+    const explicit =
+      opts.cardRegistrationId != null ||
+      opts.lab === true ||
+      opts.explicit === true;
+    if (opts.cardRegistrationId) {
       const registration = await db
         .selectFrom("card_registrations as r")
         .innerJoin("subscriptions as s", "s.id", "r.subscription_id")
@@ -471,10 +429,15 @@ export async function renewSubscription(
       await dueSubscriptions(now, {
         only: [subscriptionId],
         explicit,
-        dueBy: explicit ? now : renewalCutoff(now),
+        dueBy: opts.dueBy ?? (explicit ? now : renewalCutoff(now)),
       })
     ).rows;
-    if (sub) await chargeSubscription(sub, now, explicit);
+    if (sub)
+      await chargeSubscription(
+        sub,
+        now,
+        opts.cardRegistrationId != null || opts.newCard === true,
+      );
   });
 }
 

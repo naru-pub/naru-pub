@@ -142,3 +142,27 @@ recent error, and next run time. A reason is required to retry a failed task.
 `absurd.retry_task` extends the original task's attempt budget without replacing
 its parameters, checkpoints or idempotency key. Task recovery and the operator's
 identity/reason audit event commit together. Recovery never executes money in HTTP.
+
+## One-time approvals and lab renewals
+
+The one-time callback validates the authenticated user's stored order and amount,
+then commits `toss_payment_key` and a deduplicated `confirm_one_time` task together.
+It returns 202; the UI shows acceptance and points to payment history. Repeated
+callbacks reuse the task and cannot replace its provider key. The ledger, rather
+than task params, supplies the key, order ID and amount to the executor.
+
+Reconciliation remains a lookup and facts applicator. Finding an authenticated
+`IN_PROGRESS` one-time order enqueues the same approval task; it never approves
+inline during signup, purchase preparation, deletion or a sweep. An accepted
+pending order blocks a new purchase even if its provider lookup is unavailable.
+The executor rechecks account eligibility under its lock before sending; after
+an ambiguous send it checks Toss first, so an approved order is applied once
+rather than charged again. Unsent superseded orders expire without a charge.
+Only verified provider facts grant paid time.
+
+The billing lab changes the renewal date and enqueues `renew_subscription` in
+one transaction. Its forced error code travels with the task and is applied
+only in Toss test mode. Results appear in payment history and the task list;
+the lab response is acceptance, not an execution trace. The old inline renewal
+runner has been removed. Source boundary tests guard approval, charge and refund
+call sites and the renewal executor's only production caller.

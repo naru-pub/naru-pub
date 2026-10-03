@@ -96,6 +96,27 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ]);
   });
 
+  test("only the Absurd handler approves one-time payments", () => {
+    expect(offenders(/\bconfirmOrder\s*\(/, [])).toEqual([
+      "lib/payments/payment-jobs.ts",
+      "lib/payments/toss-gateway.ts",
+    ]);
+    expect(offenders(/\bconfirmPayment\s*\(/, [])).toEqual([
+      "lib/payments/toss-gateway.ts",
+      "lib/payments/toss.ts",
+    ]);
+    expect(
+      offenders(/\brenewSubscription\s*\(/, [
+        "lib/payments/subscription-renewals.ts",
+      ]),
+    ).toEqual(["lib/payments/payment-jobs.ts"]);
+    expect(offenders(/\bchargeDueSubscriptions\b/, [])).toEqual([]);
+    expect(offenders(/\bchargeBillingKey\s*\(/, [])).toEqual([
+      "lib/payments/toss-gateway.ts",
+      "lib/payments/toss.ts",
+    ]);
+  });
+
   test("only the Absurd handler executes a refund", () => {
     expect(offenders(/\bcancelOrder\s*\(/, [])).toEqual([
       "lib/payments/payment-jobs.ts",

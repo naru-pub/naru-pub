@@ -67,8 +67,33 @@ const {
   require("@/lib/payments/subscriptions") as typeof import("@/lib/payments/subscriptions");
 const { applyVerifiedTossPayment } =
   require("@/lib/payments/payment-facts") as typeof import("@/lib/payments/payment-facts");
-const { chargeDueSubscriptions, enqueueDueRenewals } =
+const { renewSubscription, enqueueDueRenewals } =
   require("@/lib/payments/subscription-renewals") as typeof import("@/lib/payments/subscription-renewals");
+// Domain renewal tests control the eligibility clock explicitly. Production
+// callers enqueue work; only payment-jobs invokes this executor.
+async function chargeDueSubscriptions(
+  now = new Date(),
+  opts: { subscriptionIds?: string[]; newCard?: boolean; dueBy?: Date } = {},
+) {
+  const rows = await db
+    .selectFrom("subscriptions")
+    .select("id")
+    .orderBy("next_billing_at")
+    .execute();
+  for (const row of rows) {
+    if (opts.subscriptionIds && !opts.subscriptionIds.includes(row.id))
+      continue;
+    try {
+      await renewSubscription(row.id, now, {
+        explicit: opts.subscriptionIds != null,
+        newCard: opts.newCard,
+        dueBy: opts.dueBy ?? now,
+      });
+    } catch {
+      /* Other accounts still run; task retry tests exercise failures separately. */
+    }
+  }
+}
 const {
   AccountBusyError,
   closeAccountLockPool,
@@ -84,7 +109,7 @@ const { refundEligibility, requestRefund, refundProgress } =
   require("@/lib/payments/refunds") as typeof import("@/lib/payments/refunds");
 const { syncPaymentRefunds } =
   require("@/lib/payments/refund-sync") as typeof import("@/lib/payments/refund-sync");
-const { runLabAction } =
+const { runLabAction, labSnapshot } =
   require("@/lib/payments/billing-lab") as typeof import("@/lib/payments/billing-lab");
 const { sendPaymentEventDigest } =
   require("@/lib/payments/payment-events") as typeof import("@/lib/payments/payment-events");
@@ -2923,20 +2948,21 @@ integration("payments against the database", () => {
       return row.status;
     }
 
-    test("an authenticated payment nobody confirmed is confirmed and thanked once", async () => {
+    test("an authenticated payment nobody confirmed is queued and thanked once", async () => {
       const { userId, orderId, paymentId } = await authenticated();
       toss.getPaymentByOrderId.mockResolvedValue(
         tossPayment(orderId, 12000, { status: "IN_PROGRESS" }),
       );
       toss.confirmPayment.mockResolvedValue(tossPayment(orderId, 12000));
 
-      expect(await reconcilePayment(paymentId)).toEqual({ state: "done" });
+      expect(await reconcilePayment(paymentId)).toEqual({ state: "pending" });
+      expect(toss.confirmPayment).not.toHaveBeenCalled();
+      await runDueJobs();
 
-      // Not the order id: the callback's first confirm used that key, and
-      // Toss would only replay its answer.
+      // The task uses the order id first; later retries reconcile before confirming.
       expect(toss.confirmPayment).toHaveBeenCalledWith(
         { paymentKey: `pk-${orderId}`, orderId, amount: 12000 },
-        expect.stringMatching(new RegExp(`^${orderId}:.+`)),
+        orderId,
       );
       expect(await status(paymentId)).toBe("done");
       expect((await supporterUntil(userId))! > new Date()).toBe(true);
@@ -2947,6 +2973,203 @@ integration("payments against the database", () => {
       await reconcilePayment(paymentId);
       await runDueJobs();
       expect(email.sendSupportThankYouEmail).toHaveBeenCalledTimes(1);
+    });
+
+    async function acceptOneTime(
+      userId: string,
+      orderId: string,
+      paymentKey = `pk-${orderId}`,
+      amount = 12000,
+    ) {
+      auth.validateRequest.mockResolvedValue({
+        user: { id: userId },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      return oneTimeConfirmRoute(
+        new NextRequest(
+          "http://localhost/api/account/donation/one-time/confirm",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ paymentKey, orderId, amount }),
+          },
+        ),
+      );
+    }
+
+    test("one-time callbacks commit one durable approval and never charge inline", async () => {
+      const { userId, orderId, paymentId } = await authenticated();
+      const responses = await Promise.all([
+        acceptOneTime(userId, orderId),
+        acceptOneTime(userId, orderId),
+      ]);
+      expect(responses.map((r) => r.status)).toEqual([202, 202]);
+      expect(toss.confirmPayment).not.toHaveBeenCalled();
+      expect(await supporterUntil(userId)).toBeNull();
+      const tasks = await db
+        .selectFrom("absurd.t_payments")
+        .selectAll()
+        .execute();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].params).toEqual({
+        job: { kind: "confirm_one_time", paymentId },
+      });
+      expect((await acceptOneTime(userId, orderId, "another-key")).status).toBe(
+        409,
+      );
+      toss.confirmPayment.mockResolvedValue(tossPayment(orderId, 12000));
+      await runDueJobs();
+      expect(toss.confirmPayment).toHaveBeenCalledTimes(1);
+      expect(await status(paymentId)).toBe("done");
+      expect((await acceptOneTime(userId, orderId)).status).toBe(200);
+      expect(email.sendSupportThankYouEmail).toHaveBeenCalledTimes(1);
+    });
+
+    test("one-time acceptance validates ownership and amount before enqueue", async () => {
+      const { userId, orderId } = await authenticated();
+      expect((await acceptOneTime(await makeUser(), orderId)).status).toBe(404);
+      expect(
+        (await acceptOneTime(userId, orderId, `pk-${orderId}`, 1000)).status,
+      ).toBe(400);
+      expect((await acceptOneTime(userId, orderId, "")).status).toBe(400);
+      expect(
+        await db.selectFrom("absurd.t_payments").selectAll().execute(),
+      ).toEqual([]);
+    });
+
+    test("enqueue failure rolls back the accepted one-time provider key", async () => {
+      const { userId, orderId, paymentId } = await authenticated();
+      await sql`create function reject_one_time_task() returns trigger language plpgsql as $$ begin raise exception 'queue unavailable'; end $$`.execute(
+        db,
+      );
+      await sql`create trigger reject_one_time_task before insert on absurd.t_payments for each row execute function reject_one_time_task()`.execute(
+        db,
+      );
+      try {
+        expect((await acceptOneTime(userId, orderId)).status).toBe(500);
+        const payment = await db
+          .selectFrom("payments")
+          .select("toss_payment_key")
+          .where("id", "=", paymentId)
+          .executeTakeFirstOrThrow();
+        expect(payment.toss_payment_key).toBeNull();
+        expect(toss.confirmPayment).not.toHaveBeenCalled();
+      } finally {
+        await sql`drop trigger reject_one_time_task on absurd.t_payments`.execute(
+          db,
+        );
+        await sql`drop function reject_one_time_task()`.execute(db);
+      }
+      expect((await acceptOneTime(userId, orderId)).status).toBe(202);
+    });
+
+    test("a queued one-time order superseded before execution is never charged", async () => {
+      const { userId, orderId, paymentId } = await authenticated();
+      expect((await acceptOneTime(userId, orderId)).status).toBe(202);
+      await makeSubscription(userId, { status: "active" });
+      await runDueJobs();
+      expect(toss.confirmPayment).not.toHaveBeenCalled();
+      expect(await status(paymentId)).toBe("expired");
+    });
+
+    test("queued one-time work blocks another purchase even when Toss lookup fails", async () => {
+      const { userId, orderId } = await authenticated();
+      expect((await acceptOneTime(userId, orderId)).status).toBe(202);
+      toss.getPaymentByOrderId.mockRejectedValue(
+        new toss.TossApiError("bad gateway", 502),
+      );
+      expect(
+        await prepareSubscription({ userId, interval: "month" }),
+      ).toMatchObject({ ok: false, status: 409 });
+      expect(toss.confirmPayment).not.toHaveBeenCalled();
+    });
+
+    test("an ambiguous one-time approval retries the same order and grants once", async () => {
+      const { userId, orderId, paymentId } = await authenticated();
+      expect((await acceptOneTime(userId, orderId)).status).toBe(202);
+      toss.confirmPayment.mockRejectedValue(
+        new toss.TossApiError(
+          "processing",
+          409,
+          "IDEMPOTENT_REQUEST_PROCESSING",
+        ),
+      );
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(orderId, 12000, { status: "IN_PROGRESS" }),
+      );
+      await runDueJobs();
+      expect(await status(paymentId)).toBe("pending");
+      expect(toss.confirmPayment).toHaveBeenCalledTimes(1);
+      toss.getPaymentByOrderId.mockResolvedValue(tossPayment(orderId, 12000));
+      await sql`update absurd.r_payments set available_at = now() - interval '1 second' where state in ('pending', 'sleeping')`.execute(
+        db,
+      );
+      await runDueJobs();
+      expect(toss.confirmPayment).toHaveBeenCalledTimes(1);
+      expect(await status(paymentId)).toBe("done");
+      expect(email.sendSupportThankYouEmail).toHaveBeenCalledTimes(1);
+    });
+
+    test("a crash after one-time approval recovers the ledger without another approval", async () => {
+      const { userId, orderId, paymentId } = await authenticated();
+      expect((await acceptOneTime(userId, orderId)).status).toBe(202);
+      toss.confirmPayment.mockResolvedValue(tossPayment(orderId, 12000));
+      await sql`create function reject_approval_ledger() returns trigger language plpgsql as $$ begin raise exception 'ledger unavailable'; end $$`.execute(
+        db,
+      );
+      await sql`create trigger reject_approval_ledger before insert on payment_transactions for each row execute function reject_approval_ledger()`.execute(
+        db,
+      );
+      try {
+        await runDueJobs();
+        expect(await status(paymentId)).toBe("pending");
+        expect(
+          await db.selectFrom("payment_transactions").selectAll().execute(),
+        ).toEqual([]);
+        expect(toss.confirmPayment).toHaveBeenCalledTimes(1);
+      } finally {
+        await sql`drop trigger reject_approval_ledger on payment_transactions`.execute(
+          db,
+        );
+        await sql`drop function reject_approval_ledger()`.execute(db);
+      }
+      toss.getPaymentByOrderId.mockResolvedValue(tossPayment(orderId, 12000));
+      await sql`update absurd.r_payments set available_at = now() - interval '1 second' where state in ('pending', 'sleeping')`.execute(
+        db,
+      );
+      await runDueJobs();
+      expect(await status(paymentId)).toBe("done");
+      expect(toss.confirmPayment).toHaveBeenCalledTimes(1);
+      expect(
+        await db.selectFrom("payment_transactions").selectAll().execute(),
+      ).toHaveLength(1);
+      expect(email.sendSupportThankYouEmail).toHaveBeenCalledTimes(1);
+    });
+
+    test("a retry of an authenticated one-time approval can use a fresh provider key", async () => {
+      const { userId, orderId, paymentId } = await authenticated();
+      await acceptOneTime(userId, orderId);
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(orderId, 12000, { status: "IN_PROGRESS" }),
+      );
+      toss.confirmPayment.mockRejectedValueOnce(
+        new toss.TossApiError(
+          "processing",
+          409,
+          "IDEMPOTENT_REQUEST_PROCESSING",
+        ),
+      );
+      await runDueJobs();
+      toss.confirmPayment.mockResolvedValue(tossPayment(orderId, 12000));
+      await sql`update absurd.r_payments set available_at = now() - interval '1 second' where state in ('pending', 'sleeping')`.execute(
+        db,
+      );
+      await runDueJobs();
+      expect(toss.confirmPayment).toHaveBeenLastCalledWith(
+        { paymentKey: `pk-${orderId}`, orderId, amount: 12000 },
+        expect.stringMatching(new RegExp(`^${orderId}:.+`)),
+      );
+      expect(await status(paymentId)).toBe("done");
     });
 
     test("a confirm that fails leaves the payment for Toss to settle", async () => {
@@ -5080,7 +5303,7 @@ integration("payments against the database", () => {
       expect(toss.chargeBillingKey).not.toHaveBeenCalled();
     });
 
-    test("charges now through the renewal code and shows what changed", async () => {
+    test("queues a renewal without charging in the lab request", async () => {
       const { subId, periodEnd } = await activeSubscription();
       toss.chargeBillingKey.mockImplementation(async (params) =>
         tossPayment(params.orderId, params.amount),
@@ -5091,6 +5314,10 @@ integration("payments against the database", () => {
         subscriptionId: subId,
       });
 
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      expect(result.after!.payments).toHaveLength(0);
+      await runDueJobs();
+      result.after = await labSnapshot((await subscription(subId)).user_id);
       expect(result.ok).toBe(true);
       expect(result.before!.payments).toHaveLength(0);
       expect(result.after!.payments).toEqual([
@@ -5117,6 +5344,16 @@ integration("payments against the database", () => {
         testCode: "REJECT_CARD_PAYMENT",
       });
 
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      const task = await db
+        .selectFrom("absurd.t_payments")
+        .select("params")
+        .executeTakeFirstOrThrow();
+      expect(task.params).toMatchObject({
+        job: { lab: true, testCode: "REJECT_CARD_PAYMENT" },
+      });
+      await runDueJobs();
+      result.after = await labSnapshot((await subscription(subId)).user_id);
       expect(result.after!.subscription).toMatchObject({
         status: "active",
         failed_charge_count: 1,
@@ -5140,6 +5377,8 @@ integration("payments against the database", () => {
         subscriptionId: subId,
       });
 
+      await runDueJobs();
+      result.after = await labSnapshot((await subscription(subId)).user_id);
       expect(result.after!.subscription!.status).toBe("past_due");
     });
 
@@ -5991,7 +6230,7 @@ integration("payments against the database", () => {
         expect(toss.confirmPayment).not.toHaveBeenCalled();
       });
 
-      test("prepare confirms an earlier authenticated order, then refuses a second year", async () => {
+      test("prepare queues an earlier authenticated order and waits for approval", async () => {
         const userId = await makeUser();
         await oneTimeOrder(userId, { orderId: "authenticated" });
         toss.getPaymentByOrderId.mockResolvedValue(
@@ -6004,6 +6243,8 @@ integration("payments against the database", () => {
         const response = await prepare(userId);
 
         expect(response.status).toBe(409);
+        expect(toss.confirmPayment).not.toHaveBeenCalled();
+        await runDueJobs();
         expect((await supporterUntil(userId))! > new Date()).toBe(true);
       });
 

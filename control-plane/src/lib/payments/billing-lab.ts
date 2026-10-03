@@ -7,7 +7,9 @@ import {
 } from "@/lib/payments/billing-keys";
 import { reconcilePayment } from "@/lib/payments/payment-reconciliation";
 import { requestRefund } from "@/lib/payments/refunds";
-import { chargeDueSubscriptions } from "@/lib/payments/subscription-renewals";
+import { enqueueJob } from "@/lib/payments/payment-jobs";
+import { withAccountLock } from "@/lib/payments/account-lock";
+import { uuidv7 } from "@/lib/uuid";
 import {
   isCurrentPlan,
   PAYMENT_GRACE_DAYS,
@@ -239,16 +241,26 @@ export async function runLabAction(input: LabAction): Promise<LabResult> {
         throw new LabError("빌링키가 없는 구독입니다.");
       }
       run = async () => {
-        // Due now.
-        await db
-          .updateTable("subscriptions")
-          .set({ next_billing_at: new Date() })
-          .where("id", "=", input.subscriptionId)
-          .execute();
-        await chargeDueSubscriptions(new Date(), {
-          subscriptionIds: [input.subscriptionId],
-        });
-        return "갱신 청구를 실행했습니다 (cron과 같은 코드).";
+        await withAccountLock(sub.user_id, { waitMs: 5000 }, () =>
+          db.transaction().execute(async (trx) => {
+            await trx
+              .updateTable("subscriptions")
+              .set({ next_billing_at: new Date() })
+              .where("id", "=", input.subscriptionId)
+              .execute();
+            await enqueueJob(
+              trx,
+              {
+                kind: "renew_subscription",
+                subscriptionId: input.subscriptionId,
+                lab: true,
+                testCode: input.testCode,
+              },
+              { dedupeKey: `lab-renew:${input.subscriptionId}:${uuidv7()}` },
+            );
+          }),
+        );
+        return "갱신 청구를 접수했습니다. 처리 결과는 결제 내역과 작업 목록에서 확인해 주세요.";
       };
       break;
     }

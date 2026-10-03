@@ -1,24 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "crypto";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
-import {
-  confirmPayment,
-  describeTossError,
-  isDefinitiveTossFailure,
-  oneTimeYearsForAmount,
-  TossApiError,
-} from "@/lib/payments/toss";
-import { confirmOrder } from "@/lib/payments/toss-gateway";
-import { applyVerifiedTossPayment } from "@/lib/payments/payment-facts";
-import { notePaymentEvent, won } from "@/lib/payments/payment-events";
+import { oneTimeYearsForAmount } from "@/lib/payments/toss";
+import { enqueueOneTimeConfirmation } from "@/lib/payments/one-time-payments";
 import { oneTimeOrderSuperseded } from "@/lib/payments/payment-reconciliation";
 import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 
-// One-time donation step 2: confirms the payment with Toss and grants the
-// purchased years of supporter access. Entitlement is derived from the
-// server-recorded order amount and verified against what Toss reports.
+// Accept the authenticated order. Only its Absurd task calls Toss to approve it.
 export async function POST(request: NextRequest) {
   try {
     try {
@@ -38,10 +27,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { paymentKey, orderId, amount } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { success: false, message: "유효하지 않은 요청입니다." },
+        { status: 400 },
+      );
+    }
+    const { paymentKey, orderId, amount } = body ?? {};
     if (
       typeof paymentKey !== "string" ||
+      !paymentKey.trim() ||
+      paymentKey.length > 200 ||
       typeof orderId !== "string" ||
+      !orderId ||
+      orderId.length > 64 ||
       typeof amount !== "number"
     ) {
       return NextResponse.json(
@@ -51,14 +53,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Under the account lock (lib/payments/account-lock): no renewal is charging the
-    // plan this approval may switch off, and no second confirm of this
-    // account runs meanwhile. The callback retries a 503 within the 10
-    // minutes Toss allows; so does the reconciler.
+    // plan this approval may switch off, and acceptance cannot race another
+    // purchase. The task checks eligibility again under the same lock.
     try {
       return await withAccountLock(user.id, { waitMs: 5000 }, async () => {
         const pendingPayment = await db
           .selectFrom("payments")
-          .select(["id", "user_id", "amount", "status", "created_at"])
+          .select([
+            "id",
+            "user_id",
+            "amount",
+            "status",
+            "created_at",
+            "toss_payment_key",
+          ])
           .where("order_id", "=", orderId)
           .where("user_id", "=", user.id)
           .where("subscription_id", "is", null)
@@ -71,6 +79,18 @@ export async function POST(request: NextRequest) {
           );
         }
 
+        if (
+          pendingPayment.toss_payment_key &&
+          pendingPayment.toss_payment_key !== paymentKey
+        ) {
+          return NextResponse.json(
+            {
+              success: false,
+              message: "결제 승인 정보가 주문과 맞지 않습니다.",
+            },
+            { status: 409 },
+          );
+        }
         if (pendingPayment.status === "done") {
           return NextResponse.json({
             success: true,
@@ -94,7 +114,10 @@ export async function POST(request: NextRequest) {
         // a retry after this one's confirm looked stuck — or a recurring plan
         // started meanwhile. Not approving it lets Toss expire the
         // authentication without charging the card.
-        if (await oneTimeOrderSuperseded(pendingPayment)) {
+        if (
+          !pendingPayment.toss_payment_key &&
+          (await oneTimeOrderSuperseded(pendingPayment))
+        ) {
           return NextResponse.json(
             {
               success: false,
@@ -105,77 +128,15 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // The amount is the one recorded at prepare, never the callback's.
-        // A failed confirm is not a failed payment until the order says so,
-        // and one still authenticated after an ambiguous failure is confirmed
-        // once more under a fresh key (lib/payments/toss-gateway).
-        const outcome = await confirmOrder({
-          paymentKey,
-          orderId,
-          amount: pendingPayment.amount,
-          firstKey: orderId,
-          retryOnce: true,
-          // Recorded before each call: an order Toss has not heard of expires
-          // 45 minutes after its last attempt, never under a confirm in flight.
-          beforeSend: async () => {
-            await db
-              .updateTable("payments")
-              .set({ charge_attempted_at: new Date() })
-              .where("id", "=", pendingPayment.id)
-              .execute();
+        await enqueueOneTimeConfirmation(pendingPayment.id, paymentKey);
+        return NextResponse.json(
+          {
+            success: true,
+            chargeQueued: true,
+            message: "결제를 접수했습니다. 결과는 결제 내역에서 확인해 주세요.",
           },
-        });
-        if (outcome.kind !== "approved") {
-          const declined = outcome.kind === "declined";
-          if (outcome.kind !== "declined" || !outcome.payment)
-            await notePaymentEvent({
-              kind: declined ? "charge_failed" : "charge_unresolved",
-              userId: user.id,
-              paymentId: pendingPayment.id,
-              summary: `한 번만 결제 ${won(pendingPayment.amount)} 승인 ${declined ? "실패" : "결과 불분명"}: ${
-                outcome.kind === "unknown" && outcome.tossStatus
-                  ? `Toss 상태 ${outcome.tossStatus}`
-                  : describeTossError(outcome.error)
-              }`,
-            });
-          if (outcome.kind === "declined") {
-            const ended = outcome.payment;
-            if (ended) {
-              await applyVerifiedTossPayment(pendingPayment.id, ended);
-            } else {
-              await db
-                .updateTable("payments")
-                .set({
-                  status: "failed",
-                  raw: JSON.stringify({
-                    error: describeTossError(outcome.error),
-                  }),
-                })
-                .where("id", "=", pendingPayment.id)
-                .where("status", "=", "pending")
-                .execute();
-            }
-          }
-          const message =
-            outcome.kind === "declined" && outcome.error instanceof TossApiError
-              ? outcome.error.message
-              : "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.";
-          return NextResponse.json(
-            { success: false, message },
-            { status: declined ? 402 : 503 },
-          );
-        }
-        const payment = outcome.payment;
-
-        await applyVerifiedTossPayment(pendingPayment.id, payment);
-
-        // The grant owes the thank-you (lib/payments/payment-jobs); a doubled callback,
-        // or the reconciler settling this order first, finds it already owed.
-
-        return NextResponse.json({
-          success: true,
-          message: `결제해 주셔서 감사합니다! ${years}년간 유료 기능을 이용하실 수 있습니다.`,
-        });
+          { status: 202 },
+        );
       });
     } catch (error) {
       if (error instanceof AccountBusyError) {
