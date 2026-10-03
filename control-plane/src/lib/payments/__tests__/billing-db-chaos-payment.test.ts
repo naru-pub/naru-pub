@@ -224,7 +224,7 @@ const { refundPayment, RefundError } =
   require("@/lib/payments/refunds") as typeof import("@/lib/payments/refunds");
 const { deleteRetiredBillingKeys } =
   require("@/lib/payments/billing-keys") as typeof import("@/lib/payments/billing-keys");
-const { runDueJobs, runJobs } =
+const { runDueJobs } =
   require("@/lib/payments/payment-jobs") as typeof import("@/lib/payments/payment-jobs");
 const { checkPaymentInvariants } =
   require("@/lib/payments/payment-invariants") as typeof import("@/lib/payments/payment-invariants");
@@ -394,7 +394,7 @@ function operations(userId: string, pick: () => number): Op[] {
       weight: 3,
       run: async () => {
         const { jobs } = await enqueueDueRenewals();
-        return runJobs(jobs);
+        return runDueJobs();
       },
     },
     {
@@ -518,7 +518,7 @@ function operations(userId: string, pick: () => number): Op[] {
 }
 
 async function reset() {
-  await sql`truncate users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, payment_jobs, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`.execute(
+  await sql`truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments, users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`.execute(
     db,
   );
   fake.orders.clear();
@@ -567,8 +567,8 @@ async function settle() {
   await deleteRetiredBillingKeys(new Date(Date.now() + 2 * DAY_MS));
   // Job times are the database's clock, which the simulated one runs ahead
   // of.
-  await sql`update payment_jobs set run_at = now() - interval '1 second'
-            where done_at is null`.execute(db);
+  await sql`update absurd.r_payments set available_at = now() - interval '1 second'
+            where state in ('pending', 'sleeping')`.execute(db);
   await runDueJobs(1000);
 }
 

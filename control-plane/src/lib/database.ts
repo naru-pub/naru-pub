@@ -7,7 +7,7 @@ import { DB } from "./db";
 // burst on all of them. The public data API is the one path a stranger can
 // drive at will, which makes these bounds load-bearing rather than tuning.
 const poolSize = Number(process.env.DATABASE_POOL_MAX);
-const pool = new Pool({
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: Number.isInteger(poolSize) && poolSize > 0 ? poolSize : 20,
   // Without this a checkout waits forever, so a saturated pool becomes a hang

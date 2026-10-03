@@ -27,7 +27,7 @@ import { withAccountLock } from "@/lib/payments/account-lock";
 import { confirmOrder, lookupOrder } from "@/lib/payments/toss-gateway";
 import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
 import { recordPaymentEvent, won } from "@/lib/payments/payment-events";
-import { enqueueJob, runJobs } from "@/lib/payments/payment-jobs";
+import { enqueueJob } from "@/lib/payments/payment-jobs";
 import { recordCancels } from "@/lib/payments/payment-ledger";
 import { lockPaidTime, recomputePaidTime } from "@/lib/payments/paid-time";
 
@@ -195,7 +195,7 @@ async function reconcilePaymentCore(
       let refundedAmount = 0;
       let refundedAt: Date | null = null;
 
-      const { retiredKey, subscriptionCanceled, noticeJob } = await db
+      const { retiredKey, subscriptionCanceled } = await db
         .transaction()
         .execute(async (trx) => {
           // Read under a lock, so of two reconciliations that see the same
@@ -260,13 +260,22 @@ async function reconcilePaymentCore(
           let stopped: { id: string; retiredKey: string | null } | null = null;
           if (newlyRefunded) {
             const refundedBy = refundedAt ?? new Date();
-            const live = await trx
+            const query = trx
               .selectFrom("subscriptions")
               .select("id")
               .where("user_id", "=", payment.user_id)
-              .where("status", "in", LIVE_SUBSCRIPTION_STATUSES)
-              .where("created_at", "<=", refundedBy)
-              .executeTakeFirst();
+              .where("status", "in", LIVE_SUBSCRIPTION_STATUSES);
+            // An accepted local refund targets the plan captured at request
+            // time. Dashboard refunds still use the provider's cancel time.
+            const live = payment.refund_requested_at
+              ? payment.refund_subscription_id
+                ? await query
+                    .where("id", "=", payment.refund_subscription_id)
+                    .executeTakeFirst()
+                : undefined
+              : await query
+                  .where("created_at", "<=", refundedBy)
+                  .executeTakeFirst();
             const ended = live
               ? await endPlan(trx, live.id, {
                   summary: () => "환불에 따라 정기 결제도 취소",
@@ -355,7 +364,7 @@ async function reconcilePaymentCore(
           };
         });
       if (!opts.deferKeyDeletion) await deleteRetiredBillingKey(retiredKey);
-      await runJobs([noticeJob]);
+
       if (status === "canceled") {
         return {
           state: "refunded",

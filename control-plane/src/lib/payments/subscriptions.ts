@@ -6,7 +6,7 @@ import {
 import type { SubscriptionCancelReason } from "@/lib/email";
 import { extendPaidTime, lockPaidTime } from "@/lib/payments/paid-time";
 import { recordApproval } from "@/lib/payments/payment-ledger";
-import { enqueueJob, runJobs } from "@/lib/payments/payment-jobs";
+import { enqueueJob } from "@/lib/payments/payment-jobs";
 import { db } from "@/lib/database";
 import { retireBillingKey } from "@/lib/payments/billing-keys";
 import type { Executor } from "@/lib/entitlements";
@@ -58,7 +58,7 @@ export type EndedPlan = {
   from: SubscriptionStatus;
   // The key it held, retired: pass to deleteRetiredBillingKey after commit.
   retiredKey: string | null;
-  // The cancel mail queued for it: pass to runJobs after commit.
+  // The cancel mail task committed with this change.
   noticeJob: string | null;
 };
 
@@ -316,8 +316,9 @@ export async function applyOneTimePayment(opts: {
       return { periodStart, periodEnd, granted: true, notice };
     }),
   );
-  const { notice, ...result } = period;
-  await runJobs([notice]);
+  const { periodStart, periodEnd, granted } = period;
+  const result = { periodStart, periodEnd, granted };
+
   return result;
 }
 
@@ -348,7 +349,7 @@ export async function applySuccessfulCharge(opts: {
   const now = new Date();
   const paidAt = approvedAt(opts.payment, now);
 
-  const { notice, ...result } = await grantOrNote(opts, () =>
+  const { periodStart, periodEnd, granted } = await grantOrNote(opts, () =>
     db.transaction().execute(async (trx) => {
       if (opts.paymentId) {
         const ledger = await trx
@@ -472,8 +473,8 @@ export async function applySuccessfulCharge(opts: {
       return { periodStart, periodEnd, granted: true, notice };
     }),
   );
-  await runJobs([notice]);
-  return result;
+
+  return { periodStart, periodEnd, granted };
 }
 
 // Defers the first recurring charge to the end of prepaid access. Notice

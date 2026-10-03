@@ -9,6 +9,7 @@ import {
   test,
 } from "@jest/globals";
 import { createHmac, randomUUID } from "crypto";
+import { Absurd, TaskContext } from "absurd-sdk";
 import type { TossPaymentResult } from "@/lib/payments/toss";
 import type {
   PaymentStatus,
@@ -49,7 +50,8 @@ jest.mock("@/lib/operator-alerts", () => ({
 // Required after the mocks: this transform does not hoist jest.mock above
 // imports.
 const { sql } = require("kysely") as typeof import("kysely");
-const { db } = require("@/lib/database") as typeof import("@/lib/database");
+const { db, pool } =
+  require("@/lib/database") as typeof import("@/lib/database");
 const toss = require("@/lib/payments/toss") as jest.Mocked<
   typeof import("@/lib/payments/toss")
 >;
@@ -60,6 +62,7 @@ const {
   addPaymentGrace,
   applyOneTimePayment,
   applySuccessfulCharge,
+  endPlan,
   MAX_PAYMENT_RETRY_ATTEMPTS,
   scheduleSubscriptionStart,
 } =
@@ -99,7 +102,7 @@ const { POST: oneTimeConfirmRoute } =
   require("@/app/(main)/api/account/donation/one-time/confirm/route") as typeof import("@/app/(main)/api/account/donation/one-time/confirm/route");
 const { confirmSubscription, prepareCardChange, prepareSubscription } =
   require("@/lib/payments/subscription-signup") as typeof import("@/lib/payments/subscription-signup");
-const { enqueueJob, runDueJobs, runJobs, MAX_ATTEMPTS } =
+const { enqueueJob, runDueJobs } =
   require("@/lib/payments/payment-jobs") as typeof import("@/lib/payments/payment-jobs");
 const {
   canMovePayment,
@@ -371,7 +374,7 @@ async function holdAccountLock(userId: string): Promise<() => Promise<void>> {
 
 integration("payments against the database", () => {
   beforeEach(async () => {
-    await sql`truncate users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, payment_jobs, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`.execute(
+    await sql`truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments, users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`.execute(
       db,
     );
     jest.clearAllMocks();
@@ -619,7 +622,9 @@ integration("payments against the database", () => {
       expect(await supporterUntil(userId)).toEqual(
         new Date(sub.current_period_end!),
       );
+      await runDueJobs();
       expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           email: expect.stringMatching(/@example\.com$/),
@@ -750,6 +755,7 @@ integration("payments against the database", () => {
       const sub = await subscription(subId);
       expect(sub.status).toBe("scheduled");
       expect(sub.failed_charge_count).toBe(1);
+      await runDueJobs();
       expect(email.sendSubscriptionPaymentGraceEmail).toHaveBeenCalledTimes(1);
     });
 
@@ -768,6 +774,7 @@ integration("payments against the database", () => {
       await chargeDueSubscriptions();
 
       expect((await subscription(subId)).status).toBe("past_due");
+      await runDueJobs();
       expect(email.sendSubscriptionPaymentGraceEmail).not.toHaveBeenCalled();
     });
   });
@@ -914,6 +921,7 @@ integration("payments against the database", () => {
         .execute((trx) => retireBillingKey(trx, { subscriptionId: subId }));
 
       expect(retired).toEqual(expect.any(String));
+      await runDueJobs();
       expect((await subscription(subId)).billing_key).toBeNull();
       expect(await queued()).toEqual(["key-a"]);
 
@@ -980,6 +988,7 @@ integration("payments against the database", () => {
         );
 
       expect(retired).toBeNull();
+      await runDueJobs();
       expect((await subscription(subId)).billing_key).toBeNull();
       expect(await queued()).toEqual([]);
       const [key] = await db.selectFrom("billing_keys").selectAll().execute();
@@ -1555,6 +1564,81 @@ integration("payments against the database", () => {
       return paymentId;
     }
 
+    test("a committed refund intention survives request death and the policy deadline", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      const subId = await makeSubscription(userId, { status: "active" });
+      // Request accepted while eligible, then died before sending anything.
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .updateTable("payments")
+          .set({
+            refund_requested_at: new Date(Date.now() - 10 * DAY),
+            refund_subscription_id: subId,
+            paid_at: new Date(Date.now() - 11 * DAY),
+          })
+          .where("id", "=", paymentId)
+          .execute();
+        await enqueueJob(
+          trx,
+          { kind: "refund_payment", paymentId, reason: "accepted request" },
+          { dedupeKey: `refund:${paymentId}` },
+        );
+      });
+      const canceled = tossPayment(`refund-order-${userId}`, 12000, {
+        status: "CANCELED",
+        cancels: [{ cancelAmount: 12000 }],
+      });
+      toss.cancelPayment.mockResolvedValue(canceled);
+      toss.getPaymentByOrderId.mockResolvedValue(canceled);
+      await runDueJobs();
+      expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+      expect((await subscription(subId)).status).toBe("canceled");
+      expect(await supporterUntil(userId)).toBeNull();
+      await runDueJobs();
+      expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+    });
+
+    test("a delayed refund stops its captured plan and preserves a later signup", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      const oldPlan = await makeSubscription(userId, { status: "active" });
+      toss.cancelPayment.mockRejectedValue(new TypeError("response lost"));
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000),
+      );
+      await expect(
+        refundPayment({ paymentId, overridePolicy: false, reason: "test" }),
+      ).rejects.toMatchObject({ status: 503 });
+      await db.transaction().execute(async (trx) => {
+        await endPlan(trx, oldPlan, {
+          notice: "user",
+          summary: () => "user canceled",
+        });
+      });
+      const newPlan = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "replacement",
+      });
+      const canceled = tossPayment(`refund-order-${userId}`, 12000, {
+        status: "CANCELED",
+        cancels: [
+          { cancelAmount: 12000, canceledAt: new Date().toISOString() },
+        ],
+      });
+      toss.cancelPayment.mockResolvedValue(canceled);
+      toss.getPaymentByOrderId.mockResolvedValue(canceled);
+      await runDueJobs();
+      expect((await subscription(newPlan)).status).toBe("active");
+      expect((await subscription(newPlan)).billing_key).toBe("replacement");
+      const row = await db
+        .selectFrom("payments")
+        .select("refunded_amount")
+        .where("id", "=", paymentId)
+        .executeTakeFirstOrThrow();
+      expect(row.refunded_amount).toBe(12000);
+    });
+
     test("a payment Toss already canceled is recorded as refunded", async () => {
       const userId = await makeUser();
       const paymentId = await paidPayment(userId);
@@ -1690,6 +1774,7 @@ integration("payments against the database", () => {
       );
 
       expect(response.status).toBe(200);
+      await runDueJobs();
       expect((await subscription(subId)).billing_key).toBeNull();
       expect(toss.deleteBillingKey).not.toHaveBeenCalled();
       expect((await retiredKeys()).map((row) => row.billing_key)).toEqual([
@@ -1901,7 +1986,10 @@ integration("payments against the database", () => {
       await refundWebhook(orderId);
       await reconcilePayment(paymentId);
 
+      await runDueJobs();
+
       expect(email.sendPaymentCanceledEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendPaymentCanceledEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           amount: 12000,
@@ -1913,6 +2001,7 @@ integration("payments against the database", () => {
         }),
       );
       // The refund mail says the plan stopped; no second mail for it.
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
     });
 
@@ -1936,6 +2025,8 @@ integration("payments against the database", () => {
         reconcilePayment(paymentId),
       ]);
 
+      await runDueJobs();
+
       expect(email.sendPaymentCanceledEmail).toHaveBeenCalledTimes(1);
     });
 
@@ -1951,8 +2042,12 @@ integration("payments against the database", () => {
 
       await refundPayment({ paymentId, overridePolicy: false, reason: "test" });
 
+      await runDueJobs();
+
       expect(email.sendPaymentCanceledEmail).not.toHaveBeenCalled();
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
         expect.objectContaining({ reason: "refund" }),
       );
@@ -1964,6 +2059,7 @@ integration("payments against the database", () => {
         }),
       );
       await reconcilePayment(paymentId);
+      await runDueJobs();
       expect(email.sendPaymentCanceledEmail).toHaveBeenCalledWith(
         expect.objectContaining({ subscriptionCanceled: false }),
       );
@@ -1978,7 +2074,9 @@ integration("payments against the database", () => {
       expect((await cancelRequest(userId)).status).toBe(200);
 
       expect((await subscription(subId)).status).toBe("canceled");
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           email: expect.stringMatching(/@example\.com$/),
@@ -1998,6 +2096,7 @@ integration("payments against the database", () => {
       await cancelRequest(userId);
 
       expect((await subscription(subId)).status).toBe("canceled");
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           reason: "user_schedule",
@@ -2017,6 +2116,8 @@ integration("payments against the database", () => {
 
       await cancelRequest(userId);
 
+      await runDueJobs();
+
       expect(email.sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
     });
 
@@ -2032,7 +2133,9 @@ integration("payments against the database", () => {
         action: "billing-deleted",
         subscriptionId: activeId,
       });
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledWith(
         expect.objectContaining({ reason: "billing_key_deleted" }),
       );
@@ -2054,6 +2157,7 @@ integration("payments against the database", () => {
         }),
       );
       expect(response.status).toBe(200);
+      await runDueJobs();
       expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
       expect(await retiredKeys()).toEqual([]);
     });
@@ -2104,10 +2208,12 @@ integration("payments against the database", () => {
       );
       expect(await status(paymentId)).toBe("done");
       expect((await supporterUntil(userId))! > new Date()).toBe(true);
+      await runDueJobs();
       expect(email.sendSupportThankYouEmail).toHaveBeenCalledTimes(1);
 
       toss.getPaymentByOrderId.mockResolvedValue(tossPayment(orderId, 12000));
       await reconcilePayment(paymentId);
+      await runDueJobs();
       expect(email.sendSupportThankYouEmail).toHaveBeenCalledTimes(1);
     });
 
@@ -2122,6 +2228,7 @@ integration("payments against the database", () => {
 
       expect(await reconcilePayment(paymentId)).toEqual({ state: "pending" });
       expect(await status(paymentId)).toBe("pending");
+      await runDueJobs();
       expect(email.sendSupportThankYouEmail).not.toHaveBeenCalled();
     });
 
@@ -2334,6 +2441,7 @@ integration("payments against the database", () => {
         expect((await supporterUntil(userId))! > periodEnd).toBe(true);
         expect((await subscription(subId)).status).toBe("active");
         expect(await orphanedRows()).toEqual([]);
+        await runDueJobs();
         expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledTimes(1);
       });
 
@@ -2425,6 +2533,7 @@ integration("payments against the database", () => {
       expect(sub.failed_charge_count).toBe(1);
       expect(sub.status).toBe("active");
       expect((await attempts(subId))[0].status).toBe("aborted");
+      await runDueJobs();
       expect(email.sendSubscriptionPaymentGraceEmail).toHaveBeenCalledTimes(1);
     });
 
@@ -2443,7 +2552,9 @@ integration("payments against the database", () => {
       expect(sub.status).toBe("active");
       expect(sub.failed_charge_count).toBe(0);
       expect((await attempts(subId))[0].status).toBe("done");
+      await runDueJobs();
       expect(email.sendSubscriptionPaymentGraceEmail).not.toHaveBeenCalled();
+      await runDueJobs();
       expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledTimes(1);
     });
 
@@ -2462,6 +2573,7 @@ integration("payments against the database", () => {
       expect(sub.status).toBe("active");
       expect(sub.failed_charge_count).toBe(0);
       expect((await attempts(subId))[0].status).toBe("pending");
+      await runDueJobs();
       expect(email.sendSubscriptionPaymentGraceEmail).not.toHaveBeenCalled();
     });
 
@@ -2471,6 +2583,7 @@ integration("payments against the database", () => {
         new toss.TossApiError("server error", 500),
       );
       await chargeDueSubscriptions();
+      await runDueJobs();
       expect(email.sendRecurringChargeReceiptEmail).not.toHaveBeenCalled();
 
       const [first] = await attempts(subId);
@@ -2486,6 +2599,7 @@ integration("payments against the database", () => {
       await reconcilePayment(id);
 
       expect((await attempts(subId))[0].status).toBe("done");
+      await runDueJobs();
       expect(email.sendRecurringChargeReceiptEmail).toHaveBeenCalledTimes(1);
     });
 
@@ -2561,7 +2675,9 @@ integration("payments against the database", () => {
 
       // A reloaded callback reports the subscription without thanking twice.
       expect(await confirm(userId, customerKey)).toMatchObject({ ok: true });
+      await runDueJobs();
       expect(email.sendSupportThankYouEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendRecurringChargeReceiptEmail).not.toHaveBeenCalled();
     });
 
@@ -3118,6 +3234,7 @@ integration("payments against the database", () => {
       });
 
       expect(await confirm()).toMatchObject({ ok: false, status: 409 });
+      await runDueJobs();
       expect((await subscription(subId)).billing_key).toBeNull();
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("new-key");
     });
@@ -3201,6 +3318,7 @@ integration("payments against the database", () => {
 
       expect(await reconcilePayment(paymentId)).toEqual({ state: "expired" });
 
+      await runDueJobs();
       expect((await subscription(subId)).billing_key).toBeNull();
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("signup-key");
     });
@@ -3213,6 +3331,7 @@ integration("payments against the database", () => {
 
       await reconcilePayment(paymentId);
 
+      await runDueJobs();
       expect((await subscription(subId)).billing_key).toBeNull();
     });
 
@@ -3270,7 +3389,7 @@ integration("payments against the database", () => {
 
       const first = await enqueueDueRenewals();
       expect(first.due).toBe(1);
-      await runJobs(first.jobs);
+      await runDueJobs();
       expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
       expect(
         new Date((await subscription(subId)).current_period_end!) > new Date(),
@@ -3286,19 +3405,40 @@ integration("payments against the database", () => {
       const release = await holdAccountLock(userId);
 
       const { jobs } = await enqueueDueRenewals();
-      await runJobs(jobs);
+      await runDueJobs();
       expect(toss.chargeBillingKey).not.toHaveBeenCalled();
-      const [job] = await db
-        .selectFrom("payment_jobs")
-        .select(["attempts", "done_at", "run_at"])
-        .where("kind", "=", "renew_subscription")
-        .execute();
-      expect(job).toMatchObject({ attempts: 0, done_at: null });
+      const {
+        rows: [job],
+      } = await sql<{ state: string }>`
+        select state from absurd.t_payments
+        where params->'job'->>'kind' = 'renew_subscription'
+      `.execute(db);
+      expect(job).toMatchObject({ state: "sleeping" });
+
+      // Several wakes while the account stays busy must keep the same logical
+      // attempt alive, rather than finish after replaying its first sleep.
+      for (let wake = 0; wake < 2; wake++) {
+        await sql`update absurd.c_payments set state = to_jsonb((now() - interval '1 minute')::text)
+          where checkpoint_name like 'account-busy%'`.execute(db);
+        await sql`update absurd.r_payments set available_at = now() - interval '1 second'
+          where state = 'sleeping'`.execute(db);
+        await runDueJobs();
+        const stillBusy = await sql<{
+          state: string;
+          attempts: number;
+        }>`select state, attempts
+          from absurd.t_payments where params->'job'->>'kind' = 'renew_subscription'`.execute(
+          db,
+        );
+        expect(stillBusy.rows[0]).toEqual({ state: "sleeping", attempts: 1 });
+      }
 
       await release();
+      await sql`update absurd.c_payments set state = to_jsonb((now() - interval '1 minute')::text)
+        where checkpoint_name like 'account-busy%'`.execute(db);
       await db
-        .updateTable("payment_jobs")
-        .set({ run_at: new Date(Date.now() - 1000) })
+        .updateTable("absurd.r_payments")
+        .set({ available_at: new Date(Date.now() - 1000) })
         .execute();
       await runDueJobs();
       expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
@@ -3398,7 +3538,9 @@ integration("payments against the database", () => {
       await chargeDueSubscriptions();
 
       expect((await subscription(subId)).status).toBe("past_due");
+      await runDueJobs();
       expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           email: expect.stringMatching(/@example\.com$/),
@@ -3416,6 +3558,8 @@ integration("payments against the database", () => {
       );
 
       await chargeDueSubscriptions();
+
+      await runDueJobs();
 
       expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledWith(
         // One decline, not "several tries": the grace period had already
@@ -3436,7 +3580,10 @@ integration("payments against the database", () => {
 
       await chargeDueSubscriptions();
 
+      await runDueJobs();
+
       expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendSubscriptionPastDueEmail).toHaveBeenCalledWith(
         expect.objectContaining({ reason: "unresolved", accessEndsAt: null }),
       );
@@ -3450,17 +3597,163 @@ integration("payments against the database", () => {
 
       await chargeDueSubscriptions();
 
+      await runDueJobs();
+
       expect(email.sendSubscriptionPaymentGraceEmail).toHaveBeenCalledTimes(1);
+      await runDueJobs();
       expect(email.sendSubscriptionPastDueEmail).not.toHaveBeenCalled();
     });
   });
 
   describe("payment jobs", () => {
+    test("task creation rolls back with the domain transaction", async () => {
+      let taskId: string | null = null;
+      await expect(
+        db.transaction().execute(async (trx) => {
+          taskId = await enqueueJob(trx, {
+            kind: "thank_you",
+            paymentId: randomUUID(),
+          });
+          await trx
+            .insertInto("users")
+            .values({ login_name: "rollback-payer", password_hash: "x" })
+            .execute();
+          throw new Error("rollback");
+        }),
+      ).rejects.toThrow("rollback");
+      expect(taskId).not.toBeNull();
+      const tasks =
+        await sql`select * from absurd.t_payments where task_id = ${taskId}`.execute(
+          db,
+        );
+      expect(tasks.rows).toEqual([]);
+      expect(
+        await db
+          .selectFrom("users")
+          .select("id")
+          .where("login_name", "=", "rollback-payer")
+          .execute(),
+      ).toEqual([]);
+    });
+
+    test("a completed step survives a crash before task completion", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, { status: "canceled" });
+      const id = (await enqueueJob(db, {
+        kind: "subscription_canceled",
+        subscriptionId: subId,
+        reason: "user",
+      }))!;
+      const client = new Absurd({ db: pool, queueName: "payments" });
+      const [claimed] = await client.claimTasks({ claimTimeout: 600 });
+      const ctx = await TaskContext.create({
+        log: console,
+        taskID: id,
+        con: pool,
+        queueName: "payments",
+        task: claimed,
+        claimTimeout: 600,
+        onLeaseExtended: () => {},
+      });
+      // Represents the mail provider succeeding and its checkpoint committing,
+      // followed by process death before complete_run.
+      await ctx.step("perform", async () => {
+        await email.sendSubscriptionCanceledEmail({} as never);
+        return null;
+      });
+      await sql`update absurd.r_payments set claim_expires_at = now() - interval '1 second' where task_id = ${id}`.execute(
+        db,
+      );
+      await runDueJobs(); // Expired lease schedules a retry with backoff.
+      await sql`update absurd.r_payments set available_at = now() - interval '1 second'
+        where task_id = ${id} and state = 'sleeping'`.execute(db);
+      await runDueJobs();
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      expect((await client.fetchTaskResult(id))?.state).toBe("completed");
+    });
+
+    test("an abandoned claim is reclaimed without losing the task", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, { status: "canceled" });
+      const id = (await enqueueJob(db, {
+        kind: "subscription_canceled",
+        subscriptionId: subId,
+        reason: "user",
+      }))!;
+      const client = new Absurd({ db: pool, queueName: "payments" });
+      await client.claimTasks({ claimTimeout: 600 });
+      await sql`update absurd.r_payments set claim_expires_at = now() - interval '1 second' where task_id = ${id}`.execute(
+        db,
+      );
+      await runDueJobs(); // Expired lease schedules a retry with backoff.
+      await sql`update absurd.r_payments set available_at = now() - interval '1 second'
+        where task_id = ${id} and state = 'sleeping'`.execute(db);
+      await runDueJobs();
+      expect(email.sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+      expect((await client.fetchTaskResult(id))?.state).toBe("completed");
+    });
+
+    test("a dead worker's final attempt records its operator event atomically", async () => {
+      const id = (await enqueueJob(db, {
+        kind: "thank_you",
+        paymentId: randomUUID(),
+      }))!;
+      await db
+        .updateTable("absurd.t_payments")
+        .set({ max_attempts: 1 })
+        .where("task_id", "=", id)
+        .execute();
+      const client = new Absurd({ db: pool, queueName: "payments" });
+      await client.claimTasks({ claimTimeout: 600 });
+      await sql`update absurd.r_payments set claim_expires_at = now() - interval '1 second' where task_id = ${id}`.execute(
+        db,
+      );
+      await runDueJobs();
+      expect((await client.fetchTaskResult(id))?.state).toBe("failed");
+      const events = await db
+        .selectFrom("payment_events")
+        .select("summary")
+        .where("kind", "=", "job_failed")
+        .execute();
+      expect(events).toHaveLength(1);
+      expect(events[0].summary).toContain(id);
+      await runDueJobs();
+      expect(
+        await db
+          .selectFrom("payment_events")
+          .select("id")
+          .where("kind", "=", "job_failed")
+          .execute(),
+      ).toHaveLength(1);
+    });
+
+    test("a task scheduled for later performs no side effect before its date", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, { status: "canceled" });
+      const id = (await enqueueJob(
+        db,
+        {
+          kind: "subscription_canceled",
+          subscriptionId: subId,
+          reason: "user",
+        },
+        { runAt: new Date(Date.now() + DAY) },
+      ))!;
+      await runDueJobs();
+      expect(email.sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
+      const task = await db
+        .selectFrom("absurd.t_payments")
+        .select("state")
+        .where("task_id", "=", id)
+        .executeTakeFirstOrThrow();
+      expect(task.state).toBe("sleeping");
+    });
+
     async function job(id: string) {
       return db
-        .selectFrom("payment_jobs")
+        .selectFrom("absurd.t_payments")
         .selectAll()
-        .where("id", "=", id)
+        .where("task_id", "=", id)
         .executeTakeFirstOrThrow();
     }
 
@@ -3481,25 +3774,34 @@ integration("payments against the database", () => {
 
       await chargeDueSubscriptions();
 
+      await runDueJobs();
       const [queued] = await db
-        .selectFrom("payment_jobs")
+        .selectFrom("absurd.t_payments")
         .selectAll()
-        .where("kind", "=", "grace_notice")
+        .where(sql<string>`params->'job'->>'kind'`, "=", "grace_notice")
         .execute();
       expect(queued).toMatchObject({
-        attempts: 1,
-        done_at: null,
-        last_error: "mail provider down",
+        attempts: 2,
+        state: "sleeping",
       });
-      expect(new Date(queued.run_at).getTime()).toBeGreaterThan(Date.now());
+      const [retry] = await db
+        .selectFrom("absurd.r_payments")
+        .selectAll()
+        .where("task_id", "=", queued.task_id)
+        .where("state", "in", ["pending", "sleeping"])
+        .execute();
+      expect(new Date(retry.available_at).getTime()).toBeGreaterThan(
+        Date.now(),
+      );
 
       await db
-        .updateTable("payment_jobs")
-        .set({ run_at: new Date(Date.now() - 1000) })
+        .updateTable("absurd.r_payments")
+        .set({ available_at: new Date(Date.now() - 1000) })
         .execute();
       expect(await runDueJobs()).toEqual({ done: 1, retried: 0, failed: 0 });
+      await runDueJobs();
       expect(email.sendSubscriptionPaymentGraceEmail).toHaveBeenCalledTimes(2);
-      expect((await job(queued.id)).done_at).not.toBeNull();
+      expect((await job(queued.task_id)).state).toBe("completed");
     });
 
     test("a job owed twice is queued once", async () => {
@@ -3525,17 +3827,17 @@ integration("payments against the database", () => {
         paymentId: "00000000-0000-0000-0000-000000000000",
       }))!;
       await db
-        .updateTable("payment_jobs")
-        .set({ attempts: MAX_ATTEMPTS - 1 })
-        .where("id", "=", id)
+        .updateTable("absurd.t_payments")
+        .set({ max_attempts: 1 })
+        .where("task_id", "=", id)
         .execute();
       // A malformed id: the lookup itself fails.
-      await sql`update payment_jobs set payload = jsonb_set(payload, '{paymentId}', '"not-a-uuid"') where id = ${id}`.execute(
+      await sql`update absurd.t_payments set params = jsonb_set(params, '{job,paymentId}', '"not-a-uuid"') where task_id = ${id}`.execute(
         db,
       );
 
       expect(await runDueJobs()).toEqual({ done: 0, retried: 0, failed: 1 });
-      expect((await job(id)).failed_at).not.toBeNull();
+      expect((await job(id)).state).toBe("failed");
       const events = await db
         .selectFrom("payment_events")
         .select("kind")
@@ -5111,6 +5413,7 @@ integration("payments against the database", () => {
       await chargeDueSubscriptions();
 
       expect((await subscription(subId)).status).toBe("active");
+      await runDueJobs();
       expect(email.sendSubscriptionPastDueEmail).not.toHaveBeenCalled();
     });
 
@@ -5143,6 +5446,7 @@ integration("payments against the database", () => {
       );
 
       expect(response.status).toBe(200);
+      await runDueJobs();
       const sub = await subscription(subId);
       expect(sub.billing_key).toBeNull();
       // Deleted at Toss by the cron, not inside the webhook.

@@ -424,7 +424,12 @@ docker tag "$CONTROL_PLANE_IMAGE" naru-pub-control-plane:current
 docker tag "$JOBS_IMAGE" naru-pub-control-plane-jobs:current
 docker tag "$PROXY_IMAGE" naru-pub-proxy:current
 
-echo "Running backward-compatible migrations..."
+echo "Stopping application and background processes before migrations (downtime is acceptable)..."
+# Breaking migrations are allowed. No old producer or consumer may continue
+# using the previous schema while the new jobs image migrates it.
+docker compose stop --timeout 300 control-plane-blue control-plane-green cron worker
+
+echo "Running migrations..."
 # In the jobs image, through the cron service's settings: the web image is only
 # the Next.js server and has no migrations.
 docker compose run --rm --no-deps cron node dist/cli/migrate.mjs

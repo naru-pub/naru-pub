@@ -13,6 +13,79 @@ export type Int8 = ColumnType<string, bigint | number | string, bigint | number 
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface AbsurdCPayments {
+  checkpoint_name: string;
+  owner_run_id: string | null;
+  state: unknown | null;
+  status: Generated<string>;
+  task_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AbsurdEPayments {
+  emitted_at: Generated<Timestamp>;
+  event_name: string;
+  payload: unknown | null;
+}
+
+export interface AbsurdQueues {
+  cleanup_limit: Generated<number>;
+  cleanup_ttl: Generated<unknown>;
+  created_at: Generated<Timestamp>;
+  default_partition: Generated<string>;
+  detach_min_age: Generated<unknown>;
+  detach_mode: Generated<string>;
+  partition_lookahead: Generated<unknown>;
+  partition_lookback: Generated<unknown>;
+  queue_name: string;
+  storage_mode: Generated<string>;
+}
+
+export interface AbsurdRPayments {
+  attempt: number;
+  available_at: Timestamp;
+  claim_expires_at: Timestamp | null;
+  claimed_by: string | null;
+  completed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  event_payload: unknown | null;
+  failed_at: Timestamp | null;
+  failure_reason: unknown | null;
+  result: unknown | null;
+  run_id: string;
+  started_at: Timestamp | null;
+  state: string;
+  task_id: string;
+  wake_event: string | null;
+}
+
+export interface AbsurdTPayments {
+  attempts: Generated<number>;
+  cancellation: unknown | null;
+  cancelled_at: Timestamp | null;
+  completed_payload: unknown | null;
+  enqueue_at: Generated<Timestamp>;
+  first_started_at: Timestamp | null;
+  headers: unknown | null;
+  idempotency_key: string | null;
+  last_attempt_run: string | null;
+  max_attempts: number | null;
+  params: unknown;
+  retry_strategy: unknown | null;
+  state: string;
+  task_id: string;
+  task_name: string;
+}
+
+export interface AbsurdWPayments {
+  created_at: Generated<Timestamp>;
+  event_name: string;
+  run_id: string;
+  step_name: string;
+  task_id: string;
+  timeout_at: Timestamp | null;
+}
+
 export interface AccountDeletionTokens {
   created_at: Generated<Timestamp>;
   email: string;
@@ -300,20 +373,6 @@ export interface PaymentEvents {
   user_id: string | null;
 }
 
-export interface PaymentJobs {
-  attempts: Generated<number>;
-  created_at: Generated<Timestamp>;
-  dedupe_key: string | null;
-  done_at: Timestamp | null;
-  failed_at: Timestamp | null;
-  id: Generated<string>;
-  kind: string;
-  last_error: string | null;
-  locked_until: Timestamp | null;
-  payload: unknown;
-  run_at: Generated<Timestamp>;
-}
-
 export interface PaymentMails {
   created_at: Generated<Timestamp>;
   error: string | null;
@@ -339,6 +398,8 @@ export interface Payments {
   period_start: Timestamp | null;
   raw: unknown | null;
   reconciliation_error: string | null;
+  refund_requested_at: Timestamp | null;
+  refund_subscription_id: string | null;
   refunded_amount: Generated<number>;
   refunded_at: Timestamp | null;
   status: import("./payments/payment-states").PaymentStatus;
@@ -538,6 +599,12 @@ export interface Users {
 }
 
 export interface DB {
+  "absurd.c_payments": AbsurdCPayments;
+  "absurd.e_payments": AbsurdEPayments;
+  "absurd.queues": AbsurdQueues;
+  "absurd.r_payments": AbsurdRPayments;
+  "absurd.t_payments": AbsurdTPayments;
+  "absurd.w_payments": AbsurdWPayments;
   account_deletion_tokens: AccountDeletionTokens;
   activities: Activities;
   billing_keys: BillingKeys;
@@ -565,7 +632,6 @@ export interface DB {
   password_reset_tokens: PasswordResetTokens;
   payment_cron_runs: PaymentCronRuns;
   payment_events: PaymentEvents;
-  payment_jobs: PaymentJobs;
   payment_mails: PaymentMails;
   payment_transactions: PaymentTransactions;
   payments: Payments;

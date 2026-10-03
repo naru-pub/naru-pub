@@ -11,7 +11,7 @@ import { markDeletedAtToss } from "@/lib/payments/billing-keys";
 import { endPlan } from "@/lib/payments/subscriptions";
 import { withAccountLock } from "@/lib/payments/account-lock";
 import { lookupOrder } from "@/lib/payments/toss-gateway";
-import { enqueueJob, runJobs } from "@/lib/payments/payment-jobs";
+import { enqueueJob } from "@/lib/payments/payment-jobs";
 import { recordWebhookDelivery } from "@/lib/payments/payment-events";
 import {
   formatWebhookLog,
@@ -26,32 +26,9 @@ import {
 
 type Delivery = Omit<WebhookLogEntry, "httpStatus" | "durationMs">;
 
-// Toss wants a 200 within 10 seconds, or it counts the delivery failed and
-// sends it again (https://docs.tosspayments.com/guides/v2/webhook). The order
-// lookup gets a short timeout, and the follow-up jobs only what is left of the
-// budget: one still running past it goes on in the background, and one that
-// fails stays queued for the run-payment-jobs cron.
+// Durably enqueue follow-up work and acknowledge within Toss's 10-second
+// budget. Absurd consumers perform reconciliation outside this request.
 const LOOKUP_TIMEOUT_MS = 5000;
-const ANSWER_WITHIN_MS = 8000;
-
-async function runJobsWithin(
-  ids: Array<string | null>,
-  startedAt: number,
-): Promise<void> {
-  const left = ANSWER_WITHIN_MS - (Date.now() - startedAt);
-  const run = runJobs(ids).catch((error) =>
-    console.error("Toss webhook: follow-up jobs failed", error),
-  );
-  if (left <= 0) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    run,
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, left);
-    }),
-  ]);
-  clearTimeout(timer);
-}
 
 function eventTypeOf(body: unknown): string {
   const eventType =
@@ -162,7 +139,6 @@ export async function POST(request: NextRequest) {
       const canceled = key?.user_id
         ? await withAccountLock(key.user_id, { waitMs: 5000 }, cancelPlan)
         : await cancelPlan();
-      await runJobsWithin([canceled?.noticeJob ?? null], startedAt);
 
       return respond(
         200,
@@ -230,8 +206,7 @@ export async function POST(request: NextRequest) {
     // A cancel, or an order Toss ended without approving it (ABORTED,
     // EXPIRED): reconciliation brings the ledger, the paid time and the plan
     // in line under the account lock, as it does for every other path. It is
-    // a payment job, tried here at once and, when the account is busy or Toss
-    // does not answer, by the run-payment-jobs cron after; the webhook is
+    // an Absurd task, executed by the run-payment-jobs consumer; the webhook is
     // answered either way. A key that frees is deleted by the cron, not here
     // inside Toss's 10 seconds.
     const action = webhookLedgerAction(payment.status);
@@ -240,7 +215,7 @@ export async function POST(request: NextRequest) {
         kind: "reconcile_payment",
         paymentId: ledger.id,
       });
-      await runJobsWithin([job], startedAt);
+
       return respond(200, `reconcile job ${job} for payment ${ledger.id}`);
     }
     const flow = paymentFlowForRecord(ledger.toss_flow, ledger.attempt_key);

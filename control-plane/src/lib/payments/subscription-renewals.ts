@@ -4,7 +4,7 @@ import type {
   SubscriptionStatus,
 } from "@/lib/payments/payment-states";
 import type { Executor } from "@/lib/entitlements";
-import { enqueueJob, runJobs } from "@/lib/payments/payment-jobs";
+import { enqueueJob } from "@/lib/payments/payment-jobs";
 import { sql } from "kysely";
 import {
   BillingInterval,
@@ -327,7 +327,7 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
   if (addPaymentGrace(new Date(sub.current_period_end)) > now) return;
   // Only the period this run saw: a reconciler that granted the order in the
   // meantime moved it on, and that plan is paid, not past due.
-  const notice = await db.transaction().execute(async (trx) => {
+  await db.transaction().execute(async (trx) => {
     const updated = await trx
       .updateTable("subscriptions")
       .set({ status: "past_due", updated_at: now })
@@ -345,7 +345,7 @@ async function markPastDueAfterGrace(sub: DueSubscription, now: Date) {
     });
     return enqueuePastDueNotice(trx, sub, { reason: "unresolved" });
   });
-  await runJobs([notice]);
+
   console.error(
     `[charge-subscriptions] user ${sub.user_id}: grace period over with the charge still unresolved -> past_due`,
   );
@@ -625,7 +625,7 @@ async function chargeSubscription(
     failures >= MAX_PAYMENT_RETRY_ATTEMPTS || graceEndsAt <= now
       ? "past_due"
       : sub.status;
-  const { jobs } = await markAttemptFailed({
+  await markAttemptFailed({
     attempt,
     sub,
     failures,
@@ -633,7 +633,7 @@ async function chargeSubscription(
     error: outcome.error,
     keepAttemptStatus: outcome.keepAttemptStatus,
   });
-  await runJobs(jobs);
+
   console.error(
     `[charge-subscriptions] user ${sub.user_id}: charge failed (${failures}/${MAX_PAYMENT_RETRY_ATTEMPTS}) -> ${nextStatus}: ${describeTossError(outcome.error)}`,
   );

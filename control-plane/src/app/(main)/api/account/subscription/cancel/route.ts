@@ -3,7 +3,6 @@ import { assertJsonContentType } from "@/lib/utils";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
-import { runJobs } from "@/lib/payments/payment-jobs";
 import { endPlan, plansOf } from "@/lib/payments/subscriptions";
 import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 
@@ -86,7 +85,6 @@ export async function POST(request: NextRequest) {
     const cancelingSchedule = stopped.from === "scheduled";
     const wasPastDue = stopped.from === "past_due";
     await deleteRetiredBillingKey(stopped.retiredKey);
-    await runJobs([stopped.noticeJob]);
 
     return NextResponse.json({
       success: true,

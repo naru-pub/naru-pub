@@ -1,3 +1,4 @@
+import { Absurd } from "absurd-sdk";
 import { sql } from "kysely";
 import { AccountBusyError } from "@/lib/payments/account-lock";
 import {
@@ -5,7 +6,7 @@ import {
   sendSubscriptionCanceledNotice,
 } from "@/lib/payments/cancellation-notices";
 import { sendChargeReceipt } from "@/lib/payments/charge-receipts";
-import { db } from "@/lib/database";
+import { db, pool } from "@/lib/database";
 import {
   sendSubscriptionPastDueEmail,
   sendSubscriptionPaymentGraceEmail,
@@ -14,19 +15,13 @@ import {
   type SubscriptionPastDueReason,
 } from "@/lib/email";
 import type { Executor } from "@/lib/entitlements";
-import { notePaymentEvent } from "@/lib/payments/payment-events";
 // Keeps each mail sent from here in payment_mails.
 import { mailRecipient } from "@/lib/payments/payment-mails";
 
-// Work the payment code owes after a change, kept in payment_jobs (see the
-// migration that adds it): the mail a supporter is owed, a webhook's
-// reconciliation. A job is enqueued in the same transaction as the change it
-// follows, so it exists exactly when the change does — never a mail for a
-// change that rolled back, never a change whose mail was lost when the process
-// died after committing. The request runs its jobs right after committing
-// (runJobs), so mail still goes out at once; the run-payment-jobs cron retries
-// whatever failed, with backoff, and gives up with an operator event after
-// MAX_ATTEMPTS.
+// Absurd owns claims, checkpoints, retry policy and durable sleeps. Domain
+// changes and task creation commit together through absurd.spawn_task on the
+// caller's Kysely executor. The ledger remains the source of truth.
+// payment-job-v1 is versioned: preserve its handler until its tasks drain.
 
 export type PaymentJob =
   // A thank-you for the purchase that started a support: a signup's first
@@ -54,159 +49,98 @@ export type PaymentJob =
     }
   // A webhook's reconciliation, retried until Toss can be asked.
   | { kind: "reconcile_payment"; paymentId: string }
+  // An accepted refund survives a crash before/after the external cancel.
+  | { kind: "refund_payment"; paymentId: string; reason: string }
   // A plan's renewal for the day (lib/payments/subscription-renewals).
   | { kind: "renew_subscription"; subscriptionId: string };
 
 export const MAX_ATTEMPTS = 8;
-const LOCK_FOR = "5 minutes";
+export const PAYMENT_QUEUE = "payments";
+export const PAYMENT_TASK = "payment-job-v1";
+// A money operation can make several 90-second Toss calls. Claim one task at
+// a time so waiting in a claimed batch does not consume another task's lease.
+const CLAIM_SECONDS = 600;
+type Workflow = { job: PaymentJob; runAt?: string };
+const workflows = new Absurd({ db: pool, queueName: PAYMENT_QUEUE });
+workflows.registerTask<Workflow>(
+  { name: PAYMENT_TASK },
+  async (params, ctx) => {
+    if (params.runAt) await ctx.sleepUntil("scheduled", new Date(params.runAt));
+    while (true) {
+      const busy = await ctx.step("perform", async () => {
+        try {
+          await handle(params.job);
+          return false;
+        } catch (error) {
+          if (!(error instanceof AccountBusyError)) throw error;
+          return true;
+        }
+      });
+      if (!busy) return;
+      // Checkpoint contention too, so replay skips earlier busy checks instead
+      // of reacquiring the lock for every sleep the workflow already finished.
+      await ctx.sleepFor("account-busy", 60);
+    }
+  },
+);
 
-// Enqueues a job in the caller's transaction. Returns its id, or null when a
-// job with the same dedupe key already exists (the thing is already owed).
+// Use Absurd's SQL API on the supplied executor: a pool-based SDK spawn here
+// would commit independently of the business change.
 export async function enqueueJob(
   executor: Executor,
   job: PaymentJob,
   opts: { dedupeKey?: string; runAt?: Date } = {},
 ): Promise<string | null> {
-  const row = await executor
-    .insertInto("payment_jobs")
-    .values({
-      kind: job.kind,
-      payload: JSON.stringify(job),
-      dedupe_key: opts.dedupeKey ?? null,
-      // The database's now() unless given: the claim compares with it, and a
-      // job run right after enqueueing must be due.
-      ...(opts.runAt ? { run_at: opts.runAt } : {}),
-    })
-    .onConflict((oc) => oc.column("dedupe_key").doNothing())
-    .returning("id")
-    .executeTakeFirst();
-  return row?.id ?? null;
+  const params: Workflow = {
+    job,
+    ...(opts.runAt ? { runAt: opts.runAt.toISOString() } : {}),
+  };
+  const result = await sql<{ task_id: string; created: boolean }>`
+    select task_id, created from absurd.spawn_task(
+      ${PAYMENT_QUEUE}, ${PAYMENT_TASK}, ${JSON.stringify(params)}::jsonb,
+      ${JSON.stringify({
+        max_attempts: MAX_ATTEMPTS,
+        idempotency_key: opts.dedupeKey,
+        retry_strategy: {
+          kind: "exponential",
+          base_seconds: 60,
+          factor: 2,
+          max_seconds: 21600,
+        },
+      })}::jsonb)
+  `.execute(executor);
+  const row = result.rows[0];
+  return row.created ? row.task_id : null;
 }
 
-// Runs the given jobs now, after the transaction that enqueued them has
-// committed. Best effort: a job that fails stays queued for the cron.
-export async function runJobs(ids: Array<string | null>): Promise<void> {
-  for (const id of ids) {
-    if (id) await runJob(id);
-  }
-}
-
-// Runs every job that is due, oldest first, up to `limit`. The cron calls it
-// every minute. Job times are all the database's clock.
 export async function runDueJobs(
   limit = 50,
 ): Promise<{ done: number; retried: number; failed: number }> {
-  const due = await db
-    .selectFrom("payment_jobs")
-    .select("id")
-    .where("done_at", "is", null)
-    .where("failed_at", "is", null)
-    // The database's clock, as the claim uses: run_at has microseconds, and
-    // a JavaScript Date would see a job enqueued this millisecond as not due.
-    .where("run_at", "<=", sql<Date>`now()`)
-    .where((eb) =>
-      eb.or([
-        eb("locked_until", "is", null),
-        eb("locked_until", "<", sql<Date>`now()`),
-      ]),
-    )
-    .orderBy("run_at")
-    .limit(limit)
-    .execute();
   const counts = { done: 0, retried: 0, failed: 0 };
-  for (const { id } of due) counts[await runJob(id)] += 1;
-  return counts;
-}
-
-type JobResult = "done" | "retried" | "failed";
-
-async function runJob(id: string): Promise<JobResult> {
-  // Claimed for a while, so a second runner skips it; a runner that dies
-  // leaves the claim to lapse.
-  const claimed = await sql<{
-    id: string;
-    payload: PaymentJob;
-    attempts: number;
-  }>`
-    UPDATE payment_jobs
-    SET locked_until = now() + ${sql.raw(`interval '${LOCK_FOR}'`)},
-        attempts = attempts + 1
-    WHERE id = ${id}
-      AND done_at IS NULL AND failed_at IS NULL
-      AND run_at <= now()
-      AND (locked_until IS NULL OR locked_until < now())
-    RETURNING id, payload, attempts
-  `.execute(db);
-  const job = claimed.rows[0];
-  if (!job) return "retried";
-  const payload =
-    typeof job.payload === "string"
-      ? (JSON.parse(job.payload) as PaymentJob)
-      : job.payload;
-
-  try {
-    await handle(payload);
-    await db
-      .updateTable("payment_jobs")
-      .set({ done_at: sql<Date>`now()`, locked_until: null, last_error: null })
-      .where("id", "=", id)
-      .execute();
-    return "done";
-  } catch (error) {
-    const message = (
-      error instanceof Error ? error.message : String(error)
-    ).slice(0, 2000);
-    // Another payment operation holds the account: not this job's failure.
-    if (error instanceof AccountBusyError) {
-      await db
-        .updateTable("payment_jobs")
-        .set({
-          attempts: job.attempts - 1,
-          locked_until: null,
-          run_at: sql<Date>`now() + interval '1 minute'`,
-        })
-        .where("id", "=", id)
-        .execute();
-      return "retried";
-    }
-    if (job.attempts >= MAX_ATTEMPTS) {
-      await db
-        .updateTable("payment_jobs")
-        .set({
-          failed_at: sql<Date>`now()`,
-          locked_until: null,
-          last_error: message,
-        })
-        .where("id", "=", id)
-        .execute();
-      await notePaymentEvent({
-        kind: "job_failed",
-        summary: `결제 후속 작업 ${payload.kind}가 ${job.attempts}번 실패해 멈췄습니다: ${message.slice(0, 300)}`,
-      });
-      console.error(
-        `[payment-jobs] job ${id} (${payload.kind}) gave up`,
-        error,
-      );
-      return "failed";
-    }
-    // 1, 2, 4 … minutes, at most six hours.
-    const backoffMinutes = Math.min(2 ** (job.attempts - 1), 360);
-    await db
-      .updateTable("payment_jobs")
-      .set({
-        locked_until: null,
-        last_error: message,
-        run_at: sql<Date>`now() + make_interval(mins => ${backoffMinutes})`,
-      })
-      .where("id", "=", id)
-      .execute();
-    console.error(`[payment-jobs] job ${id} (${payload.kind}) failed`, error);
-    return "retried";
+  for (let i = 0; i < limit; i++) {
+    const [task] = await workflows.claimTasks({
+      workerId: `payments:${process.pid}`,
+      claimTimeout: CLAIM_SECONDS,
+      batchSize: 1,
+    });
+    if (!task) break;
+    await workflows.executeTask(task, CLAIM_SECONDS);
+    const result = await workflows.fetchTaskResult(task.task_id);
+    if (result?.state === "completed") counts.done++;
+    else if (result?.state === "failed") {
+      counts.failed++;
+    } else counts.retried++;
   }
+  return counts;
 }
 
 async function handle(job: PaymentJob): Promise<void> {
   switch (job.kind) {
+    case "refund_payment": {
+      const { resumeRefund } = await import("@/lib/payments/refunds");
+      await resumeRefund(job.paymentId, job.reason);
+      return;
+    }
     case "thank_you":
       return sendThankYou(job.paymentId);
     case "charge_receipt":

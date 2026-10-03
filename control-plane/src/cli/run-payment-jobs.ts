@@ -1,8 +1,7 @@
 import { runDueJobs } from "@/lib/payments/payment-jobs";
 
-// Every minute from cron.ts: the payment jobs (lib/payments/payment-jobs) that are due —
-// a mail whose first send failed, a webhook's reconciliation the account was
-// too busy for.
+// Every minute from cron.ts: drain an Absurd batch of notifications, renewals,
+// refund recovery and webhook reconciliation. Absurd owns claims and retries.
 runDueJobs()
   .then(({ done, retried, failed }) => {
     if (done + retried + failed > 0) {

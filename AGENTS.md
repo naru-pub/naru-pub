@@ -1,5 +1,12 @@
 # Repository Notes
 
+## Deployment Preferences
+
+Downtime is acceptable, and backward compatibility is not a requirement.
+Prefer stopping old application and background processes before breaking
+migrations instead of maintaining compatibility bridges. Preserve payment
+records and unfinished durable work during cutovers.
+
 ## Kysely Migrations
 
 Create new migrations with `kysely-ctl`, not by hand:

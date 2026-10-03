@@ -2,7 +2,7 @@
   "dialect": "postgres",
   "outFile": "src/lib/db.d.ts",
   "excludePattern": "{kysely_*,fedify_*}",
-  "typeMapping": { "jsonb": "unknown" },
+  "typeMapping": { "jsonb": "unknown", "interval": "unknown" },
   "overrides": {
     "columns": {
       "board_posts.kind": "\"site\" | \"template\" | \"question\" | \"chat\"",

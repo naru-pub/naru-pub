@@ -1,13 +1,13 @@
 import { AccountBusyError, withAccountLock } from "@/lib/payments/account-lock";
 import { db } from "@/lib/database";
+import { enqueueJob } from "@/lib/payments/payment-jobs";
 import { deleteRetiredBillingKey } from "@/lib/payments/billing-keys";
 import {
   reconcilePayment,
   type ReconciliationResult,
 } from "@/lib/payments/payment-reconciliation";
-import { runJobs } from "@/lib/payments/payment-jobs";
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/payments/payment-states";
-import { endPlan, plansOf } from "@/lib/payments/subscriptions";
+import { endPlan } from "@/lib/payments/subscriptions";
 import { paymentFlowForRecord, paymentOfOtherMid } from "@/lib/payments/toss";
 import { cancelOrder } from "@/lib/payments/toss-gateway";
 
@@ -104,10 +104,17 @@ export class RefundError extends Error {
 // Refunding ends the billing relationship, not just this one charge.
 // Reconciliation stops the account's recurring plan when it first sees the
 // refund; this is for a cancel Toss accepted but the lookup does not show yet.
-async function stopRecurringBilling(userId: string): Promise<boolean> {
+async function stopRecurringBilling(
+  userId: string,
+  subscriptionId: string | null,
+): Promise<boolean> {
+  if (!subscriptionId) return false;
   const ended = await db.transaction().execute(async (trx) => {
-    const live = await plansOf(trx, userId)
+    const live = await trx
+      .selectFrom("subscriptions")
       .select("id")
+      .where("user_id", "=", userId)
+      .where("id", "=", subscriptionId)
       .where("status", "in", LIVE_SUBSCRIPTION_STATUSES)
       .executeTakeFirst();
     // The refund's own cancel mail went out before this stop, or goes out
@@ -121,7 +128,7 @@ async function stopRecurringBilling(userId: string): Promise<boolean> {
   });
   if (!ended) return false;
   await deleteRetiredBillingKey(ended.retiredKey);
-  await runJobs([ended.noticeJob]);
+
   return true;
 }
 
@@ -178,8 +185,8 @@ export async function refundPayment(
   }
 }
 
-async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
-  const payment = await db
+function readRefundPayment(paymentId: string) {
+  return db
     .selectFrom("payments")
     .select([
       "id",
@@ -192,9 +199,16 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
       "attempt_key",
       "toss_flow",
       "toss_mid",
+      "refund_requested_at",
+      "refund_subscription_id",
     ])
-    .where("id", "=", opts.paymentId)
-    .executeTakeFirstOrThrow();
+    .where("id", "=", paymentId)
+    .executeTakeFirst();
+}
+
+async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
+  const payment = await readRefundPayment(opts.paymentId);
+  if (!payment) throw new RefundError("결제 내역을 찾을 수 없습니다.", 404);
 
   if (payment.refunded_amount > 0) {
     throw new RefundError("이미 환불된 결제입니다.", 409);
@@ -226,11 +240,79 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
 
   const planRunningBefore = await runningPlanId(payment.user_id);
 
+  // Acceptance and its task commit together before touching Toss. Capture
+  // the subscription now: recovery must never cancel a later signup.
+  if (!payment.refund_requested_at) {
+    await db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("payments")
+        .set({
+          refund_requested_at: new Date(),
+          refund_subscription_id: planRunningBefore,
+        })
+        .where("id", "=", payment.id)
+        .execute();
+      await enqueueJob(
+        trx,
+        {
+          kind: "refund_payment",
+          paymentId: payment.id,
+          reason: opts.reason.slice(0, 200),
+        },
+        { dedupeKey: `refund:${payment.id}` },
+      );
+    });
+  }
+  return finishRefund(
+    payment,
+    opts.reason,
+    payment.refund_requested_at
+      ? payment.refund_subscription_id
+      : planRunningBefore,
+  );
+}
+
+// The policy was checked at acceptance. A worker restarting after the seven
+// day window still owes that refund; missing accounts have no work left.
+export async function resumeRefund(
+  paymentId: string,
+  reason: string,
+): Promise<void> {
+  const owner = await readRefundPayment(paymentId);
+  if (!owner) return;
+  await withAccountLock(owner.user_id, { waitMs: 0 }, async () => {
+    const payment = await readRefundPayment(paymentId);
+    if (!payment?.refund_requested_at) return;
+    if (payment.refunded_amount > 0) {
+      await stopRecurringBilling(
+        payment.user_id,
+        payment.refund_subscription_id,
+      );
+      return;
+    }
+    await finishRefund(payment, reason, payment.refund_subscription_id);
+    const settled = await readRefundPayment(paymentId);
+    if (settled && settled.refunded_amount === 0) {
+      throw new RefundError("환불 결과를 확인하고 있습니다.", 503);
+    }
+  });
+}
+
+async function finishRefund(
+  payment: NonNullable<Awaited<ReturnType<typeof readRefundPayment>>>,
+  reason: string,
+  planRunningBefore: string | null,
+): Promise<RefundOutcome> {
+  if (!payment.toss_payment_key)
+    throw new RefundError("결제 승인 정보가 없습니다.", 409);
+  const otherMid = paymentOfOtherMid(payment);
+  if (otherMid) throw new RefundError(otherMid.message, 409);
+
   let refunded: ReconciliationResult | null = null;
   const canceled = await cancelOrder({
     flow: paymentFlowForRecord(payment.toss_flow, payment.attempt_key),
     paymentKey: payment.toss_payment_key,
-    cancelReason: opts.reason.slice(0, 200),
+    cancelReason: reason.slice(0, 200),
   });
   if (canceled.kind !== "canceled") {
     // Toss refuses to cancel a payment that is already canceled — with
@@ -276,7 +358,7 @@ async function refundLocked(opts: RefundRequest): Promise<RefundOutcome> {
       return null;
     });
   }
-  await stopRecurringBilling(payment.user_id);
+  await stopRecurringBilling(payment.user_id, planRunningBefore);
   // Whichever of this refund, its own reconciliation or the webhook it set
   // off got there first, the plan that was running is what the supporter
   // asked about.

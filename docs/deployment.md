@@ -89,12 +89,18 @@ For each deployment, `deploy-server.sh`:
    built from;
 2. pulls that commit's images from ghcr.io unless they are already loaded;
 3. points the `:current` tags at that commit's images;
-4. runs database migrations from the new jobs image;
+4. stops both web slots and the cron/worker processes, then runs database
+   migrations from the new jobs image;
 5. starts the inactive slot and waits for the control plane, database, and
    hosted-site proxy to become healthy;
 6. reloads nginx to atomically direct new requests to the healthy slot;
 7. recreates the cron and worker processes from the new jobs image; and
 8. stops the previous slot and removes release images nothing can come back to.
+
+Downtime is acceptable, and backward compatibility is not a requirement
+(see `AGENTS.md`). Stopping old processes before migration permits direct
+schema cutovers. The Absurd payment migration imports existing work and
+removes the old queue; see [the payment deployment notes](design/absurd-payments.md#deployment).
 
 After the checkout moves, the script re-executes the checked-in copy once
 before it reads the Compose topology. This keeps a deployment safe when the
@@ -116,16 +122,14 @@ traffic to it, and stops the slot it left. The slots use
 `restart: unless-stopped`, so a stopped slot also stays stopped across a Docker
 restart.
 
-Rollback only switches the HTTP services. It does not reverse database
-migrations or roll back cron and worker code. Migrations deployed through this
-flow must therefore use the expand-and-contract pattern: first add compatible
-schema, deploy code that can use it, and remove old schema only in a later
-deployment after rollback is no longer required.
+Rollback only switches HTTP services. It does not reverse database migrations
+or roll back cron and worker code. After a breaking migration, use a forward
+fix; an older image may no longer work with the current schema. Backward
+compatibility is not maintained solely to support rollback.
 
-The first deployment from the legacy Compose topology has a short one-time
-cutover while the stable gateway takes ownership of ports `40000` and `40001`.
-Subsequent deployments keep the gateway and active slot running throughout. A
-rollback slot first becomes available after the second blue-green deployment.
+Both web slots are stopped during migration. The stable gateway and hosted-site
+proxy can remain running, but control-plane requests are unavailable until the
+new slot starts and passes its health checks.
 
 Runtime state is stored under `.deploy-state/` and must not be committed. If the
 active-slot file is lost, inspect the nginx configuration and restore
