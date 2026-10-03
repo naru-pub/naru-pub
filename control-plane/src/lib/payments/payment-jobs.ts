@@ -1,3 +1,14 @@
+import { scheduledRecurringStart } from "@/lib/payments/support-purchases";
+import { scheduleSubscriptionStart } from "@/lib/payments/subscriptions";
+import { recordPaymentEvent } from "@/lib/payments/payment-events";
+import { chargeableKey } from "@/lib/payments/billing-keys";
+import { chargeOrder } from "@/lib/payments/toss-gateway";
+import {
+  describeTossError,
+  PLAN_ORDER_NAMES,
+  type BillingInterval,
+} from "@/lib/payments/toss";
+import { notePaymentEvent, won } from "@/lib/payments/payment-events";
 import { readRefundPayment, RefundError } from "@/lib/payments/refunds";
 import {
   applyVerifiedTossPayment,
@@ -39,6 +50,12 @@ import { mailRecipient } from "@/lib/payments/payment-mails";
 // payment-job-v1 is versioned: preserve its handler until its tasks drain.
 
 export type PaymentJob =
+  | {
+      kind: "initial_subscription_charge";
+      paymentId: string;
+      subscriptionId: string;
+      billingKeyId: string;
+    }
   // A thank-you for the purchase that started a support: a signup's first
   // charge or a one-time payment.
   | { kind: "thank_you"; paymentId: string }
@@ -160,6 +177,8 @@ export async function runDueJobs(
 
 async function handle(job: PaymentJob): Promise<void> {
   switch (job.kind) {
+    case "initial_subscription_charge":
+      return chargeInitialSubscription(job);
     case "refund_payment": {
       if (job.testCode && isTossTestMode()) {
         const outcome = await withTossLab({ testCode: job.testCode }, () =>
@@ -419,4 +438,164 @@ async function finishRefund(
   if (refunded?.state !== "refunded" || refunded.amount === 0) {
     await stopRecurringBilling(payment.user_id, planRunningBefore);
   }
+}
+
+// Only the claimed Absurd task can charge a newly registered subscription.
+async function chargeInitialSubscription(
+  job: Extract<PaymentJob, { kind: "initial_subscription_charge" }>,
+): Promise<void> {
+  const owner = await db
+    .selectFrom("payments")
+    .select("user_id")
+    .where("id", "=", job.paymentId)
+    .executeTakeFirstOrThrow();
+  await withAccountLock(owner.user_id, { waitMs: 0 }, async () => {
+    const attempt = await db
+      .selectFrom("payments")
+      .selectAll()
+      .where("id", "=", job.paymentId)
+      .executeTakeFirstOrThrow();
+    if (attempt.status !== "pending") return;
+    const sub = await db
+      .selectFrom("subscriptions")
+      .selectAll()
+      .where("id", "=", job.subscriptionId)
+      .executeTakeFirstOrThrow();
+    if (
+      attempt.subscription_id !== sub.id ||
+      attempt.user_id !== sub.user_id ||
+      attempt.amount !== sub.amount ||
+      !attempt.attempt_key?.startsWith(`subscription_initial:${sub.id}:`)
+    )
+      throw new Error("Initial charge identity mismatch");
+    if (
+      sub.status !== "incomplete" ||
+      sub.billing_key_id !== job.billingKeyId
+    ) {
+      if (attempt.charge_attempted_at) {
+        const settled = await reconcilePayment(attempt.id);
+        if (settled.state === "pending")
+          throw new Error("Initial charge outcome is unknown");
+      } else {
+        await db.transaction().execute(async (trx) => {
+          await trx
+            .updateTable("payments")
+            .set({ status: "expired" })
+            .where("id", "=", attempt.id)
+            .where("status", "=", "pending")
+            .execute();
+          await recordPaymentEvent(trx, {
+            kind: "order_expired",
+            userId: sub.user_id,
+            paymentId: attempt.id,
+            subscriptionId: sub.id,
+            summary:
+              "가입 상태나 카드가 바뀌어 보내지 않은 첫 결제 주문을 종료",
+          });
+        });
+      }
+      return;
+    }
+    // Paid time can change between acceptance and execution. An unsent order
+    // must wait behind paid time acquired in the meantime.
+    const account = await db
+      .selectFrom("users")
+      .select("supporter_until")
+      .where("id", "=", sub.user_id)
+      .executeTakeFirstOrThrow();
+    const startsAt = scheduledRecurringStart(
+      account.supporter_until,
+      new Date(),
+    );
+    if (!attempt.charge_attempted_at && startsAt) {
+      await db.transaction().execute(async (trx) => {
+        await scheduleSubscriptionStart(sub.id, startsAt, new Date(), trx);
+        await trx
+          .updateTable("payments")
+          .set({ status: "expired" })
+          .where("id", "=", attempt.id)
+          .where("status", "=", "pending")
+          .where("charge_attempted_at", "is", null)
+          .execute();
+        await recordPaymentEvent(trx, {
+          kind: "subscription_scheduled",
+          userId: sub.user_id,
+          subscriptionId: sub.id,
+          paymentId: attempt.id,
+          summary: "첫 결제 대기 중 이용 기간이 생겨 정기 결제를 그 뒤로 예약",
+        });
+      });
+      return;
+    }
+    const key = await chargeableKey(db, sub.id);
+    if (!key) throw new Error("Initial charge billing key is unavailable");
+    const userId = sub.user_id;
+    const interval = sub.billing_interval as BillingInterval;
+    const now = new Date();
+    const outcome = await chargeOrder({
+      billingKey: key.billingKey,
+      customerKey: key.customerKey,
+      amount: sub.amount,
+      orderId: attempt.order_id,
+      orderName: PLAN_ORDER_NAMES[interval],
+      sentBefore: attempt.charge_attempted_at != null,
+      beforeSend: async () => {
+        await db
+          .updateTable("payments")
+          .set({ charge_attempted_at: new Date() })
+          .where("id", "=", attempt.id)
+          .execute();
+      },
+    });
+    if (outcome.kind === "unknown") {
+      // Keep the attempt pending, and the key with it, so the next callback or
+      // the reconciler settles this orderId.
+      await notePaymentEvent({
+        kind: "charge_unresolved",
+        userId,
+        paymentId: attempt.id,
+        subscriptionId: sub.id,
+        summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): ${
+          outcome.tossStatus
+            ? `Toss 상태 ${outcome.tossStatus}`
+            : describeTossError(outcome.error)
+        }`,
+      });
+      throw new Error("Initial subscription charge outcome is unknown");
+    }
+    if (outcome.kind === "declined") {
+      if (outcome.payment) {
+        const result = await applyVerifiedTossPayment(
+          attempt.id,
+          outcome.payment,
+          {
+            failureSummary: `정기 결제 첫 결제 실패 ${won(sub.amount)}: Toss 상태 ${outcome.payment.status} · 등록한 카드는 폐기`,
+          },
+        );
+        await deleteRetiredBillingKey(result.retiredKey);
+      } else {
+        const { failFirstCharge } =
+          await import("@/lib/payments/subscription-signup");
+        await failFirstCharge({
+          userId,
+          subscriptionId: sub.id,
+          paymentId: attempt.id,
+          amount: sub.amount,
+          reason: describeTossError(outcome.error),
+          set: {
+            raw: JSON.stringify({ error: describeTossError(outcome.error) }),
+          },
+        });
+      }
+      return;
+    }
+    const payment = outcome.payment;
+
+    // The thank-you goes with the grant (lib/payments/payment-jobs); a doubled callback,
+    // or the reconciler settling this order first, finds it already owed.
+    await applyVerifiedTossPayment(attempt.id, payment, {
+      from: now,
+      notice: "thank_you",
+    });
+  });
 }

@@ -1,4 +1,3 @@
-import { applyVerifiedTossPayment } from "@/lib/payments/payment-facts";
 import { randomUUID } from "crypto";
 import {
   LIVE_SUBSCRIPTION_STATUSES,
@@ -43,14 +42,8 @@ import {
   describeTossError,
   withNewOrderId,
   PLAN_AMOUNTS,
-  PLAN_ORDER_NAMES,
-  TossApiError,
 } from "@/lib/payments/toss";
-import {
-  chargeOrder,
-  issueKey,
-  type IssueOutcome,
-} from "@/lib/payments/toss-gateway";
+import { issueKey, type IssueOutcome } from "@/lib/payments/toss-gateway";
 
 type IssuedKey = Extract<IssueOutcome, { kind: "issued" }>;
 
@@ -277,14 +270,17 @@ async function prepareCardChangeLocked(
   return { ok: true, customerKey, registrationId: registration.id };
 }
 
-async function getOrCreateInitialChargeAttempt(opts: {
-  subscriptionId: string;
-  userId: string;
-  amount: number;
-}) {
+async function getOrCreateInitialChargeAttempt(
+  executor: Executor,
+  opts: {
+    subscriptionId: string;
+    userId: string;
+    amount: number;
+  },
+) {
   const prefix = `subscription_initial:${opts.subscriptionId}:`;
 
-  const pending = await db
+  const pending = await executor
     .selectFrom("payments")
     .select(["id", "order_id", "status", "charge_attempted_at"])
     .where("subscription_id", "=", opts.subscriptionId)
@@ -295,7 +291,7 @@ async function getOrCreateInitialChargeAttempt(opts: {
 
   if (pending) return pending;
 
-  const countRow = await db
+  const countRow = await executor
     .selectFrom("payments")
     .select(({ fn }) => fn.countAll().as("count"))
     .where("subscription_id", "=", opts.subscriptionId)
@@ -303,33 +299,28 @@ async function getOrCreateInitialChargeAttempt(opts: {
     .executeTakeFirst();
   const attemptNumber = Number(countRow?.count ?? 0) + 1;
 
-  try {
-    return await withNewOrderId((orderId) =>
-      db
-        .insertInto("payments")
-        .values({
-          attempt_key: `${prefix}${attemptNumber}`,
-          user_id: opts.userId,
-          subscription_id: opts.subscriptionId,
-          order_id: orderId,
-          amount: opts.amount,
-          status: "pending",
-        })
-        .returning(["id", "order_id", "status", "charge_attempted_at"])
-        .executeTakeFirstOrThrow(),
-    );
-  } catch (error) {
-    const concurrent = await db
-      .selectFrom("payments")
-      .select(["id", "order_id", "status", "charge_attempted_at"])
-      .where("subscription_id", "=", opts.subscriptionId)
-      .where("attempt_key", "like", `${prefix}%`)
-      .where("status", "=", "pending")
-      .orderBy("id", "desc")
+  return withNewOrderId(async (orderId) => {
+    const row = await executor
+      .insertInto("payments")
+      .values({
+        attempt_key: `${prefix}${attemptNumber}`,
+        user_id: opts.userId,
+        subscription_id: opts.subscriptionId,
+        order_id: orderId,
+        amount: opts.amount,
+        status: "pending",
+      })
+      .onConflict((oc) => oc.column("order_id").doNothing())
+      .returning(["id", "order_id", "status", "charge_attempted_at"])
       .executeTakeFirst();
-    if (concurrent) return concurrent;
-    throw error;
-  }
+    // DO NOTHING leaves the surrounding business transaction usable for retry.
+    if (!row)
+      throw Object.assign(new Error("Order ID collision"), {
+        code: "23505",
+        constraint: "payments_order_id_key",
+      });
+    return row;
+  });
 }
 
 // Starts the plan this signup registration is for, with the key Toss just
@@ -403,6 +394,28 @@ async function adoptSignupKey(opts: {
       })
       .where("id", "=", registration.id)
       .execute();
+    const user = await trx
+      .selectFrom("users")
+      .select("supporter_until")
+      .where("id", "=", opts.userId)
+      .executeTakeFirstOrThrow();
+    const startsAt = scheduledRecurringStart(user.supporter_until, now);
+    if (startsAt) {
+      await scheduleSubscriptionStart(plan.id, startsAt, now, trx);
+      await recordPaymentEvent(trx, {
+        kind: "subscription_scheduled",
+        userId: opts.userId,
+        subscriptionId: plan.id,
+        summary: `정기 결제 ${won(PLAN_AMOUNTS[interval])} 등록, 남은 기간 뒤 ${kstDate(startsAt)}에 첫 결제`,
+      });
+    } else {
+      await enqueueInitialCharge(trx, {
+        id: plan.id,
+        userId: opts.userId,
+        amount: PLAN_AMOUNTS[interval],
+        billing_key_id: key.id,
+      });
+    }
     return { planId: plan.id, retired };
   });
   await deleteRetiredBillingKey(retired);
@@ -437,7 +450,7 @@ async function stillConfirmable(subscriptionId: string, keyId: string) {
 }
 
 // A first charge that failed for good ends this signup's use of its key.
-async function failFirstCharge(opts: {
+export async function failFirstCharge(opts: {
   userId: string;
   subscriptionId: string;
   paymentId: string;
@@ -499,6 +512,7 @@ type ConfirmOutcome = SignupResult<{
   cardChanged?: boolean;
   // A card change whose overdue renewal is still not paid on the new card.
   renewalQueued?: boolean;
+  chargeQueued?: boolean;
 }>;
 
 function alreadySettled(sub: {
@@ -594,9 +608,18 @@ export async function confirmSubscription(opts: {
 
     const plan = await db
       .selectFrom("subscriptions")
-      .select(["id", "billing_interval", "amount", "billing_key_id"])
+      .select([
+        "id",
+        "billing_interval",
+        "amount",
+        "billing_key_id",
+        "status",
+        "next_billing_at",
+      ])
       .where("id", "=", planId)
       .executeTakeFirstOrThrow();
+    const settledPlan = alreadySettled(plan);
+    if (settledPlan) return settledPlan;
     // Paid time read now, under the lock: a refund or a one-time payment that
     // committed while this waited for it decides whether the first charge is
     // now or scheduled.
@@ -613,7 +636,7 @@ export async function confirmSubscription(opts: {
   });
 }
 
-// Schedules or charges the first period of a signup that holds its key.
+// Schedules or queues the first period of a signup that holds its key.
 // Runs under the account lock.
 async function confirmAdoptedSignup(opts: {
   sub: {
@@ -656,85 +679,35 @@ async function confirmAdoptedSignup(opts: {
   const key = await chargeableKey(db, sub.id);
   if (!key) return fail(409, SIGNUP_CHANGED_MESSAGE);
 
-  // Charge the first period.
-  const attempt = await getOrCreateInitialChargeAttempt({
+  await db
+    .transaction()
+    .execute((trx) => enqueueInitialCharge(trx, { ...sub, userId }));
+  return {
+    ok: true,
+    chargeQueued: true,
+    message: "카드를 등록했습니다. 첫 결제를 처리 중입니다.",
+  };
+}
+
+async function enqueueInitialCharge(
+  trx: Executor,
+  sub: { id: string; userId: string; amount: number; billing_key_id: string },
+) {
+  const attempt = await getOrCreateInitialChargeAttempt(trx, {
     subscriptionId: sub.id,
-    userId,
+    userId: sub.userId,
     amount: sub.amount,
   });
-  const outcome = await chargeOrder({
-    billingKey: key.billingKey,
-    customerKey: key.customerKey,
-    amount: sub.amount,
-    orderId: attempt.order_id,
-    orderName: PLAN_ORDER_NAMES[interval],
-    sentBefore: attempt.charge_attempted_at != null,
-    beforeSend: async () => {
-      await db
-        .updateTable("payments")
-        .set({ charge_attempted_at: new Date() })
-        .where("id", "=", attempt.id)
-        .execute();
-    },
-  });
-  if (outcome.kind === "unknown") {
-    // Keep the attempt pending, and the key with it, so the next callback or
-    // the reconciler settles this orderId.
-    await notePaymentEvent({
-      kind: "charge_unresolved",
-      userId,
+  await enqueueJob(
+    trx,
+    {
+      kind: "initial_subscription_charge",
       paymentId: attempt.id,
       subscriptionId: sub.id,
-      summary: `정기 결제 첫 결제 ${won(sub.amount)} 결과 불분명 (주문 ${attempt.order_id}): ${
-        outcome.tossStatus
-          ? `Toss 상태 ${outcome.tossStatus}`
-          : describeTossError(outcome.error)
-      }`,
-    });
-    return fail(
-      503,
-      "결제 결과를 확인하고 있습니다. 잠시 후 다시 시도해 주세요.",
-    );
-  }
-  if (outcome.kind === "declined") {
-    if (outcome.payment) {
-      const result = await applyVerifiedTossPayment(
-        attempt.id,
-        outcome.payment,
-        {
-          failureSummary: `정기 결제 첫 결제 실패 ${won(sub.amount)}: Toss 상태 ${outcome.payment.status} · 등록한 카드는 폐기`,
-        },
-      );
-      await deleteRetiredBillingKey(result.retiredKey);
-    } else {
-      await failFirstCharge({
-        userId,
-        subscriptionId: sub.id,
-        paymentId: attempt.id,
-        amount: sub.amount,
-        reason: describeTossError(outcome.error),
-        set: {
-          raw: JSON.stringify({ error: describeTossError(outcome.error) }),
-        },
-      });
-    }
-    return fail(
-      402,
-      outcome.error instanceof TossApiError && outcome.error.message
-        ? outcome.error.message
-        : "결제가 완료되지 않았습니다.",
-    );
-  }
-  const payment = outcome.payment;
-
-  // The thank-you goes with the grant (lib/payments/payment-jobs); a doubled callback,
-  // or the reconciler settling this order first, finds it already owed.
-  await applyVerifiedTossPayment(attempt.id, payment, {
-    from: now,
-    notice: "thank_you",
-  });
-
-  return { ok: true, message: "결제가 시작되었습니다. 감사합니다!" };
+      billingKeyId: sub.billing_key_id,
+    },
+    { dedupeKey: `initial-charge:${attempt.id}` },
+  );
 }
 
 // Issues the new card's key and swaps it in for the old one, under the

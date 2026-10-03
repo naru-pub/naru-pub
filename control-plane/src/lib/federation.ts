@@ -42,6 +42,11 @@ const fedifySql = postgres(
   },
 );
 
+// The worker calls this only after its queue listener and heartbeat drain.
+export async function closeFederationDatabase() {
+  await fedifySql.end({ timeout: 5 });
+}
+
 const KEY_ALGORITHMS = ["RSASSA-PKCS1-v1_5", "Ed25519"] as const;
 type KeyAlgorithm = (typeof KEY_ALGORITHMS)[number];
 

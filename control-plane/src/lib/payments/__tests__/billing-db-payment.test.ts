@@ -100,8 +100,11 @@ const { POST: oneTimePrepareRoute } =
   require("@/app/(main)/api/account/donation/one-time/prepare/route") as typeof import("@/app/(main)/api/account/donation/one-time/prepare/route");
 const { POST: oneTimeConfirmRoute } =
   require("@/app/(main)/api/account/donation/one-time/confirm/route") as typeof import("@/app/(main)/api/account/donation/one-time/confirm/route");
-const { confirmSubscription, prepareCardChange, prepareSubscription } =
-  require("@/lib/payments/subscription-signup") as typeof import("@/lib/payments/subscription-signup");
+const {
+  confirmSubscription: acceptSubscription,
+  prepareCardChange,
+  prepareSubscription,
+} = require("@/lib/payments/subscription-signup") as typeof import("@/lib/payments/subscription-signup");
 const { enqueueJob, runDueJobs } =
   require("@/lib/payments/payment-jobs") as typeof import("@/lib/payments/payment-jobs");
 const {
@@ -162,6 +165,16 @@ function tossPayment(
     totalAmount,
     ...extra,
   };
+}
+
+// Domain fixtures accept the callback then drain the real Absurd worker.
+// HTTP queue assertions call acceptSubscription directly.
+async function confirmSubscription(
+  opts: Parameters<typeof acceptSubscription>[0],
+) {
+  const result = await acceptSubscription(opts);
+  if (result.ok && result.chargeQueued) await runDueJobs();
+  return result;
 }
 
 // Domain scenarios accept an intent then execute an actual claimed Absurd task.
@@ -1845,6 +1858,125 @@ integration("payments against the database", () => {
       return paymentId;
     }
 
+    test("retained payment history does not flag a deleted account as missing paid access", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      await db.transaction().execute((trx) => deleteUserRow(trx, userId));
+      expect(
+        await db
+          .selectFrom("payments")
+          .select("id")
+          .where("id", "=", paymentId)
+          .executeTakeFirst(),
+      ).toBeDefined();
+      expect(await checkPaymentInvariants()).toEqual({});
+    });
+
+    test("only an operator can retry a failed refund; identity and audit survive", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidPayment(userId);
+      await requestRefund({
+        paymentId,
+        reason: "original reason",
+        overridePolicy: false,
+      });
+      const task = await db
+        .selectFrom("absurd.t_payments")
+        .selectAll()
+        .where("idempotency_key", "=", `refund:${paymentId}`)
+        .executeTakeFirstOrThrow();
+      await db
+        .updateTable("absurd.t_payments")
+        .set({ max_attempts: 1 })
+        .where("task_id", "=", task.task_id)
+        .execute();
+      toss.cancelPayment.mockRejectedValue(new Error("provider unavailable"));
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000),
+      );
+      await runDueJobs();
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "failed",
+      });
+      const { paymentTaskRecoveryList } =
+        require("@/lib/payments/task-recovery") as typeof import("@/lib/payments/task-recovery");
+      expect(
+        (await paymentTaskRecoveryList()).find(
+          (row) => row.task_id === task.task_id,
+        ),
+      ).toMatchObject({
+        state: "failed",
+        last_error: { message: expect.any(String) },
+      });
+      const { POST: retryRoute } =
+        require("@/app/(main)/api/admin/payment-tasks/[id]/retry/route") as typeof import("@/app/(main)/api/admin/payment-tasks/[id]/retry/route");
+      const context = { params: Promise.resolve({ id: task.task_id }) };
+      const post = () =>
+        new NextRequest("http://localhost/api/admin/payment-tasks/retry", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: "provider recovered" }),
+        });
+      auth.validateRequest.mockResolvedValue({
+        user: { id: userId, loginName: "supporter" },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      expect((await retryRoute(post(), context)).status).toBe(403);
+      auth.validateRequest.mockResolvedValue({
+        user: { id: userId, loginName: "yang" },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      await sql`create function reject_retry_audit() returns trigger language plpgsql as $$ begin if NEW.kind='job_retried' then raise exception 'audit unavailable'; end if; return NEW; end $$`.execute(
+        db,
+      );
+      await sql`create trigger reject_retry_audit before insert on payment_events for each row execute function reject_retry_audit()`.execute(
+        db,
+      );
+      try {
+        expect((await retryRoute(post(), context)).status).toBe(503);
+        expect(await refundProgress(paymentId)).toMatchObject({
+          state: "failed",
+        });
+      } finally {
+        await sql`drop trigger reject_retry_audit on payment_events`.execute(
+          db,
+        );
+        await sql`drop function reject_retry_audit()`.execute(db);
+      }
+      expect((await retryRoute(post(), context)).status).toBe(202);
+      expect((await retryRoute(post(), context)).status).toBe(409);
+      expect(toss.cancelPayment).toHaveBeenCalledTimes(1);
+      const retried = await db
+        .selectFrom("absurd.t_payments")
+        .selectAll()
+        .where("task_id", "=", task.task_id)
+        .executeTakeFirstOrThrow();
+      expect(retried.params).toEqual(task.params);
+      expect(retried.idempotency_key).toBe(task.idempotency_key);
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "pending",
+      });
+      const audit = await db
+        .selectFrom("payment_events")
+        .select("summary")
+        .where("kind", "=", "job_retried")
+        .where("payment_id", "=", paymentId)
+        .execute();
+      expect(audit).toHaveLength(1);
+      expect(audit[0].summary).toContain("provider recovered");
+      expect(audit[0].summary).toContain(userId);
+      toss.cancelPayment.mockResolvedValue(
+        tossPayment(`refund-order-${userId}`, 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+      await runDueJobs();
+      expect(await refundProgress(paymentId)).toMatchObject({
+        state: "completed",
+      });
+      expect(toss.cancelPayment).toHaveBeenCalledTimes(2);
+    });
     test("HTTP accepts a refund without moving money, then Absurd completes it", async () => {
       const userId = await makeUser();
       const paymentId = await paidPayment(userId);
@@ -3260,6 +3392,186 @@ integration("payments against the database", () => {
       });
     }
 
+    test("HTTP accepts the initial charge and repeated callbacks share one task", async () => {
+      const { userId, customerKey } = await signingUp();
+      const registration = await db
+        .selectFrom("card_registrations")
+        .select("id")
+        .where("user_id", "=", userId)
+        .executeTakeFirstOrThrow();
+      auth.validateRequest.mockResolvedValue({
+        user: { id: userId },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      const { POST: confirmRoute } =
+        require("@/app/(main)/api/account/subscription/confirm/route") as typeof import("@/app/(main)/api/account/subscription/confirm/route");
+      for (let i = 0; i < 2; i++) {
+        const response = await confirmRoute(
+          new NextRequest("http://localhost/api/account/subscription/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              authKey: "auth",
+              customerKey,
+              registrationId: registration.id,
+            }),
+          }),
+        );
+        expect(response.status).toBe(202);
+        expect(await response.json()).toMatchObject({
+          success: true,
+          chargeQueued: true,
+        });
+      }
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      const attempts = await db
+        .selectFrom("payments")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .execute();
+      expect(attempts).toHaveLength(1);
+      const task = await db
+        .selectFrom("absurd.t_payments")
+        .selectAll()
+        .where("idempotency_key", "=", `initial-charge:${attempts[0].id}`)
+        .executeTakeFirstOrThrow();
+      expect(task.state).toBe("pending");
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+      await runDueJobs();
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+      expect((await currentPlan(userId)).status).toBe("active");
+      await runDueJobs();
+      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+    });
+
+    test("an exhausted initial charge retries the same order through operator recovery", async () => {
+      const { userId, customerKey } = await signingUp();
+      const registration = await db
+        .selectFrom("card_registrations")
+        .select("id")
+        .where("user_id", "=", userId)
+        .executeTakeFirstOrThrow();
+      await acceptSubscription({
+        userId,
+        customerKey,
+        authKey: "auth",
+        registrationId: registration.id,
+      });
+      const payment = await db
+        .selectFrom("payments")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .executeTakeFirstOrThrow();
+      const task = await db
+        .selectFrom("absurd.t_payments")
+        .selectAll()
+        .where("idempotency_key", "=", `initial-charge:${payment.id}`)
+        .executeTakeFirstOrThrow();
+      await db
+        .updateTable("absurd.t_payments")
+        .set({ max_attempts: 1 })
+        .where("task_id", "=", task.task_id)
+        .execute();
+      toss.chargeBillingKey.mockRejectedValueOnce(
+        new TypeError("response lost"),
+      );
+      await runDueJobs();
+      expect(
+        (
+          await db
+            .selectFrom("absurd.t_payments")
+            .select("state")
+            .where("task_id", "=", task.task_id)
+            .executeTakeFirstOrThrow()
+        ).state,
+      ).toBe("failed");
+      const { retryPaymentTask } =
+        require("@/lib/payments/task-recovery") as typeof import("@/lib/payments/task-recovery");
+      await retryPaymentTask(
+        task.task_id,
+        { id: userId, loginName: "yang" },
+        "provider recovered",
+      );
+      toss.chargeBillingKey.mockImplementation(async (params) =>
+        tossPayment(params.orderId, params.amount),
+      );
+      await runDueJobs();
+      expect(
+        toss.chargeBillingKey.mock.calls.map(([params]) => params.orderId),
+      ).toEqual([payment.order_id, payment.order_id]);
+      expect((await currentPlan(userId)).status).toBe("active");
+      expect(
+        await db
+          .selectFrom("payment_transactions")
+          .select("id")
+          .where("payment_id", "=", payment.id)
+          .where("kind", "=", "approval")
+          .execute(),
+      ).toHaveLength(1);
+    });
+
+    test("paid time acquired while an initial charge waits defers it without charging", async () => {
+      const { userId, customerKey } = await signingUp();
+      const registration = await db
+        .selectFrom("card_registrations")
+        .select("id")
+        .where("user_id", "=", userId)
+        .executeTakeFirstOrThrow();
+      await acceptSubscription({
+        userId,
+        customerKey,
+        authKey: "auth",
+        registrationId: registration.id,
+      });
+      const until = new Date(Date.now() + 30 * DAY);
+      await db
+        .updateTable("users")
+        .set({ supporter_until: until })
+        .where("id", "=", userId)
+        .execute();
+      await runDueJobs();
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      expect(await currentPlan(userId)).toMatchObject({
+        status: "scheduled",
+        next_billing_at: until,
+      });
+      expect(
+        (
+          await db
+            .selectFrom("payments")
+            .select("status")
+            .where("user_id", "=", userId)
+            .executeTakeFirstOrThrow()
+        ).status,
+      ).toBe("expired");
+    });
+
+    test("a canceled queued signup never charges", async () => {
+      const { userId, customerKey } = await signingUp();
+      const registration = await db
+        .selectFrom("card_registrations")
+        .select("id")
+        .where("user_id", "=", userId)
+        .executeTakeFirstOrThrow();
+      await acceptSubscription({
+        userId,
+        customerKey,
+        authKey: "auth",
+        registrationId: registration.id,
+      });
+      const sub = await currentPlan(userId);
+      await db
+        .transaction()
+        .execute((trx) =>
+          endPlan(trx, sub.id, { summary: () => "test canceled" }),
+        );
+      await runDueJobs();
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
+      expect((await currentPlan(userId)).status).toBe("canceled");
+    });
+
     test("charges the first period and activates", async () => {
       const { userId, customerKey } = await signingUp();
       toss.chargeBillingKey.mockImplementation(async (params) =>
@@ -3282,7 +3594,7 @@ integration("payments against the database", () => {
     });
 
     // The cancel does not wait for the confirm's lease.
-    test("a cancel during signup waits for it, then stops the new plan", async () => {
+    test("a cancel during card registration stops the queued plan before charging", async () => {
       const { userId, customerKey } = await signingUp();
       toss.chargeBillingKey.mockImplementation(async (params) =>
         tossPayment(params.orderId, params.amount),
@@ -3317,9 +3629,9 @@ integration("payments against the database", () => {
       const sub = await currentPlan(userId);
       expect(sub.status).toBe("canceled");
       expect(sub.billing_key).toBeNull();
-      expect(toss.chargeBillingKey).toHaveBeenCalledTimes(1);
+      expect(toss.chargeBillingKey).not.toHaveBeenCalled();
       expect(toss.deleteBillingKey).toHaveBeenCalledWith("issued-key");
-      expect((await supporterUntil(userId))! > new Date()).toBe(true);
+      expect(await supporterUntil(userId)).toBeNull();
     });
 
     test("a card Toss refuses to register is an operator event", async () => {
@@ -3353,8 +3665,8 @@ integration("payments against the database", () => {
       );
 
       expect(await confirm(userId, customerKey)).toMatchObject({
-        ok: false,
-        status: 402,
+        ok: true,
+        chargeQueued: true,
       });
 
       const sub = await currentPlan(userId);
@@ -3387,8 +3699,8 @@ integration("payments against the database", () => {
       );
 
       expect(await confirm(userId, customerKey)).toMatchObject({
-        ok: false,
-        status: 503,
+        ok: true,
+        chargeQueued: true,
       });
 
       expect((await currentPlan(userId)).billing_key).toBe("issued-key");
@@ -3426,8 +3738,8 @@ integration("payments against the database", () => {
       );
 
       expect(await confirm(userId, customerKey)).toMatchObject({
-        ok: false,
-        status: 503,
+        ok: true,
+        chargeQueued: true,
       });
 
       expect((await currentPlan(userId)).billing_key).toBe("issued-key");
@@ -5887,7 +6199,7 @@ integration("payments against the database", () => {
           customerKey: prepared.customerKey,
           registrationId: prepared.registrationId,
         }),
-      ).toMatchObject({ ok: false, status: 503 });
+      ).toMatchObject({ ok: true, chargeQueued: true });
 
       expect(await currentPlan(userId)).toMatchObject({
         status: "incomplete",

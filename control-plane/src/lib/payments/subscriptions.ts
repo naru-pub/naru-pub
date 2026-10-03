@@ -120,8 +120,9 @@ export async function scheduleSubscriptionStart(
   subscriptionId: string,
   startsAt: Date,
   now = new Date(),
+  executor: Executor = db,
 ): Promise<boolean> {
-  const result = await db
+  const result = await executor
     .updateTable("subscriptions")
     .set({
       status: "scheduled",

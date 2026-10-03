@@ -1,4 +1,6 @@
-import { federation } from "@/lib/federation";
+import { db } from "@/lib/database";
+import { closeAccountLockPool } from "@/lib/payments/account-lock";
+import { closeFederationDatabase, federation } from "@/lib/federation";
 import { configureLogging } from "@/lib/logging";
 import {
   checkStalledJobs,
@@ -26,19 +28,44 @@ async function main() {
     console.log(`[worker] Received ${sig}, shutting down`);
     abort.abort();
   };
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  const shutdownTerm = () => shutdown("SIGTERM");
+  const shutdownInt = () => shutdown("SIGINT");
+  process.on("SIGTERM", shutdownTerm);
+  process.on("SIGINT", shutdownInt);
 
   try {
     await registerJobs("worker", [{ name: "worker", everySeconds: 60 }]);
   } catch (error) {
     console.error("[worker] could not register its heartbeat:", error);
   }
-  const watch = setInterval(watchScheduledJobs, 60 * 1000);
+  const heartbeatRuns = new Set<Promise<void>>();
+  const watch = setInterval(() => {
+    if (abort.signal.aborted) return;
+    const run = watchScheduledJobs().catch((error) =>
+      console.error("[worker] heartbeat failed", error),
+    );
+    heartbeatRuns.add(run);
+    void run.finally(() => heartbeatRuns.delete(run));
+  }, 60 * 1000);
   abort.signal.addEventListener("abort", () => clearInterval(watch));
 
-  await federation.startQueue(undefined, { signal: abort.signal });
-  console.log("[worker] Queue listener exited");
+  try {
+    await federation.startQueue(undefined, { signal: abort.signal });
+    console.log("[worker] Queue listener exited");
+  } finally {
+    clearInterval(watch);
+    await Promise.allSettled(heartbeatRuns);
+    const closed = await Promise.allSettled([
+      closeFederationDatabase(),
+      closeAccountLockPool(),
+      db.destroy(),
+    ]);
+    for (const result of closed)
+      if (result.status === "rejected") throw result.reason;
+    process.off("SIGTERM", shutdownTerm);
+    process.off("SIGINT", shutdownInt);
+    console.log("[worker] Database connections closed");
+  }
 }
 
 main().catch((err) => {

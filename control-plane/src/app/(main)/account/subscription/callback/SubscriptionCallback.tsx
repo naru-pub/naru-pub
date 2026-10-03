@@ -43,7 +43,9 @@ function Callback({ registrationId }: { registrationId: string | null }) {
                   : "/support?support=card-changed"
                 : data.scheduled
                   ? "/support?support=scheduled"
-                  : "/support?support=success",
+                  : data.chargeQueued
+                    ? "/support?support=pending"
+                    : "/support?support=success",
             );
             return;
           }

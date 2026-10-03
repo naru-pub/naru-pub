@@ -246,3 +246,8 @@ curl -s -o /dev/null -D - "https://naru.pub/api/data/v1/eyecntct/posts?size=1" |
 
 Within 10 seconds a repeat is `HIT`, after that `EXPIRED`; with an
 `Authorization` header it is `DYNAMIC`, and error responses are `BYPASS`.
+
+The federation worker aborts its queue listener on SIGTERM, drains heartbeat
+work, and closes both the postgres.js client and the shared Kysely pool before
+exiting. The image smoke test checks that it exits cleanly within 20 seconds;
+deployment still allows 300 seconds for genuinely running work to drain.

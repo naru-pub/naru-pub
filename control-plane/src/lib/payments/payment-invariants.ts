@@ -160,6 +160,7 @@ async function shortenedAccounts(): Promise<string[]> {
       "payments.refunded_amount",
       "users.supporter_until",
     ])
+    .where("users.deleted_at", "is", null)
     .where("payments.period_end", "is not", null)
     .execute();
   const byUser = new Map<string, typeof rows>();

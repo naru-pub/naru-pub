@@ -55,7 +55,10 @@ export async function POST(request: NextRequest) {
       );
     }
     const { ok: _ok, ...body } = result;
-    return NextResponse.json({ success: true, ...body });
+    return NextResponse.json(
+      { success: true, ...body },
+      { status: result.chargeQueued ? 202 : 200 },
+    );
   } catch (error) {
     console.error("Subscription confirm error:", error);
     return NextResponse.json(

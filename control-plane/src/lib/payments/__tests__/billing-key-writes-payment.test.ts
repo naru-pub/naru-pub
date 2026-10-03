@@ -88,6 +88,14 @@ describe("billing keys are only dropped through retireBillingKey", () => {
     ]);
   });
 
+  test("signup HTTP paths never execute a charge", () => {
+    expect(offenders(/\bchargeOrder\s*\(/, [])).toEqual([
+      "lib/payments/payment-jobs.ts",
+      "lib/payments/subscription-renewals.ts",
+      "lib/payments/toss-gateway.ts",
+    ]);
+  });
+
   test("only the Absurd handler executes a refund", () => {
     expect(offenders(/\bcancelOrder\s*\(/, [])).toEqual([
       "lib/payments/payment-jobs.ts",

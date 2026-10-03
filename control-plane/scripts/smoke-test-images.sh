@@ -118,6 +118,17 @@ for service in worker cron; do
   fi
 done
 
+echo "Checking graceful worker shutdown..."
+docker stop --timeout 20 "$run-worker" >/dev/null
+if [[ "$(docker inspect -f '{{.State.ExitCode}}' "$run-worker")" != 0 ]]; then
+  echo "Worker did not exit cleanly on SIGTERM." >&2
+  exit 1
+fi
+if ! docker logs "$run-worker" 2>&1 | grep -q 'Database connections closed'; then
+  echo "Worker did not finish closing its database connections." >&2
+  exit 1
+fi
+
 echo "Launching Chromium from the jobs image..."
 docker run --rm "$jobs_image" node -e '
 import("playwright").then(async ({ chromium }) => {

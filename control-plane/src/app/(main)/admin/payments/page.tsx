@@ -1,3 +1,6 @@
+import { paymentTaskRecoveryList } from "@/lib/payments/task-recovery";
+import type { PaymentJob } from "@/lib/payments/payment-jobs";
+import { RetryPaymentTaskButton } from "../_components/RetryPaymentTaskButton";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { sql } from "kysely";
@@ -23,6 +26,19 @@ import { ReconcilePaymentButton } from "../_components/ReconcilePaymentButton";
 import { RecoverChargeButton } from "../_components/RecoverChargeButton";
 import { RECOVERABLE_STATUSES } from "@/lib/payments/payment-reconciliation";
 import { requireOperator } from "../_components/requireOperator";
+
+const taskLabels: Record<PaymentJob["kind"], string> = {
+  initial_subscription_charge: "정기 결제 첫 청구",
+  refund_payment: "환불",
+  renew_subscription: "정기 결제 갱신",
+  reconcile_payment: "결제 대사",
+  thank_you: "첫 결제 안내",
+  charge_receipt: "결제 영수증",
+  payment_canceled: "환불 안내",
+  subscription_canceled: "구독 취소 안내",
+  grace_notice: "결제 유예 안내",
+  past_due_notice: "연체 안내",
+};
 
 export const metadata: Metadata = { title: "결제 · 운영 · 나루" };
 
@@ -60,6 +76,8 @@ export default async function PaymentOperatorPage({
     .$if(condition !== null, (qb) => qb.where(condition!))
     .executeTakeFirstOrThrow();
 
+  const tasks = await paymentTaskRecoveryList();
+
   const payments = await db
     .selectFrom("payments")
     .innerJoin("users", "users.id", "payments.user_id")
@@ -86,6 +104,79 @@ export default async function PaymentOperatorPage({
 
   return (
     <div className="space-y-6">
+      <section className="space-y-3">
+        <h2 className="text-lg font-bold">결제 작업 복구</h2>
+        <p className="text-sm text-muted-foreground">
+          실패한 작업을 원래 결제 정보로 다시 시작합니다. 재시도 사유는 운영
+          기록에 남습니다.
+        </p>
+        {tasks.length === 0 ? (
+          <p className="text-sm">대기하거나 실패한 작업이 없습니다.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>작업</TableHead>
+                <TableHead>상태 · 시도</TableHead>
+                <TableHead>최근 오류</TableHead>
+                <TableHead>다음 실행</TableHead>
+                <TableHead>복구</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tasks.map((task) => {
+                const job = (task.params as { job: PaymentJob }).job;
+                const label =
+                  (
+                    {
+                      pending: "대기",
+                      running: "처리 중",
+                      sleeping: "재시도 대기",
+                      failed: "실패",
+                    } as Record<string, string>
+                  )[task.state] ?? task.state;
+                const error = task.last_error as
+                  | { message?: string }
+                  | string
+                  | null;
+                return (
+                  <TableRow key={task.task_id}>
+                    <TableCell>
+                      <div>{taskLabels[job.kind]}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {task.task_id}
+                      </div>
+                      {"paymentId" in job && (
+                        <div className="text-xs">결제 {job.paymentId}</div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {label} · {task.attempts}/{task.max_attempts ?? "∞"}
+                    </TableCell>
+                    <TableCell className="max-w-sm break-words">
+                      {typeof error === "string"
+                        ? error
+                        : (error?.message ??
+                          (error ? JSON.stringify(error) : "—"))}
+                    </TableCell>
+                    <TableCell>
+                      {task.available_at && task.state !== "failed"
+                        ? formatDate(task.available_at)
+                        : "—"}
+                    </TableCell>
+                    <TableCell>
+                      {task.state === "failed" && (
+                        <RetryPaymentTaskButton taskId={task.task_id} />
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </section>
+
       <div className="flex flex-wrap gap-2 text-sm">
         <Link
           href="/admin/payments"

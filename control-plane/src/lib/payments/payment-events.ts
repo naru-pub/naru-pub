@@ -27,6 +27,7 @@ export const PAYMENT_EVENT_LABELS = {
   order_expired: "주문 만료",
   key_deletion_stuck: "빌링키 삭제 지연",
   job_failed: "결제 작업 실패",
+  job_retried: "결제 작업 재시도",
   invariant_violation: "결제 데이터 이상",
   toss_mismatch: "Toss 거래 불일치",
 } as const;

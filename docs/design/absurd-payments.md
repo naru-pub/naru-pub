@@ -127,3 +127,18 @@ It covers atomic enqueue rollback, legacy job import, scheduled work, repeated
 contention, abandoned claims, checkpoint replay, refund recovery after request
 death, and preservation of a later signup. Existing payment and chaos tests
 continue to validate the ledger and entitlement invariants.
+
+## Initial subscription charges and recovery
+
+Adopting a signup's key commits its payment order and initial-charge task in
+one transaction (or schedules the plan behind existing paid time). HTTP returns
+202 for a queued charge. Repeated callbacks reuse the order and task; only the
+Absurd handler sends the charge. It rechecks the plan/key identity and unsent
+orders wait behind paid time acquired after acceptance. Ambiguous responses
+retry the same order; a declined payment is a business outcome, not a failed task.
+
+The operator payment page lists pending, retrying and failed tasks, their most
+recent error, and next run time. A reason is required to retry a failed task.
+`absurd.retry_task` extends the original task's attempt budget without replacing
+its parameters, checkpoints or idempotency key. Task recovery and the operator's
+identity/reason audit event commit together. Recovery never executes money in HTTP.
