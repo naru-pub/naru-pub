@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { resetLedgerFixtures } from "@/lib/payments/__tests__/ledger-fixtures";
 import { afterAll, describe, expect, jest, test } from "@jest/globals";
 import { AsyncLocalStorage } from "async_hooks";
 import type { TossPaymentResult } from "@/lib/payments/toss";
@@ -522,8 +523,9 @@ function operations(userId: string, pick: () => number): Op[] {
 }
 
 async function reset() {
-  await sql`truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments, users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`.execute(
+  await resetLedgerFixtures(
     db,
+    sql`truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments, users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`,
   );
   fake.orders.clear();
   fake.keys.clear();

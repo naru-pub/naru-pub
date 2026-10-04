@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { resetLedgerFixtures } from "@/lib/payments/__tests__/ledger-fixtures";
 import {
   afterAll,
   beforeAll,
@@ -119,7 +120,10 @@ integration("board", () => {
   let carol: User;
 
   beforeAll(async () => {
-    await sql`truncate users, board_posts restart identity cascade`.execute(db);
+    await resetLedgerFixtures(
+      db,
+      sql`truncate users, board_posts restart identity cascade`,
+    );
     alice = await makeUser("alice");
     bob = await makeUser("bob");
     carol = await makeUser("carol");

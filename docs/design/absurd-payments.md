@@ -222,3 +222,9 @@ application writes cannot change. This replaces the former deferred key-status
 trigger and uses PostgreSQL foreign-key locking to protect assignments against
 concurrent retirement or ownership changes. Unowned legacy keys remain stored
 but cannot be attached to a subscription.
+
+The money ledger is fully append-only: row triggers reject `UPDATE` and
+`DELETE`, and a statement trigger rejects `TRUNCATE`, including cascades from
+other tables. Refunds append cancellation records rather than editing approvals.
+Disposable database tests reset fixtures with guards temporarily disabled inside
+a table-locked transaction; both successful cleanup and rollback restore them.

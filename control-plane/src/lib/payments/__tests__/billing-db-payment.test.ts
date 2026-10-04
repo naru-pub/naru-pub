@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { resetLedgerFixtures } from "@/lib/payments/__tests__/ledger-fixtures";
 import {
   afterAll,
   afterEach,
@@ -485,8 +486,9 @@ async function holdAccountLock(userId: string): Promise<() => Promise<void>> {
 
 integration("payments against the database", () => {
   beforeEach(async () => {
-    await sql`truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments, users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`.execute(
+    await resetLedgerFixtures(
       db,
+      sql`truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments, users, subscriptions, payments, billing_keys, card_registrations, payment_events, toss_webhook_deliveries, toss_calls, toss_window_outcomes, payment_mails, payment_cron_runs restart identity cascade`,
     );
     jest.clearAllMocks();
     toss.chargeBillingKey.mockReset();
@@ -2417,6 +2419,60 @@ integration("payments against the database", () => {
 
       await reconcilePayment(oneTimeId);
       expect(await supporterUntil(userId)).toEqual(granted);
+    });
+
+    test("ledger deletion and direct or cascading truncation are rejected", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidOneTime(userId, "undeletable-order");
+      const before = await db
+        .selectFrom("payment_transactions")
+        .selectAll()
+        .where("payment_id", "=", paymentId)
+        .execute();
+      expect(before).toHaveLength(1);
+      await expect(
+        db
+          .deleteFrom("payment_transactions")
+          .where("payment_id", "=", paymentId)
+          .execute(),
+      ).rejects.toThrow("append-only");
+      await expect(
+        sql`truncate payment_transactions`.execute(db),
+      ).rejects.toThrow("append-only");
+      await expect(sql`truncate users cascade`.execute(db)).rejects.toThrow(
+        "append-only",
+      );
+      expect(
+        await db
+          .selectFrom("payment_transactions")
+          .selectAll()
+          .where("payment_id", "=", paymentId)
+          .execute(),
+      ).toEqual(before);
+      expect(
+        await db
+          .selectFrom("users")
+          .select("id")
+          .where("id", "=", userId)
+          .executeTakeFirst(),
+      ).toBeDefined();
+    });
+
+    test("a failed fixture reset restores append-only guards", async () => {
+      const userId = await makeUser();
+      const paymentId = await paidOneTime(userId, "reset-rollback-order");
+      await expect(resetLedgerFixtures(db, sql`select 1 / 0`)).rejects.toThrow(
+        "division by zero",
+      );
+      await expect(
+        db
+          .deleteFrom("payment_transactions")
+          .where("payment_id", "=", paymentId)
+          .execute(),
+      ).rejects.toThrow("append-only");
+      await expect(
+        sql`truncate payment_transactions`.execute(db),
+      ).rejects.toThrow("append-only");
     });
 
     test("a recorded transaction cannot be changed", async () => {
