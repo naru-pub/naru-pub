@@ -88,11 +88,50 @@ export async function deleteUserRow(
     await endPlan(trx, plan.id, {
       summary: () => "계정 삭제로 정기 결제 취소",
     });
-  await sql`SELECT erase_account_content(${userId}::uuid)`.execute(trx);
+  await eraseAccountContent(trx, userId);
   await trx
     .updateTable("users")
     .set({ deleted_at: new Date() })
     .where("id", "=", userId)
     .execute();
   return retired;
+}
+
+// Reproduce users' content cascades while keeping the financial graph, whose
+// foreign keys use RESTRICT. Discover relations from the schema so new content
+// tables cannot silently survive account deletion. Identifiers come from the
+// PostgreSQL catalog and are escaped by Kysely; the account ID is bound data.
+async function eraseAccountContent(
+  trx: Executor,
+  userId: string,
+): Promise<void> {
+  const { rows } = await sql<{
+    schema_name: string;
+    table_name: string;
+    column_name: string;
+    action: "c" | "n";
+  }>`
+    select n.nspname as schema_name, t.relname as table_name,
+      a.attname as column_name, c.confdeltype as action
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
+    where c.contype = 'f' and c.confrelid = 'users'::regclass
+      and c.confdeltype in ('c', 'n')
+    order by n.nspname, t.relname, a.attname
+  `.execute(trx);
+  for (const row of rows) {
+    const table = sql.table(`${row.schema_name}.${row.table_name}`);
+    const column = sql.ref(row.column_name);
+    if (row.action === "c") {
+      await sql`delete from ${table} where ${column} = ${userId}::uuid`.execute(
+        trx,
+      );
+    } else {
+      await sql`update ${table} set ${column} = null where ${column} = ${userId}::uuid`.execute(
+        trx,
+      );
+    }
+  }
 }

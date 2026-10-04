@@ -1502,6 +1502,153 @@ integration("payments against the database", () => {
       expect(await queued()).toEqual([]);
     });
 
+    test("TypeScript deletion discovers cascades and set-null content while retaining money and durable work", async () => {
+      const userId = await makeUser();
+      const survivorId = await makeUser();
+      const paymentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:delete-content-payment",
+        orderId: "delete-content-payment",
+        amount: 12000,
+      });
+      await grantOneTimeFixture({
+        userId,
+        amount: 12000,
+        years: 1,
+        paymentId,
+        payment: tossPayment("delete-content-payment", 12000),
+      });
+      const tasks = await db
+        .selectFrom("absurd.t_payments")
+        .select("task_id")
+        .execute();
+      await db.transaction().execute(async (trx) => {
+        await sql`create table account_delete_probe (
+          id uuid primary key default uuid_v7(),
+          owner_id uuid not null references users(id) on delete cascade,
+          collaborator_id uuid references users(id) on delete set null
+        )`.execute(trx);
+        await sql`create table account_delete_child_probe (
+          id uuid primary key default uuid_v7(),
+          parent_id uuid not null references account_delete_probe(id) on delete cascade
+        )`.execute(trx);
+        const {
+          rows: [owned],
+        } = await sql<{
+          id: string;
+        }>`insert into account_delete_probe (owner_id) values (${userId}::uuid) returning id`.execute(
+          trx,
+        );
+        await sql`insert into account_delete_child_probe (parent_id) values (${owned.id}::uuid)`.execute(
+          trx,
+        );
+        await sql`insert into account_delete_probe (owner_id, collaborator_id) values (${survivorId}::uuid, ${userId}::uuid)`.execute(
+          trx,
+        );
+        await deleteUserRow(trx, userId);
+        const remaining = await sql<{
+          owner_id: string;
+          collaborator_id: string | null;
+        }>`select owner_id, collaborator_id from account_delete_probe`.execute(
+          trx,
+        );
+        expect(remaining.rows).toEqual([
+          { owner_id: survivorId, collaborator_id: null },
+        ]);
+        expect(
+          (await sql`select id from account_delete_child_probe`.execute(trx))
+            .rows,
+        ).toHaveLength(0);
+        expect(
+          await trx
+            .selectFrom("payments")
+            .select("id")
+            .where("id", "=", paymentId)
+            .executeTakeFirst(),
+        ).toBeDefined();
+        expect(
+          await trx
+            .selectFrom("payment_transactions")
+            .select("id")
+            .where("payment_id", "=", paymentId)
+            .execute(),
+        ).toHaveLength(1);
+        expect(
+          await trx.selectFrom("absurd.t_payments").select("task_id").execute(),
+        ).toEqual(tasks);
+        await sql`drop table account_delete_child_probe, account_delete_probe`.execute(
+          trx,
+        );
+      });
+    });
+
+    test("content erasure and the tombstone roll back together", async () => {
+      const userId = await makeUser();
+      await db
+        .insertInto("sessions")
+        .values({
+          id: "deletion-rollback",
+          user_id: userId,
+          expires_at: new Date(Date.now() + DAY),
+        })
+        .execute();
+      await expect(
+        db.transaction().execute(async (trx) => {
+          await deleteUserRow(trx, userId);
+          expect(
+            await trx
+              .selectFrom("sessions")
+              .select("id")
+              .where("user_id", "=", userId)
+              .execute(),
+          ).toHaveLength(0);
+          throw new Error("rollback deletion");
+        }),
+      ).rejects.toThrow("rollback deletion");
+      expect(
+        await db
+          .selectFrom("sessions")
+          .select("id")
+          .where("user_id", "=", userId)
+          .execute(),
+      ).toHaveLength(1);
+      expect(
+        (
+          await db
+            .selectFrom("users")
+            .select("deleted_at")
+            .where("id", "=", userId)
+            .executeTakeFirstOrThrow()
+        ).deleted_at,
+      ).toBeNull();
+    });
+
+    test("superseded SQL helpers are removed", async () => {
+      const {
+        rows: [functions],
+      } = await sql<{
+        content: string | null;
+        legacy: string | null;
+        legacy_array: string | null;
+      }>`select
+        to_regprocedure('erase_account_content(uuid)')::text as content,
+        to_regprocedure('legacy_uuid(text,bigint)')::text as legacy,
+        to_regprocedure('legacy_uuid_array(text,bigint[])')::text as legacy_array
+      `.execute(db);
+      expect(functions).toEqual({
+        content: null,
+        legacy: null,
+        legacy_array: null,
+      });
+      const {
+        rows: [mapping],
+      } = await sql<{
+        name: string | null;
+      }>`select to_regclass('legacy_ids')::text as name`.execute(db);
+      expect(mapping.name).toBeNull();
+    });
+
     test("deleting an account retires its key first", async () => {
       const userId = await makeUser();
       await makeSubscription(userId, { status: "active", billingKey: "key-c" });

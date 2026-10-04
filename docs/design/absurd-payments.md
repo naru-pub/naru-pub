@@ -202,3 +202,12 @@ backward during refund application.
 The original historical repair stays frozen in its migration. A forward migration
 removes the SQL compaction function; ongoing refunds use TypeScript and Kysely
 in the existing account-locked transaction.
+
+## Account content deletion
+
+Account deletion discovers cascade and set-null foreign keys through TypeScript
+and Kysely in the same transaction as the user tombstone. Database cascades still
+remove dependent content, while restrictive financial references and unfinished
+Absurd tasks remain. Anonymization and live-account guards stay in database
+triggers. The SQL content-erasure function and unused legacy UUID helpers are
+removed. The legacy mapping table was already retired after storage conversion.
