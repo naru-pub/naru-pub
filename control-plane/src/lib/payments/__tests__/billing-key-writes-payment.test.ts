@@ -33,7 +33,7 @@ function offenders(pattern: RegExp, allowed: string[]): string[] {
 describe("billing keys are only dropped through retireBillingKey", () => {
   test("nothing else clears billing_key_id", () => {
     expect(
-      offenders(/billing_key_id\s*(:\s*null|=\s*null)/i, [
+      offenders(/billing_key_id\s*(:[^\n]*\bnull\b|=\s*null)/i, [
         "lib/payments/billing-keys.ts",
       ]),
     ).toEqual([]);
@@ -152,13 +152,14 @@ describe("billing keys are only dropped through retireBillingKey", () => {
 
   test("the checks see the code they guard", () => {
     // A wrong path or pattern would make the tests above pass vacuously.
-    expect(offenders(/billing_key_id\s*:\s*null/, []).length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      offenders(/billing_key_id\s*:[^\n]*\bnull\b/, []).length,
+    ).toBeGreaterThan(0);
     expect(offenders(/insertInto\(\s*["']billing_keys["']\s*\)/, [])).toEqual([
       "lib/payments/billing-keys.ts",
     ]);
     expect(offenders(STORES_KEY, [])).toEqual([
+      "lib/payments/billing-keys.ts",
       "lib/payments/subscription-signup.ts",
     ]);
     expect(

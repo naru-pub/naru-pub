@@ -211,3 +211,9 @@ remove dependent content, while restrictive financial references and unfinished
 Absurd tasks remain. Anonymization and live-account guards stay in database
 triggers. The SQL content-erasure function and unused legacy UUID helpers are
 removed. The legacy mapping table was already retired after storage conversion.
+
+Subscription billing fields use immediate `CHECK` constraints: canceled plans
+hold neither a key nor a billing date, and active or scheduled plans have both.
+Cancellation and card replacement update the subscription atomically before
+retiring its old key. Account deletion ends its plan before retiring other keys.
+The cross-table active-key guard remains a deferred database trigger.

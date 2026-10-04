@@ -82,12 +82,14 @@ export async function deleteUserRow(
     .where("user_id", "=", userId)
     .forUpdate()
     .execute();
-  const retired = await retireUserBillingKeys(trx, userId);
   const plan = await plansOf(trx, userId).select("id").executeTakeFirst();
-  if (plan)
-    await endPlan(trx, plan.id, {
-      summary: () => "계정 삭제로 정기 결제 취소",
-    });
+  const ended = plan
+    ? await endPlan(trx, plan.id, {
+        summary: () => "계정 삭제로 정기 결제 취소",
+      })
+    : null;
+  const retired = await retireUserBillingKeys(trx, userId);
+  if (ended?.retiredKey) retired.push(ended.retiredKey);
   await eraseAccountContent(trx, userId);
   await trx
     .updateTable("users")

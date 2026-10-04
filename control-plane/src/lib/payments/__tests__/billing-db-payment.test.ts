@@ -1433,18 +1433,47 @@ integration("payments against the database", () => {
           .set({ billing_key_id: null })
           .where("id", "=", subId)
           .execute(),
-      ).rejects.toThrow("has no key");
+      ).rejects.toThrow("subscriptions_running_with_billing");
       await expect(
         db
           .updateTable("subscriptions")
           .set({ status: "canceled", next_billing_at: null })
           .where("id", "=", subId)
           .execute(),
-      ).rejects.toThrow("still holds a key");
+      ).rejects.toThrow("subscriptions_canceled_without_billing");
       await expect(
         db.updateTable("billing_keys").set({ status: "retired" }).execute(),
       ).rejects.toThrow("a subscription holds it");
       expect((await subscription(subId)).billing_key).toBe("key-raw");
+    });
+
+    test("subscription billing checks reject invalid intermediate states immediately", async () => {
+      const userId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        billingKey: "immediate-check-key",
+      });
+      let statementFinished = false;
+      await expect(
+        db.transaction().execute(async (trx) => {
+          await trx
+            .updateTable("subscriptions")
+            .set({ billing_key_id: null })
+            .where("id", "=", subId)
+            .execute();
+          statementFinished = true;
+        }),
+      ).rejects.toThrow("subscriptions_running_with_billing");
+      expect(statementFinished).toBe(false);
+      expect((await subscription(subId)).billing_key).toBe(
+        "immediate-check-key",
+      );
+      const {
+        rows: [trigger],
+      } = await sql<{ name: string | null }>`
+        select to_regprocedure('subscription_key_matches_status()')::text as name
+      `.execute(db);
+      expect(trigger.name).toBeNull();
     });
 
     test("the database refuses a status change outside the table", async () => {
@@ -1493,7 +1522,7 @@ integration("payments against the database", () => {
 
       await expect(
         db.transaction().execute(async (trx) => {
-          await retireBillingKey(trx, { subscriptionId: subId });
+          await endPlan(trx, subId, { summary: () => "rollback cancellation" });
           throw new Error("rollback");
         }),
       ).rejects.toThrow("rollback");
@@ -1807,9 +1836,18 @@ integration("payments against the database", () => {
       const undo = new Error("undo");
       try {
         await db.transaction().execute(async (trx) => {
-          await sql`update ${sql.table(table)} set status = ${to} where id = ${id}`.execute(
-            trx,
-          );
+          if (table === "subscriptions") {
+            await sql`update subscriptions set status = ${to},
+              billing_key_id = case when ${to} = 'canceled' then null else billing_key_id end,
+              next_billing_at = case when ${to} = 'canceled' then null
+                when ${to} in ('active', 'scheduled') then coalesce(next_billing_at, now())
+                else next_billing_at end
+              where id = ${id}`.execute(trx);
+          } else {
+            await sql`update payments set status = ${to} where id = ${id}`.execute(
+              trx,
+            );
+          }
           throw undo;
         });
       } catch (error) {
@@ -1825,14 +1863,9 @@ integration("payments against the database", () => {
     test("the database allows exactly the plan transitions in lib/payments/payment-states", async () => {
       const userId = await makeUser();
       for (const from of SUBSCRIPTION_STATUSES) {
-        const live = ["incomplete", "past_due"].includes(from);
         const id = await makeSubscription(userId, {
           status: from,
-          // Running plans need a key, ended ones none; these may have either.
-          ...(live ? { billingKey: null } : {}),
-          ...(["active", "scheduled"].includes(from)
-            ? { billingKey: `transition-${from}` }
-            : {}),
+          billingKey: from === "canceled" ? null : `transition-${from}`,
         });
         for (const to of SUBSCRIPTION_STATUSES) {
           expect([from, to, await allowed("subscriptions", id, to)]).toEqual([
@@ -4924,12 +4957,9 @@ integration("payments against the database", () => {
       toss.issueBillingKey.mockImplementation(async () => {
         // The plan is canceled meanwhile, its key retired with it.
         await db.transaction().execute(async (trx) => {
-          await trx
-            .updateTable("subscriptions")
-            .set({ status: "canceled", next_billing_at: null })
-            .where("id", "=", subId)
-            .execute();
-          await retireBillingKey(trx, { subscriptionId: subId });
+          await endPlan(trx, subId, {
+            summary: () => "concurrent cancellation",
+          });
         });
         return { billingKey: "new-key", customerKey: "unused" };
       });

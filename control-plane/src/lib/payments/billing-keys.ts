@@ -81,14 +81,25 @@ export async function chargeableKey(
   };
 }
 
-// Takes the plan's key away from it and retires it. Returns the key's id for
+// Detaches or replaces the plan's key and retires the old one. Subscription
+// fields needed for cancellation are written in that same statement so the
+// immediate billing checks never see a partial transition. Returns the key's id for
 // deleteRetiredBillingKey, or null when the plan held none. With
 // deletedAtToss (BILLING_DELETED), Toss already deleted it: nothing is left to
 // do there, and the key itself goes now.
 export async function retireBillingKey(
   trx: Executor,
   plan: { subscriptionId: string },
-  opts: { deletedAtToss?: boolean } = {},
+  opts: {
+    deletedAtToss?: boolean;
+    replacementKeyId?: string;
+    subscriptionUpdate?: {
+      status?: "canceled";
+      next_billing_at?: null;
+      canceled_at?: Date;
+      updated_at?: Date;
+    };
+  } = {},
 ): Promise<string | null> {
   const row = await trx
     .selectFrom("subscriptions")
@@ -97,12 +108,16 @@ export async function retireBillingKey(
     .forUpdate()
     .executeTakeFirst();
   const keyId = row?.billing_key_id ?? null;
-  if (!row || !keyId) return null;
+  if (!row) return null;
   await trx
     .updateTable("subscriptions")
-    .set({ billing_key_id: null })
+    .set({
+      ...opts.subscriptionUpdate,
+      billing_key_id: opts.replacementKeyId ?? null,
+    })
     .where("id", "=", row.id)
     .execute();
+  if (!keyId) return null;
   return opts.deletedAtToss
     ? (await markDeletedAtToss(trx, keyId), null)
     : discardIssuedBillingKey(trx, keyId);

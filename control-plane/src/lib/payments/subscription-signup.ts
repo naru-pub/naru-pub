@@ -788,12 +788,14 @@ async function swapCard(opts: {
         retired: await discardUnheldKey(trx, key),
       };
     }
-    const oldKey = await retireBillingKey(trx, { subscriptionId });
-    await trx
-      .updateTable("subscriptions")
-      .set({ billing_key_id: key.id, updated_at: new Date() })
-      .where("id", "=", subscriptionId)
-      .execute();
+    const oldKey = await retireBillingKey(
+      trx,
+      { subscriptionId },
+      {
+        replacementKeyId: key.id,
+        subscriptionUpdate: { updated_at: new Date() },
+      },
+    );
     await trx
       .updateTable("card_registrations")
       .set({ billing_key_id: key.id, completed_at: new Date() })

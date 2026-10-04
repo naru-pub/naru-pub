@@ -71,20 +71,18 @@ export async function endPlan(
     .executeTakeFirst();
   if (!plan || ENDED_SUBSCRIPTION_STATUSES.includes(plan.status)) return null;
   const now = new Date();
-  await trx
-    .updateTable("subscriptions")
-    .set({
-      status: "canceled",
-      next_billing_at: null,
-      canceled_at: opts.at ?? now,
-      updated_at: now,
-    })
-    .where("id", "=", planId)
-    .execute();
   const retiredKey = await retireBillingKey(
     trx,
     { subscriptionId: planId },
-    { deletedAtToss: opts.keyDeletedAtToss },
+    {
+      deletedAtToss: opts.keyDeletedAtToss,
+      subscriptionUpdate: {
+        status: "canceled",
+        next_billing_at: null,
+        canceled_at: opts.at ?? now,
+        updated_at: now,
+      },
+    },
   );
   await recordPaymentEvent(trx, {
     kind: opts.eventKind ?? "subscription_canceled",
