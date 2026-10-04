@@ -1574,9 +1574,9 @@ integration("payments against the database", () => {
             await leader.query("commit");
             const result = await pending;
             expect(result.ok).toBe(false);
-            expect(
-              first === "assignment" ? ["23001", "40001"] : ["23503", "40001"],
-            ).toContain(result.code);
+            // PostgreSQL versions report RESTRICT as either restrict_violation
+            // or foreign_key_violation; repeatable-read races may serialize.
+            expect(["23001", "23503", "40001"]).toContain(result.code);
             await follower.query("rollback");
             const {
               rows: [state],
