@@ -140,6 +140,14 @@ const {
   SUBSCRIPTION_STATUSES,
 } =
   require("@/lib/payments/payment-states") as typeof import("@/lib/payments/payment-states");
+const {
+  requestEntitlementRepair,
+  runEntitlementRepair,
+  entitlementRepairCandidates,
+} =
+  require("@/lib/payments/entitlement-repair") as typeof import("@/lib/payments/entitlement-repair");
+const { POST: entitlementRepairRoute } =
+  require("@/app/(main)/api/admin/entitlements/[id]/repair/route") as typeof import("@/app/(main)/api/admin/entitlements/[id]/repair/route");
 const { checkPaymentInvariants } =
   require("@/lib/payments/payment-invariants") as typeof import("@/lib/payments/payment-invariants");
 const { NextRequest } = require("next/server") as typeof import("next/server");
@@ -2555,6 +2563,391 @@ integration("payments against the database", () => {
         .execute();
       await makeUser(new Date(now.getTime() - DAY));
       expect(await checkPaymentInvariants(now)).toEqual({});
+    });
+
+    test("entitlement repair HTTP is operator-only, requires a reason, and only enqueues", async () => {
+      const userId = await makeUser();
+      await paidOneTime(userId, "repair-http");
+      const expected = await supporterUntil(userId);
+      await db
+        .updateTable("users")
+        .set({ supporter_until: null })
+        .where("id", "=", userId)
+        .execute();
+      const operatorId = await makeUser();
+      const post = (reason: string) =>
+        entitlementRepairRoute(
+          new NextRequest(
+            "http://localhost/api/admin/entitlements/" + userId + "/repair",
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ reason }),
+            },
+          ),
+          { params: Promise.resolve({ id: userId }) },
+        );
+      auth.validateRequest.mockResolvedValue({ user: null, session: null });
+      expect((await post("restore")).status).toBe(401);
+      auth.validateRequest.mockResolvedValue({
+        user: { id: userId, loginName: "supporter" },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      expect((await post("restore")).status).toBe(403);
+      auth.validateRequest.mockResolvedValue({
+        user: { id: operatorId, loginName: "yang" },
+        session: {},
+      } as Awaited<ReturnType<typeof auth.validateRequest>>);
+      expect((await post("  ")).status).toBe(400);
+      expect((await post("x".repeat(201))).status).toBe(400);
+      const response = await post(" restore lost time ");
+      expect(response.status).toBe(202);
+      const body = await response.json();
+      expect(await supporterUntil(userId)).toBeNull();
+      const duplicate = await (await post("duplicate request")).json();
+      expect(duplicate.result.repairId).toBe(body.result.repairId);
+      expect(
+        await db.selectFrom("entitlement_repairs").select("id").execute(),
+      ).toHaveLength(1);
+      await runDueJobs();
+      expect(await supporterUntil(userId)).toEqual(expected);
+      const repair = await db
+        .selectFrom("entitlement_repairs")
+        .selectAll()
+        .executeTakeFirstOrThrow();
+      expect(repair).toMatchObject({
+        status: "completed",
+        operator_id: operatorId,
+        operator_login_name: "yang",
+        reason: "restore lost time",
+        before_until: null,
+        after_until: expected,
+      });
+      expect(
+        await db
+          .selectFrom("payment_events")
+          .select("kind")
+          .where("kind", "in", [
+            "entitlement_repair_requested",
+            "entitlement_repaired",
+          ])
+          .execute(),
+      ).toHaveLength(2);
+    });
+
+    test("entitlement repair recomputes latest purchases and replay preserves later purchases", async () => {
+      const userId = await makeUser();
+      const operatorId = await makeUser();
+      await paidOneTime(userId, "repair-before-request");
+      await db
+        .updateTable("users")
+        .set({ supporter_until: null })
+        .where("id", "=", userId)
+        .execute();
+      const { repairId } = await requestEntitlementRepair(
+        userId,
+        { id: operatorId, loginName: "yang" },
+        "latest ledger",
+      );
+      await paidOneTime(userId, "repair-before-execution");
+      const current = await supporterUntil(userId);
+      await runDueJobs();
+      expect(await supporterUntil(userId)).toEqual(current);
+      await paidOneTime(userId, "repair-after-execution");
+      const later = await supporterUntil(userId);
+      await runEntitlementRepair(repairId);
+      expect(await supporterUntil(userId)).toEqual(later);
+      expect(
+        await db
+          .selectFrom("payment_events")
+          .select("id")
+          .where("kind", "=", "entitlement_repaired")
+          .execute(),
+      ).toHaveLength(1);
+    });
+
+    test("entitlement repair removes excess and unfunded time without changing money", async () => {
+      const userId = await makeUser();
+      const operatorId = await makeUser();
+      await paidOneTime(userId, "repair-excess");
+      const expected = await supporterUntil(userId);
+      const ledger = await db
+        .selectFrom("payment_transactions")
+        .selectAll()
+        .execute();
+      await sql`update users set supporter_until = supporter_until + interval '1 year' where id = ${userId}`.execute(
+        db,
+      );
+      const preview = (await entitlementRepairCandidates()).find(
+        (row) => row.userId === userId,
+      )!;
+      expect(preview.expectedUntil).toEqual(expected);
+      expect(preview.payments).toHaveLength(1);
+      await requestEntitlementRepair(
+        userId,
+        { id: operatorId, loginName: "yang" },
+        "remove excess",
+      );
+      const unfunded = await makeUser(new Date(Date.now() + DAY));
+      await requestEntitlementRepair(
+        unfunded,
+        { id: operatorId, loginName: "yang" },
+        "remove unfunded access",
+      );
+      await runDueJobs();
+      expect(await supporterUntil(userId)).toEqual(expected);
+      expect(await supporterUntil(unfunded)).toBeNull();
+      expect(
+        await db.selectFrom("payment_transactions").selectAll().execute(),
+      ).toEqual(ledger);
+    });
+
+    test("entitlement repair preview matches missing refund compaction and replay cannot compact twice", async () => {
+      const userId = await makeUser();
+      const operatorId = await makeUser();
+      const refundedId = await paidOneTime(userId, "repair-refunded-first");
+      const queuedId = await paidOneTime(userId, "repair-queued-second");
+      const before = await db
+        .selectFrom("payments")
+        .select(["period_start", "period_end"])
+        .where("id", "=", queuedId)
+        .executeTakeFirstOrThrow();
+      await applyVerifiedTossPayment(
+        refundedId,
+        tossPayment("repair-refunded-first", 12000, {
+          status: "CANCELED",
+          cancels: [
+            {
+              cancelAmount: 12000,
+              transactionKey: "repair-cancel",
+              canceledAt: new Date().toISOString(),
+            },
+          ],
+        }),
+      );
+      const expected = await supporterUntil(userId);
+      // Restore the historical failure: money was recorded, allocations were not compacted.
+      await db
+        .updateTable("payments")
+        .set(before)
+        .where("id", "=", queuedId)
+        .execute();
+      await db
+        .updateTable("payments")
+        .set({ paid_time_revoked_at: null })
+        .where("id", "=", refundedId)
+        .execute();
+      await db
+        .updateTable("users")
+        .set({ supporter_until: before.period_end })
+        .where("id", "=", userId)
+        .execute();
+      const ledger = await db
+        .selectFrom("payment_transactions")
+        .selectAll()
+        .execute();
+      const preview = (await entitlementRepairCandidates()).find(
+        (row) => row.userId === userId,
+      )!;
+      expect(preview.expectedUntil).toEqual(expected);
+      expect(
+        preview.payments.find((row) => row.id === refundedId)?.needsRevocation,
+      ).toBe(true);
+      const { repairId } = await requestEntitlementRepair(
+        userId,
+        { id: operatorId, loginName: "yang" },
+        "compact refunded time",
+      );
+      await runDueJobs();
+      expect(await supporterUntil(userId)).toEqual(preview.expectedUntil);
+      const repaired = await db
+        .selectFrom("payments")
+        .select(["period_start", "period_end"])
+        .where("id", "=", queuedId)
+        .executeTakeFirstOrThrow();
+      expect(repaired.period_end).toEqual(
+        preview.payments.find((row) => row.id === queuedId)!.afterEnd,
+      );
+      expect(
+        (
+          await db
+            .selectFrom("entitlement_repairs")
+            .select("changed_payment_ids")
+            .where("id", "=", repairId)
+            .executeTakeFirstOrThrow()
+        ).changed_payment_ids.sort(),
+      ).toEqual([refundedId, queuedId].sort());
+      await runEntitlementRepair(repairId);
+      expect(
+        await db
+          .selectFrom("payments")
+          .select(["period_start", "period_end"])
+          .where("id", "=", queuedId)
+          .executeTakeFirstOrThrow(),
+      ).toEqual(repaired);
+      expect(
+        await db.selectFrom("payment_transactions").selectAll().execute(),
+      ).toEqual(ledger);
+      expect(await checkPaymentInvariants()).toEqual({});
+    });
+
+    test("entitlement repair skips accounts deleted or made complimentary after acceptance", async () => {
+      const operatorId = await makeUser();
+      for (const kind of ["deleted", "comp"] as const) {
+        const userId = await makeUser();
+        await paidOneTime(userId, `repair-skip-${kind}`);
+        await requestEntitlementRepair(
+          userId,
+          { id: operatorId, loginName: "yang" },
+          "check before execution",
+        );
+        if (kind === "deleted")
+          await db.transaction().execute((trx) => deleteUserRow(trx, userId));
+        else
+          await db
+            .updateTable("users")
+            .set({ supporter_comp: true })
+            .where("id", "=", userId)
+            .execute();
+        const before = await supporterUntil(userId);
+        await runDueJobs();
+        expect(await supporterUntil(userId)).toEqual(before);
+        expect(
+          (
+            await db
+              .selectFrom("entitlement_repairs")
+              .select("status")
+              .where("user_id", "=", userId)
+              .executeTakeFirstOrThrow()
+          ).status,
+        ).toBe("skipped");
+        await expect(
+          requestEntitlementRepair(
+            userId,
+            { id: operatorId, loginName: "yang" },
+            "invalid target",
+          ),
+        ).rejects.toThrow();
+      }
+    });
+
+    test("entitlement repair refuses inconsistent money and can resume through audited task retry", async () => {
+      const userId = await makeUser();
+      const operatorId = await makeUser();
+      const paymentId = await paidOneTime(userId, "repair-ledger-mismatch");
+      const expected = await supporterUntil(userId);
+      await db
+        .updateTable("users")
+        .set({ supporter_until: null })
+        .where("id", "=", userId)
+        .execute();
+      const { repairId } = await requestEntitlementRepair(
+        userId,
+        { id: operatorId, loginName: "yang" },
+        "restore paid time",
+      );
+      const task = await db
+        .selectFrom("absurd.t_payments")
+        .select("task_id")
+        .where("idempotency_key", "=", `entitlement-repair:${repairId}`)
+        .executeTakeFirstOrThrow();
+      await db
+        .updateTable("absurd.t_payments")
+        .set({ max_attempts: 1 })
+        .where("task_id", "=", task.task_id)
+        .execute();
+      await db
+        .updateTable("payments")
+        .set({ amount: 12001 })
+        .where("id", "=", paymentId)
+        .execute();
+      await runDueJobs();
+      expect(await supporterUntil(userId)).toBeNull();
+      expect(
+        (
+          await db
+            .selectFrom("absurd.t_payments")
+            .select("state")
+            .where("task_id", "=", task.task_id)
+            .executeTakeFirstOrThrow()
+        ).state,
+      ).toBe("failed");
+      expect(
+        (
+          await db
+            .selectFrom("entitlement_repairs")
+            .select("completed_at")
+            .where("id", "=", repairId)
+            .executeTakeFirstOrThrow()
+        ).completed_at,
+      ).toBeNull();
+      await db
+        .updateTable("payments")
+        .set({ amount: 12000 })
+        .where("id", "=", paymentId)
+        .execute();
+      const { retryPaymentTask } =
+        require("@/lib/payments/task-recovery") as typeof import("@/lib/payments/task-recovery");
+      await retryPaymentTask(
+        task.task_id,
+        { id: operatorId, loginName: "yang" },
+        "ledger checked",
+      );
+      await runDueJobs();
+      expect(await supporterUntil(userId)).toEqual(expected);
+      expect(
+        (
+          await db
+            .selectFrom("payment_events")
+            .select("user_id")
+            .where("kind", "=", "job_retried")
+            .executeTakeFirstOrThrow()
+        ).user_id,
+      ).toBe(userId);
+    });
+
+    test("entitlement repair rolls back projection and completion when its audit fails", async () => {
+      const userId = await makeUser();
+      const operatorId = await makeUser();
+      await paidOneTime(userId, "repair-rollback");
+      await db
+        .updateTable("users")
+        .set({ supporter_until: null })
+        .where("id", "=", userId)
+        .execute();
+      const { repairId } = await requestEntitlementRepair(
+        userId,
+        { id: operatorId, loginName: "yang" },
+        "audit must commit",
+      );
+      await sql`create function reject_entitlement_repair_audit() returns trigger language plpgsql as $$ begin if new.kind='entitlement_repaired' then raise exception 'audit failure'; end if; return new; end $$`.execute(
+        db,
+      );
+      await sql`create trigger reject_entitlement_repair_audit before insert on payment_events for each row execute function reject_entitlement_repair_audit()`.execute(
+        db,
+      );
+      try {
+        await expect(runEntitlementRepair(repairId)).rejects.toThrow(
+          "audit failure",
+        );
+        expect(await supporterUntil(userId)).toBeNull();
+        expect(
+          (
+            await db
+              .selectFrom("entitlement_repairs")
+              .select("completed_at")
+              .where("id", "=", repairId)
+              .executeTakeFirstOrThrow()
+          ).completed_at,
+        ).toBeNull();
+      } finally {
+        await sql`drop trigger reject_entitlement_repair_audit on payment_events`.execute(
+          db,
+        );
+        await sql`drop function reject_entitlement_repair_audit()`.execute(db);
+      }
+      await runDueJobs();
+      expect(await supporterUntil(userId)).not.toBeNull();
     });
 
     test("ledger deletion and direct or cascading truncation are rejected", async () => {

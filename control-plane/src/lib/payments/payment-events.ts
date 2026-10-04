@@ -29,6 +29,9 @@ export const PAYMENT_EVENT_LABELS = {
   job_failed: "결제 작업 실패",
   job_retried: "결제 작업 재시도",
   invariant_violation: "결제 데이터 이상",
+  entitlement_repair_requested: "이용 기한 복구 요청",
+  entitlement_repaired: "이용 기한 복구 완료",
+  entitlement_repair_skipped: "이용 기한 복구 건너뜀",
   toss_mismatch: "Toss 거래 불일치",
 } as const;
 

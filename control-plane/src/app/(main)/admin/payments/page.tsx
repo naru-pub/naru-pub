@@ -1,3 +1,8 @@
+import {
+  entitlementRepairCandidates,
+  entitlementRepairHistory,
+} from "@/lib/payments/entitlement-repair";
+import { RepairEntitlementButton } from "../_components/RepairEntitlementButton";
 import { paymentTaskRecoveryList } from "@/lib/payments/task-recovery";
 import type { PaymentJob } from "@/lib/payments/payment-jobs";
 import { RetryPaymentTaskButton } from "../_components/RetryPaymentTaskButton";
@@ -29,6 +34,7 @@ import { requireOperator } from "../_components/requireOperator";
 
 const taskLabels: Record<PaymentJob["kind"], string> = {
   enqueue_due_renewals: "정기 결제 갱신 대상 확인",
+  repair_entitlement: "이용 기한 복구",
   confirm_one_time: "한 번만 결제 승인",
   initial_subscription_charge: "정기 결제 첫 청구",
   refund_payment: "환불",
@@ -78,7 +84,11 @@ export default async function PaymentOperatorPage({
     .$if(condition !== null, (qb) => qb.where(condition!))
     .executeTakeFirstOrThrow();
 
-  const tasks = await paymentTaskRecoveryList();
+  const [tasks, repairs, repairHistory] = await Promise.all([
+    paymentTaskRecoveryList(),
+    entitlementRepairCandidates(now),
+    entitlementRepairHistory(),
+  ]);
 
   const payments = await db
     .selectFrom("payments")
@@ -106,6 +116,116 @@ export default async function PaymentOperatorPage({
 
   return (
     <div className="space-y-6">
+      <section className="space-y-3">
+        <h2 className="text-lg font-bold">이용 기한 복구</h2>
+        <p className="text-sm text-muted-foreground">
+          현재 기한과 결제 기록으로 계산한 기한을 확인한 뒤 복구를 요청하세요.
+          처리할 때 최신 결제 기록을 다시 확인합니다. 무료 이용 계정과 삭제된
+          계정은 제외합니다.
+        </p>
+        {repairs.length === 0 ? (
+          <p className="text-sm">복구가 필요한 계정이 없습니다.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>계정</TableHead>
+                <TableHead>현재 기한</TableHead>
+                <TableHead>복구 후 기한</TableHead>
+                <TableHead>결제 기록</TableHead>
+                <TableHead>복구</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {repairs.map((repair) => (
+                <TableRow key={repair.userId}>
+                  <TableCell>{repair.loginName}</TableCell>
+                  <TableCell>{formatDate(repair.beforeUntil)}</TableCell>
+                  <TableCell>{formatDate(repair.expectedUntil)}</TableCell>
+                  <TableCell>
+                    <details>
+                      <summary>{repair.payments.length}건</summary>
+                      <ul className="space-y-2 text-xs">
+                        {repair.payments.map((payment) => (
+                          <li key={payment.id}>
+                            <div>
+                              {payment.orderId} · {formatKrw(payment.amount)}
+                              {payment.refunded_amount > 0
+                                ? ` · 환불 ${formatKrw(payment.refunded_amount)}`
+                                : ""}
+                            </div>
+                            <div>{payment.id}</div>
+                            <div>
+                              {formatDate(payment.period_start)} ~{" "}
+                              {formatDate(payment.period_end)}
+                            </div>
+                            {(payment.period_start?.getTime() !==
+                              payment.afterStart?.getTime() ||
+                              payment.period_end?.getTime() !==
+                                payment.afterEnd?.getTime()) && (
+                              <div>
+                                복구 후: {formatDate(payment.afterStart)} ~{" "}
+                                {formatDate(payment.afterEnd)}
+                              </div>
+                            )}
+                            {payment.needsRevocation && (
+                              <div>환불에 따른 이용 기한 회수 기록 누락</div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </TableCell>
+                  <TableCell>
+                    <RepairEntitlementButton userId={repair.userId} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {repairHistory.length > 0 && (
+          <details>
+            <summary>최근 복구 요청 {repairHistory.length}건</summary>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>계정 · 상태</TableHead>
+                  <TableHead>처리 전 → 후</TableHead>
+                  <TableHead>운영자 · 사유</TableHead>
+                  <TableHead>요청 시간</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {repairHistory.map((repair) => (
+                  <TableRow key={repair.id}>
+                    <TableCell>
+                      {repair.login_name} ·{" "}
+                      {
+                        {
+                          pending: "대기",
+                          completed: "완료",
+                          skipped: "건너뜀",
+                        }[repair.status]
+                      }
+                      {repair.result_note && <div>{repair.result_note}</div>}
+                    </TableCell>
+                    <TableCell>
+                      {repair.completed_at
+                        ? `${formatDate(repair.before_until)} → ${formatDate(repair.after_until)}`
+                        : "처리 대기"}
+                    </TableCell>
+                    <TableCell>
+                      {repair.operator_login_name} · {repair.reason}
+                    </TableCell>
+                    <TableCell>{formatDate(repair.created_at)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </details>
+        )}
+      </section>
       <section className="space-y-3">
         <h2 className="text-lg font-bold">결제 작업 복구</h2>
         <p className="text-sm text-muted-foreground">
@@ -150,6 +270,11 @@ export default async function PaymentOperatorPage({
                       </div>
                       {"paymentId" in job && (
                         <div className="text-xs">결제 {job.paymentId}</div>
+                      )}
+                      {job.kind === "repair_entitlement" && (
+                        <div className="text-xs">
+                          계정 {job.userId} · 복구 {job.repairId}
+                        </div>
                       )}
                     </TableCell>
                     <TableCell>

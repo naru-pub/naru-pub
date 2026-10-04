@@ -76,7 +76,7 @@ export async function recomputePaidTime(
 // The caller holds the user/account lock. Keep allocations in memory while
 // compacting: an earlier refund may move a later refund's own allocation.
 async function compactRefundedPaidPeriods(trx: Executor, userId: string) {
-  const rows = await trx
+  const records = await trx
     .selectFrom("payments")
     .select([
       "id",
@@ -88,6 +88,36 @@ async function compactRefundedPaidPeriods(trx: Executor, userId: string) {
     ])
     .where("user_id", "=", userId)
     .execute();
+  const plan = planPaidTimeRepair(records);
+  const changed = new Set(plan.changedPaymentIds);
+  for (const row of plan.rows) {
+    if (!changed.has(row.id)) continue;
+    await trx
+      .updateTable("payments")
+      .set({
+        period_start: row.period_start,
+        period_end: row.period_end,
+        paid_time_revoked_at: row.paid_time_revoked_at,
+      })
+      .where("id", "=", row.id)
+      .execute();
+  }
+  return plan.changedPaymentIds;
+}
+
+export type PaidPeriod = {
+  id: string;
+  period_start: Date | null;
+  period_end: Date | null;
+  refunded_amount: number;
+  refunded_at: Date | null;
+  paid_time_revoked_at: Date | null;
+};
+
+// Shared by the operator preview and the transactional repair; never mutates
+// the supplied records. Refund allocation rules have one implementation.
+export function planPaidTimeRepair(records: PaidPeriod[]) {
+  const rows = records.map((row) => ({ ...row }));
   const refunds = rows
     .filter((row) => row.refunded_amount > 0 && !row.paid_time_revoked_at)
     .sort(
@@ -145,16 +175,56 @@ async function compactRefundedPaidPeriods(trx: Executor, userId: string) {
     refund.paid_time_revoked_at = new Date();
     changed.add(refund);
   }
-  for (const row of changed)
+  return {
+    rows,
+    changedPaymentIds: [...changed].map((row) => row.id),
+    expectedUntil: supporterUntilFromLedger(
+      rows.map((row) => ({
+        periodEnd: row.period_end,
+        refundedAmount: row.refunded_amount,
+      })),
+    ),
+  };
+}
+
+// Operator repairs may restore lost time as well as revoke excess time. The
+// caller holds the account lock and financial rows, and records the result.
+export async function repairPaidTime(trx: Executor, userId: string) {
+  const before = await lockPaidTime(trx, userId);
+  const changedPaymentIds = await compactRefundedPaidPeriods(trx, userId);
+  const rows = await trx
+    .selectFrom("payments")
+    .select(["period_end", "refunded_amount"])
+    .where("user_id", "=", userId)
+    .execute();
+  const after = supporterUntilFromLedger(
+    rows.map((row) => ({
+      periodEnd: row.period_end,
+      refundedAmount: row.refunded_amount,
+    })),
+  );
+  await trx
+    .updateTable("users")
+    .set({ supporter_until: after })
+    .where("id", "=", userId)
+    .where("deleted_at", "is", null)
+    .where("supporter_comp", "=", false)
+    .execute();
+  if (before && (!after || after < before)) {
+    const due = after && after > new Date() ? after : new Date();
     await trx
-      .updateTable("payments")
+      .updateTable("subscriptions")
       .set({
-        period_start: row.period_start,
-        period_end: row.period_end,
-        paid_time_revoked_at: row.paid_time_revoked_at,
+        current_period_end: due,
+        next_billing_at: due,
+        updated_at: new Date(),
       })
-      .where("id", "=", row.id)
+      .where("user_id", "=", userId)
+      .where("status", "in", ["active", "scheduled"])
+      .where("next_billing_at", ">", due)
       .execute();
+  }
+  return { before, after, changedPaymentIds };
 }
 
 // The billing lab's clock: paid time set to a moment of its choosing, with

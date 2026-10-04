@@ -58,6 +58,7 @@ import { mailRecipient } from "@/lib/payments/payment-mails";
 
 export type PaymentJob =
   | { kind: "enqueue_due_renewals" }
+  | { kind: "repair_entitlement"; repairId: string; userId: string }
   | { kind: "confirm_one_time"; paymentId: string }
   | {
       kind: "initial_subscription_charge";
@@ -216,6 +217,12 @@ export async function runDueJobs(
 
 async function handle(job: PaymentJob): Promise<void> {
   switch (job.kind) {
+    case "repair_entitlement": {
+      const { runEntitlementRepair } =
+        await import("@/lib/payments/entitlement-repair");
+      await runEntitlementRepair(job.repairId);
+      return;
+    }
     case "enqueue_due_renewals": {
       const { noteJobStarted } = await import("@/lib/scheduled-jobs");
       const { enqueueDueRenewals } =

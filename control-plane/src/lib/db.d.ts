@@ -324,6 +324,21 @@ export interface EmailVerificationTokens {
   user_id: string;
 }
 
+export interface EntitlementRepairs {
+  after_until: Timestamp | null;
+  before_until: Timestamp | null;
+  changed_payment_ids: Generated<string[]>;
+  completed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  operator_id: string;
+  operator_login_name: string;
+  reason: string;
+  result_note: string | null;
+  status: ColumnType<"pending" | "completed" | "skipped", "pending" | "completed" | "skipped" | undefined>;
+  user_id: string;
+}
+
 export interface Followers {
   created_at: Generated<Timestamp>;
   id: Generated<string>;
@@ -693,6 +708,7 @@ export interface DB {
   custom_domains: CustomDomains;
   edit_daily_stats: EditDailyStats;
   email_verification_tokens: EmailVerificationTokens;
+  entitlement_repairs: EntitlementRepairs;
   followers: Followers;
   github_deploy_targets: GithubDeployTargets;
   github_deployments: GithubDeployments;

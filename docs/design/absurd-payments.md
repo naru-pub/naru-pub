@@ -235,3 +235,21 @@ deleted accounts and lifetime comps, treats null and expired dates as no current
 access, and retains a one-minute timestamp tolerance. A separate check reports
 refunds on live accounts whose paid-time revocation marker is missing. These
 checks report operator events without changing entitlements or financial records.
+
+## Operator entitlement repairs
+
+The operator payment page previews current and recomputed expiry, the supporting
+payments, missing refund-revocation markers, and allocations that would move.
+Preview and execution share the same pure refund-compaction planner. A required
+operator reason is saved with a durable repair request; its task and request
+event enqueue in the same transaction. Duplicate pending requests reuse it.
+
+Absurd executes the repair under the account lock, rechecks live/non-comp status
+and ledger consistency, and reads the latest payments. It compacts missing refund
+allocations, recomputes paid time in either direction, and pulls an existing
+renewal date back when excess access is removed. It makes no Toss calls and
+never changes the money ledger. Before/after expiry, changed payment ids, and
+the operator audit commit with completion. Completed requests are no-ops on
+replay, preserving purchases made afterwards. Failed tasks use the existing
+audited retry action. Accounts deleted or made complimentary after acceptance
+are recorded as skipped.

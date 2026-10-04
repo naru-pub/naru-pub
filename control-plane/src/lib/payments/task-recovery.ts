@@ -66,7 +66,10 @@ export async function retryPaymentTask(
     );
     await recordPaymentEvent(trx, {
       kind: "job_retried",
-      userId: payment?.user_id ?? subscription?.user_id,
+      userId:
+        payment?.user_id ??
+        subscription?.user_id ??
+        ("userId" in job ? job.userId : null),
       paymentId,
       subscriptionId,
       summary: `운영자 ${operator.loginName} (${operator.id}) 작업 ${taskId} 재시도: ${reason.trim()}`,
