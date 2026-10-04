@@ -185,3 +185,15 @@ only in Toss test mode. Results appear in payment history and the task list;
 the lab response is acceptance, not an execution trace. The old inline renewal
 runner has been removed. Source boundary tests guard approval, charge and refund
 call sites and the renewal executor's only production caller.
+
+## Refunded prepaid allocations
+
+Refund facts compact periods queued directly behind the refunded allocation,
+preserving each remaining purchase's granted duration. Independent purchases
+after a gap keep their dates. Money records and provider transaction history
+remain; the ledger's service allocation dates reflect the corrected schedule.
+`paid_time_revoked_at` makes revocation idempotent across retries and incremental
+provider cancellations. The migration repairs historical stacked refunds and
+skips overlapping replacement purchases whose old refund already reduced access.
+The entitlement projection and remaining subscription due date can only move
+backward during refund application.

@@ -50,6 +50,7 @@ export async function recomputePaidTime(
   userId: string,
 ): Promise<Date | null> {
   const current = await lockPaidTime(trx, userId);
+  await sql`select compact_refunded_paid_periods(${userId}::uuid)`.execute(trx);
   const ledger = await trx
     .selectFrom("payments")
     .select(["period_end", "refunded_amount"])
@@ -97,11 +98,9 @@ export type EntitlementLedgerRow = {
 // with the money. 나루 does not offer partial refunds, so any refunded amount
 // undoes the whole purchase rather than a slice of it.
 //
-// Periods keep the dates they were granted with. A refunded period with
-// another queued behind it (a one-time year bought during a paid month, then
-// the month refunded) is not taken back: the later period still ends where it
-// ends. That is at most one refunded period, and it keeps this from having to
-// work out what was queued behind what — which it once did, and got wrong.
+// Refunded allocations are compacted transactionally before this projection.
+// Remaining payments keep their purchased duration, with queued periods moved
+// forward; independent periods after a gap keep their dates.
 export function supporterUntilFromLedger(
   rows: EntitlementLedgerRow[],
 ): Date | null {

@@ -457,6 +457,7 @@ export interface Payments {
   last_reconciled_at: Timestamp | null;
   order_id: string;
   paid_at: Timestamp | null;
+  paid_time_revoked_at: Timestamp | null;
   period_end: Timestamp | null;
   period_start: Timestamp | null;
   raw: unknown | null;

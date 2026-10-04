@@ -1131,10 +1131,8 @@ integration("payments against the database", () => {
       expect(sub.next_billing_at).toEqual(until);
     });
 
-    // Periods keep the dates they were granted with: a year queued behind a
-    // refunded month is not pulled forward (at most the one refunded period
-    // goes unrecovered), and the month's own end no longer counts.
-    test("refunding a month leaves a stacked one-time year where it is", async () => {
+    // Refunding an earlier allocation moves the prepaid year forward.
+    test("refunding a month removes that duration from a stacked one-time year", async () => {
       const periodEnd = new Date(Date.now() + 20 * DAY);
       const userId = await makeUser();
       const subId = await makeSubscription(userId, { status: "incomplete" });
@@ -1145,7 +1143,7 @@ integration("payments against the database", () => {
         orderId: "month-order",
         amount: 1000,
       });
-      await grantRecurringFixture({
+      const month = await grantRecurringFixture({
         notice: "receipt",
         subscriptionId: subId,
         userId,
@@ -1173,7 +1171,241 @@ integration("payments against the database", () => {
       });
 
       expect(year.periodStart).toEqual(periodEnd);
-      expect(await supporterUntil(userId)).toEqual(year.periodEnd);
+      expect(await supporterUntil(userId)).toEqual(
+        new Date(
+          year.periodEnd.getTime() -
+            (month.periodEnd.getTime() - month.periodStart.getTime()),
+        ),
+      );
+    });
+  });
+
+  describe("stacked one-time refund duration", () => {
+    for (const position of [0, 1, 2]) {
+      test(`refunding purchase ${position + 1} removes its duration exactly once`, async () => {
+        const userId = await makeUser();
+        const purchases = [];
+        for (let index = 0; index < 3; index++) {
+          const order = `stack-${position}-${index}`;
+          const id = await makePendingPayment({
+            userId,
+            subscriptionId: null,
+            attemptKey: `one_time:1:${order}`,
+            orderId: order,
+            amount: 12000,
+          });
+          const period = await grantOneTimeFixture({
+            userId,
+            amount: 12000,
+            years: 1,
+            paymentId: id,
+            payment: tossPayment(order, 12000),
+          });
+          purchases.push({ id, order, ...period });
+        }
+        const target = purchases[position];
+        const expected = new Date(
+          purchases[2].periodEnd.getTime() -
+            (target.periodEnd.getTime() - target.periodStart.getTime()),
+        );
+        toss.getPaymentByOrderId.mockResolvedValue(
+          tossPayment(target.order, 12000, {
+            status: "CANCELED",
+            cancels: [{ cancelAmount: 12000 }],
+          }),
+        );
+        await reconcilePayment(target.id);
+        expect(await supporterUntil(userId)).toEqual(expected);
+        await reconcilePayment(target.id);
+        expect(await supporterUntil(userId)).toEqual(expected);
+        const next = await grantOneTimeFixture({
+          userId,
+          amount: 12000,
+          years: 1,
+          payment: tossPayment(`next-${position}`, 12000),
+        });
+        expect(next.periodStart).toEqual(expected);
+        for (const purchase of purchases.filter(
+          (row) => row.id !== target.id,
+        )) {
+          toss.getPaymentByOrderId.mockResolvedValue(
+            tossPayment(purchase.order, 12000, {
+              status: "CANCELED",
+              cancels: [{ cancelAmount: 12000 }],
+            }),
+          );
+          await reconcilePayment(purchase.id);
+        }
+        expect(await supporterUntil(userId)).toEqual(
+          new Date(
+            next.periodEnd.getTime() -
+              purchases
+                .filter((row) => row.id !== target.id)
+                .reduce(
+                  (sum, row) =>
+                    sum + row.periodEnd.getTime() - row.periodStart.getTime(),
+                  0,
+                ),
+          ),
+        );
+      });
+    }
+
+    test("a later independent period after a gap is preserved", async () => {
+      const userId = await makeUser();
+      const firstId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:gap-first",
+        orderId: "gap-first",
+        amount: 12000,
+      });
+      const first = await grantOneTimeFixture({
+        userId,
+        amount: 12000,
+        years: 1,
+        paymentId: firstId,
+        payment: tossPayment("gap-first", 12000),
+      });
+      const independentId = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:gap-later",
+        orderId: "gap-later",
+        amount: 12000,
+      });
+      const independentEnd = new Date(first.periodEnd.getTime() + 400 * DAY);
+      await db
+        .updateTable("payments")
+        .set({
+          status: "done",
+          paid_at: new Date(),
+          period_start: new Date(first.periodEnd.getTime() + 30 * DAY),
+          period_end: independentEnd,
+        })
+        .where("id", "=", independentId)
+        .execute();
+      await db
+        .updateTable("users")
+        .set({ supporter_until: independentEnd })
+        .where("id", "=", userId)
+        .execute();
+      toss.getPaymentByOrderId.mockResolvedValue(
+        tossPayment("gap-first", 12000, {
+          status: "CANCELED",
+          cancels: [{ cancelAmount: 12000 }],
+        }),
+      );
+      await reconcilePayment(firstId);
+      expect(await supporterUntil(userId)).toEqual(independentEnd);
+    });
+
+    test("historical repair does not revoke a last-period refund again after replacement purchases", async () => {
+      const userId = await makeUser();
+      const first = await grantOneTimeFixture({
+        userId,
+        amount: 12000,
+        years: 1,
+        payment: tossPayment("replacement-first", 12000),
+      });
+      const id = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:replacement-refunded",
+        orderId: "replacement-refunded",
+        amount: 12000,
+      });
+      await grantOneTimeFixture({
+        userId,
+        amount: 12000,
+        years: 1,
+        paymentId: id,
+        payment: tossPayment("replacement-refunded", 12000),
+      });
+      await db
+        .updateTable("payments")
+        .set({
+          status: "canceled",
+          refunded_amount: 12000,
+          refunded_at: new Date(),
+        })
+        .where("id", "=", id)
+        .execute();
+      await db
+        .updateTable("users")
+        .set({ supporter_until: first.periodEnd })
+        .where("id", "=", userId)
+        .execute();
+      await grantOneTimeFixture({
+        userId,
+        amount: 12000,
+        years: 1,
+        payment: tossPayment("replacement-next", 12000),
+      });
+      const last = await grantOneTimeFixture({
+        userId,
+        amount: 12000,
+        years: 1,
+        payment: tossPayment("replacement-last", 12000),
+      });
+      const { recomputePaidTime } =
+        require("@/lib/payments/paid-time") as typeof import("@/lib/payments/paid-time");
+      await db.transaction().execute((trx) => recomputePaidTime(trx, userId));
+      expect(await supporterUntil(userId)).toEqual(last.periodEnd);
+    });
+
+    test("the migration repairs already refunded stacked purchases without deleting records", async () => {
+      const userId = await makeUser();
+      const id = await makePendingPayment({
+        userId,
+        subscriptionId: null,
+        attemptKey: "one_time:1:historical",
+        orderId: "historical",
+        amount: 12000,
+      });
+      const first = await grantOneTimeFixture({
+        userId,
+        amount: 12000,
+        years: 1,
+        paymentId: id,
+        payment: tossPayment("historical", 12000),
+      });
+      const second = await grantOneTimeFixture({
+        userId,
+        amount: 12000,
+        years: 1,
+        payment: tossPayment("historical-next", 12000),
+      });
+      await db
+        .updateTable("payments")
+        .set({
+          status: "canceled",
+          refunded_amount: 12000,
+          refunded_at: new Date(),
+        })
+        .where("id", "=", id)
+        .execute();
+      await db.schema
+        .alterTable("payments")
+        .dropColumn("paid_time_revoked_at")
+        .execute();
+      await sql`drop function compact_refunded_paid_periods(uuid)`.execute(db);
+      const migration =
+        require("@/migrations/1791071560131_compact_refunded_paid_periods") as typeof import("@/migrations/1791071560131_compact_refunded_paid_periods");
+      await db.transaction().execute((trx) => migration.up(trx));
+      expect(await supporterUntil(userId)).toEqual(
+        new Date(
+          second.periodEnd.getTime() -
+            (first.periodEnd.getTime() - first.periodStart.getTime()),
+        ),
+      );
+      expect(
+        await db
+          .selectFrom("payments")
+          .select("id")
+          .where("user_id", "=", userId)
+          .execute(),
+      ).toHaveLength(2);
     });
   });
 

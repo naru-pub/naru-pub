@@ -41,9 +41,9 @@ describe("supporter_until after a refund", () => {
     ).toBeNull();
   });
 
-  // Refunding an earlier payment does not take back time a later, unrefunded
-  // payment paid for — even one queued behind it: periods keep their dates.
-  test("leaves later periods where they are", () => {
+  // This projection reads allocations after compaction. It does not move
+  // periods itself; database tests cover queued-period refund adjustments.
+  test("projects the latest remaining allocation after compaction", () => {
     expect(
       supporterUntilFromLedger([
         { periodEnd: YEAR_ONE_END, refundedAmount: 12000 },
