@@ -1389,10 +1389,13 @@ integration("payments against the database", () => {
         .alterTable("payments")
         .dropColumn("paid_time_revoked_at")
         .execute();
-      await sql`drop function compact_refunded_paid_periods(uuid)`.execute(db);
+      await sql`drop function if exists compact_refunded_paid_periods(uuid)`.execute(
+        db,
+      );
       const migration =
         require("@/migrations/1791071560131_compact_refunded_paid_periods") as typeof import("@/migrations/1791071560131_compact_refunded_paid_periods");
       await db.transaction().execute((trx) => migration.up(trx));
+      await sql`drop function compact_refunded_paid_periods(uuid)`.execute(db);
       expect(await supporterUntil(userId)).toEqual(
         new Date(
           second.periodEnd.getTime() -

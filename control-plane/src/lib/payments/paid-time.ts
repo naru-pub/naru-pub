@@ -50,7 +50,7 @@ export async function recomputePaidTime(
   userId: string,
 ): Promise<Date | null> {
   const current = await lockPaidTime(trx, userId);
-  await sql`select compact_refunded_paid_periods(${userId}::uuid)`.execute(trx);
+  await compactRefundedPaidPeriods(trx, userId);
   const ledger = await trx
     .selectFrom("payments")
     .select(["period_end", "refunded_amount"])
@@ -71,6 +71,90 @@ export async function recomputePaidTime(
       .execute();
   }
   return recomputed;
+}
+
+// The caller holds the user/account lock. Keep allocations in memory while
+// compacting: an earlier refund may move a later refund's own allocation.
+async function compactRefundedPaidPeriods(trx: Executor, userId: string) {
+  const rows = await trx
+    .selectFrom("payments")
+    .select([
+      "id",
+      "period_start",
+      "period_end",
+      "refunded_amount",
+      "refunded_at",
+      "paid_time_revoked_at",
+    ])
+    .where("user_id", "=", userId)
+    .execute();
+  const refunds = rows
+    .filter((row) => row.refunded_amount > 0 && !row.paid_time_revoked_at)
+    .sort(
+      (a, b) =>
+        (a.refunded_at?.getTime() ?? Infinity) -
+          (b.refunded_at?.getTime() ?? Infinity) || a.id.localeCompare(b.id),
+    );
+  const changed = new Set<(typeof rows)[number]>();
+  for (const refund of refunds) {
+    const start = refund.period_start?.getTime();
+    const end = refund.period_end?.getTime();
+    const replacement =
+      start !== undefined &&
+      end !== undefined &&
+      rows.some(
+        (row) =>
+          row.refunded_amount === 0 &&
+          row.period_start &&
+          row.period_end &&
+          row.period_start.getTime() < end &&
+          row.period_end.getTime() > start,
+      );
+    if (
+      start !== undefined &&
+      end !== undefined &&
+      end > start &&
+      !replacement
+    ) {
+      const removed = end - start;
+      let frontier = end;
+      const queued = rows
+        .filter(
+          (row) =>
+            row.id !== refund.id &&
+            row.period_start &&
+            row.period_end &&
+            row.period_start.getTime() >= end,
+        )
+        .sort(
+          (a, b) =>
+            a.period_start!.getTime() - b.period_start!.getTime() ||
+            a.period_end!.getTime() - b.period_end!.getTime() ||
+            a.id.localeCompare(b.id),
+        );
+      for (const row of queued) {
+        const queuedStart = row.period_start!.getTime();
+        const queuedEnd = row.period_end!.getTime();
+        if (queuedStart > frontier) break; // preserve independent purchases after a gap
+        frontier = Math.max(frontier, queuedEnd);
+        row.period_start = new Date(queuedStart - removed);
+        row.period_end = new Date(queuedEnd - removed);
+        changed.add(row);
+      }
+    }
+    refund.paid_time_revoked_at = new Date();
+    changed.add(refund);
+  }
+  for (const row of changed)
+    await trx
+      .updateTable("payments")
+      .set({
+        period_start: row.period_start,
+        period_end: row.period_end,
+        paid_time_revoked_at: row.paid_time_revoked_at,
+      })
+      .where("id", "=", row.id)
+      .execute();
 }
 
 // The billing lab's clock: paid time set to a moment of its choosing, with

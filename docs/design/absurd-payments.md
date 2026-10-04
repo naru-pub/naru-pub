@@ -188,7 +188,8 @@ call sites and the renewal executor's only production caller.
 
 ## Refunded prepaid allocations
 
-Refund facts compact periods queued directly behind the refunded allocation,
+Refund facts use TypeScript in `paid-time.ts` to compact periods queued directly
+behind the refunded allocation,
 preserving each remaining purchase's granted duration. Independent purchases
 after a gap keep their dates. Money records and provider transaction history
 remain; the ledger's service allocation dates reflect the corrected schedule.
@@ -197,3 +198,7 @@ provider cancellations. The migration repairs historical stacked refunds and
 skips overlapping replacement purchases whose old refund already reduced access.
 The entitlement projection and remaining subscription due date can only move
 backward during refund application.
+
+The original historical repair stays frozen in its migration. A forward migration
+removes the SQL compaction function; ongoing refunds use TypeScript and Kysely
+in the existing account-locked transaction.
