@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { resetLedgerFixtures } from "@/lib/payments/__tests__/ledger-fixtures";
+import { resetLedgerFixtures } from "@/test-support/ledger-fixtures";
 import { afterAll, describe, expect, jest, test } from "@jest/globals";
 import { AsyncLocalStorage } from "async_hooks";
 import type { TossPaymentResult } from "@/lib/payments/toss";

@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { resetLedgerFixtures } from "@/lib/payments/__tests__/ledger-fixtures";
+import { resetLedgerFixtures } from "@/test-support/ledger-fixtures";
 import {
   afterAll,
   afterEach,
