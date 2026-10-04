@@ -144,48 +144,77 @@ export async function checkPaymentInvariants(
         ),
     ),
   );
-  note("이용 기한이 결제 원장보다 짧음", await shortenedAccounts());
+  note(
+    "환불된 결제의 이용 기한 회수가 기록되지 않음",
+    await ids(
+      db
+        .selectFrom("payments as p")
+        .innerJoin("users as u", "u.id", "p.user_id")
+        .select("p.id")
+        .where("u.deleted_at", "is", null)
+        .where("p.refunded_amount", ">", 0)
+        .where("p.paid_time_revoked_at", "is", null),
+    ),
+  );
+  const drift = await entitlementDrift(now);
+  note("이용 기한이 결제 원장보다 짧음", drift.shortened);
+  note("이용 기한이 결제 원장보다 김", drift.extended);
   return found;
 }
 
-// Accounts whose supporter_until ends before the latest period an
-// unrefunded payment paid for: paid time a supporter lost.
-async function shortenedAccounts(): Promise<string[]> {
+// Compare effective paid access, including accounts with no paid periods.
+// Expired dates and null both mean no current access. Lifetime comps have
+// independent access, and deleted accounts intentionally lose their projection.
+// Keep the one-minute tolerance for harmless timestamp precision differences.
+async function entitlementDrift(now: Date) {
   const rows = await db
-    .selectFrom("payments")
-    .innerJoin("users", "users.id", "payments.user_id")
+    .selectFrom("users")
+    .leftJoin("payments", (join) =>
+      join
+        .onRef("payments.user_id", "=", "users.id")
+        .on("payments.period_end", "is not", null),
+    )
     .select([
-      "payments.user_id",
+      "users.id as user_id",
       "payments.period_end",
       "payments.refunded_amount",
       "users.supporter_until",
     ])
     .where("users.deleted_at", "is", null)
-    .where("payments.period_end", "is not", null)
+    .where("users.supporter_comp", "=", false)
+    .where((eb) =>
+      eb.or([
+        eb("users.supporter_until", "is not", null),
+        eb("payments.period_end", "is not", null),
+      ]),
+    )
+    .orderBy("users.id")
     .execute();
   const byUser = new Map<string, typeof rows>();
   for (const row of rows) {
-    byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row]);
+    const ledger = byUser.get(row.user_id) ?? [];
+    ledger.push(row);
+    byUser.set(row.user_id, ledger);
   }
   const shortened: string[] = [];
+  const extended: string[] = [];
   for (const [userId, ledger] of byUser) {
     const expected = supporterUntilFromLedger(
       ledger.map((row) => ({
         periodEnd: row.period_end,
-        refundedAmount: row.refunded_amount,
+        refundedAmount: row.refunded_amount ?? 0,
       })),
     );
-    const actual = ledger[0].supporter_until
-      ? new Date(ledger[0].supporter_until)
-      : null;
-    if (
-      expected &&
-      (!actual || actual.getTime() < expected.getTime() - 60 * 1000)
-    ) {
-      shortened.push(userId);
-    }
+    const baseline = now.getTime();
+    const expectedEnd = Math.max(baseline, expected?.getTime() ?? baseline);
+    const actualEnd = Math.max(
+      baseline,
+      ledger[0].supporter_until?.getTime() ?? baseline,
+    );
+    if (actualEnd < expectedEnd - 60_000) shortened.push(userId);
+    if (actualEnd > expectedEnd + 60_000) extended.push(userId);
   }
-  return shortened;
+  return { shortened, extended };
 }
 
 async function ids(query: {

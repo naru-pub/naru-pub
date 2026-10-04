@@ -2421,6 +2421,142 @@ integration("payments against the database", () => {
       expect(await supporterUntil(userId)).toEqual(granted);
     });
 
+    test("entitlement audit detects shortened and extended paid access", async () => {
+      const shortened = await makeUser();
+      const extended = await makeUser();
+      await paidOneTime(shortened, "audit-short");
+      await paidOneTime(extended, "audit-long");
+      await sql`update users set supporter_until = supporter_until - interval '2 minutes' where id = ${shortened}`.execute(
+        db,
+      );
+      await sql`update users set supporter_until = supporter_until + interval '2 minutes' where id = ${extended}`.execute(
+        db,
+      );
+      expect(await checkPaymentInvariants()).toEqual({
+        "이용 기한이 결제 원장보다 짧음": [shortened],
+        "이용 기한이 결제 원장보다 김": [extended],
+      });
+    });
+
+    test("entitlement audit detects unfunded access and missing refund revocation without repairing either", async () => {
+      const now = new Date();
+      const unfunded = await makeUser(new Date(now.getTime() + DAY));
+      const refunded = await makeUser();
+      const paymentId = await paidOneTime(refunded, "audit-refund");
+      const oldUntil = await supporterUntil(refunded);
+      await applyVerifiedTossPayment(
+        paymentId,
+        tossPayment("audit-refund", 12000, {
+          status: "CANCELED",
+          cancels: [
+            {
+              cancelAmount: 12000,
+              transactionKey: "audit-cancel",
+              canceledAt: now.toISOString(),
+            },
+          ],
+        }),
+      );
+      await db
+        .updateTable("payments")
+        .set({ paid_time_revoked_at: null })
+        .where("id", "=", paymentId)
+        .execute();
+      // Projection is correct, but the missing marker must still be reported.
+      expect(await checkPaymentInvariants(now)).toEqual({
+        "환불된 결제의 이용 기한 회수가 기록되지 않음": [paymentId],
+        "이용 기한이 결제 원장보다 김": [unfunded],
+      });
+      await db
+        .updateTable("users")
+        .set({ supporter_until: oldUntil })
+        .where("id", "=", refunded)
+        .execute();
+      expect(await checkPaymentInvariants(now)).toEqual({
+        "환불된 결제의 이용 기한 회수가 기록되지 않음": [paymentId],
+        "이용 기한이 결제 원장보다 김": [unfunded, refunded],
+      });
+      expect(await supporterUntil(refunded)).toEqual(oldUntil);
+      expect(
+        (
+          await db
+            .selectFrom("payments")
+            .select("paid_time_revoked_at")
+            .where("id", "=", paymentId)
+            .executeTakeFirstOrThrow()
+        ).paid_time_revoked_at,
+      ).toBeNull();
+    });
+
+    test("entitlement audit ignores complimentary access and deleted identities", async () => {
+      const comp = await makeUser();
+      await paidOneTime(comp, "audit-comp");
+      await db
+        .updateTable("users")
+        .set({ supporter_comp: true, supporter_until: null })
+        .where("id", "=", comp)
+        .execute();
+      const unbackedComp = await makeUser(new Date(Date.now() + DAY));
+      await db
+        .updateTable("users")
+        .set({ supporter_comp: true })
+        .where("id", "=", unbackedComp)
+        .execute();
+      const deleted = await makeUser();
+      const paymentId = await paidOneTime(deleted, "audit-deleted");
+      await applyVerifiedTossPayment(
+        paymentId,
+        tossPayment("audit-deleted", 12000, {
+          status: "CANCELED",
+          cancels: [
+            {
+              cancelAmount: 12000,
+              transactionKey: "deleted-cancel",
+              canceledAt: new Date().toISOString(),
+            },
+          ],
+        }),
+      );
+      await db
+        .updateTable("payments")
+        .set({ paid_time_revoked_at: null })
+        .where("id", "=", paymentId)
+        .execute();
+      await db.transaction().execute((trx) => deleteUserRow(trx, deleted));
+      expect(await checkPaymentInvariants()).toEqual({});
+    });
+
+    test("entitlement audit preserves tolerance and treats expired dates as no access", async () => {
+      const now = new Date();
+      const nearShort = await makeUser();
+      const nearLong = await makeUser();
+      const expired = await makeUser();
+      await paidOneTime(nearShort, "audit-near-short");
+      await paidOneTime(nearLong, "audit-near-long");
+      const expiredPayment = await paidOneTime(expired, "audit-expired");
+      await sql`update users set supporter_until = supporter_until - interval '30 seconds' where id = ${nearShort}`.execute(
+        db,
+      );
+      await sql`update users set supporter_until = supporter_until + interval '30 seconds' where id = ${nearLong}`.execute(
+        db,
+      );
+      await db
+        .updateTable("payments")
+        .set({
+          period_start: new Date(now.getTime() - 2 * DAY),
+          period_end: new Date(now.getTime() - DAY),
+        })
+        .where("id", "=", expiredPayment)
+        .execute();
+      await db
+        .updateTable("users")
+        .set({ supporter_until: null })
+        .where("id", "=", expired)
+        .execute();
+      await makeUser(new Date(now.getTime() - DAY));
+      expect(await checkPaymentInvariants(now)).toEqual({});
+    });
+
     test("ledger deletion and direct or cascading truncation are rejected", async () => {
       const userId = await makeUser();
       const paymentId = await paidOneTime(userId, "undeletable-order");

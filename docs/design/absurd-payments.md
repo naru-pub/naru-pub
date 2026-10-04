@@ -228,3 +228,10 @@ The money ledger is fully append-only: row triggers reject `UPDATE` and
 other tables. Refunds append cancellation records rather than editing approvals.
 Disposable database tests reset fixtures with guards temporarily disabled inside
 a table-locked transaction; both successful cleanup and rollback restore them.
+
+The nightly entitlement audit compares paid access with the unrefunded payment
+periods in both directions, including access without any paid period. It ignores
+deleted accounts and lifetime comps, treats null and expired dates as no current
+access, and retains a one-minute timestamp tolerance. A separate check reports
+refunds on live accounts whose paid-time revocation marker is missing. These
+checks report operator events without changing entitlements or financial records.
