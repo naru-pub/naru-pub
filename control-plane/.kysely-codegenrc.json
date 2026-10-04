@@ -17,7 +17,8 @@
       "payment_transactions.kind": "\"approval\" | \"cancel\"",
       "billing_keys.status": "ColumnType<\"active\" | \"retired\" | \"deleted\", \"active\" | \"retired\" | \"deleted\" | undefined>",
       "board_replies.path": "ColumnType<string[], never, never>",
-      "board_template_versions.data_collections": "ColumnType<import(\"./board/template-collections\").BoardTemplateCollection[], string | undefined, string>"
+      "board_template_versions.data_collections": "ColumnType<import(\"./board/template-collections\").BoardTemplateCollection[], string | undefined, string>",
+      "subscriptions.billing_key_required_status": "ColumnType<\"active\", never, never>"
     }
   }
 }

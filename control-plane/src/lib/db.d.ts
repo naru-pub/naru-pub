@@ -578,6 +578,7 @@ export interface Subscriptions {
   amount: number;
   billing_interval: string;
   billing_key_id: string | null;
+  billing_key_required_status: ColumnType<"active", never, never>;
   canceled_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   current_period_end: Timestamp | null;

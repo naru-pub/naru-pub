@@ -1443,9 +1443,163 @@ integration("payments against the database", () => {
       ).rejects.toThrow("subscriptions_canceled_without_billing");
       await expect(
         db.updateTable("billing_keys").set({ status: "retired" }).execute(),
-      ).rejects.toThrow("a subscription holds it");
+      ).rejects.toThrow("subscriptions_active_owned_key_fkey");
       expect((await subscription(subId)).billing_key).toBe("key-raw");
     });
+
+    test("key assignment requires the subscription owner and an active key", async () => {
+      const userId = await makeUser();
+      const otherId = await makeUser();
+      const subId = await makeSubscription(userId, {
+        status: "incomplete",
+        billingKey: null,
+      });
+      const foreignKey = await storeKey(otherId, "foreign-owner-key");
+      const retiredKey = await storeKey(
+        userId,
+        "already-retired-key",
+        "retired",
+      );
+      const orphanKey = await storeKey(null, "unowned-key");
+      const deletedKey = await storeKey(userId, "already-deleted-key");
+      await db
+        .updateTable("billing_keys")
+        .set({ status: "deleted", billing_key: null, deleted_at: new Date() })
+        .where("id", "=", deletedKey!)
+        .execute();
+      for (const key of [foreignKey, retiredKey, orphanKey, deletedKey]) {
+        await expect(
+          db
+            .updateTable("subscriptions")
+            .set({ billing_key_id: key })
+            .where("id", "=", subId)
+            .execute(),
+        ).rejects.toThrow("subscriptions_active_owned_key_fkey");
+      }
+      const insertOwner = await makeUser();
+      await expect(
+        db
+          .insertInto("subscriptions")
+          .values({
+            user_id: insertOwner,
+            status: "incomplete",
+            amount: 1000,
+            billing_interval: "month",
+            billing_key_id: foreignKey,
+          })
+          .execute(),
+      ).rejects.toThrow("subscriptions_active_owned_key_fkey");
+      const activeKey = await storeKey(userId, "owned-active-key");
+      await db
+        .updateTable("subscriptions")
+        .set({ billing_key_id: activeKey })
+        .where("id", "=", subId)
+        .execute();
+      await expect(
+        db
+          .updateTable("subscriptions")
+          .set({ user_id: otherId })
+          .where("id", "=", subId)
+          .execute(),
+      ).rejects.toThrow("subscriptions_active_owned_key_fkey");
+      await expect(
+        db
+          .updateTable("billing_keys")
+          .set({ user_id: otherId })
+          .where("id", "=", activeKey!)
+          .execute(),
+      ).rejects.toThrow("subscriptions_active_owned_key_fkey");
+      await expect(
+        sql`update subscriptions set billing_key_required_status = 'retired' where id = ${subId}`.execute(
+          db,
+        ),
+      ).rejects.toThrow("can only be updated to DEFAULT");
+      expect((await subscription(subId)).billing_key).toBe("owned-active-key");
+    });
+
+    for (const isolation of ["read committed", "repeatable read"]) {
+      for (const first of ["assignment", "retirement"]) {
+        test(`${isolation}: concurrent ${first} prevents an inactive held key`, async () => {
+          const userId = await makeUser();
+          const subId = await makeSubscription(userId, {
+            status: "incomplete",
+            billingKey: null,
+          });
+          const keyId = await storeKey(userId, `race-${isolation}-${first}`);
+          const leader = await pool.connect();
+          const follower = await pool.connect();
+          let pending: Promise<{ ok: boolean; code?: string }> | undefined;
+          try {
+            await leader.query(`begin isolation level ${isolation}`);
+            await follower.query(`begin isolation level ${isolation}`);
+            // Establish the follower's snapshot before the other writer commits.
+            const {
+              rows: [backend],
+            } = await follower.query(
+              "select pg_backend_pid() as pid, count(*) from billing_keys",
+            );
+            const assign =
+              "update subscriptions set billing_key_id = $1 where id = $2";
+            const retire =
+              "update billing_keys set status = 'retired' where id = $1";
+            await leader.query(
+              first === "assignment" ? assign : retire,
+              first === "assignment" ? [keyId, subId] : [keyId],
+            );
+            pending = follower
+              .query(
+                first === "assignment" ? retire : assign,
+                first === "assignment" ? [keyId] : [keyId, subId],
+              )
+              .then(
+                () => ({ ok: true }),
+                (error: { code: string }) => ({ ok: false, code: error.code }),
+              );
+            // Prove the statements overlap, rather than relying on a sleep.
+            let blocked = false;
+            const deadline = Date.now() + 3000;
+            while (!blocked && Date.now() < deadline) {
+              const {
+                rows: [row],
+              } = await sql<{
+                blocked: boolean;
+              }>`select cardinality(pg_blocking_pids(${backend.pid}::int)) > 0 as blocked`.execute(
+                db,
+              );
+              blocked = row.blocked;
+              if (!blocked)
+                await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            expect(blocked).toBe(true);
+            await leader.query("commit");
+            const result = await pending;
+            expect(result.ok).toBe(false);
+            expect(
+              first === "assignment" ? ["23001", "40001"] : ["23503", "40001"],
+            ).toContain(result.code);
+            await follower.query("rollback");
+            const {
+              rows: [state],
+            } = await sql<{ held: boolean; status: string }>`
+              select s.billing_key_id is not null as held, k.status
+              from subscriptions s cross join billing_keys k
+              where s.id = ${subId} and k.id = ${keyId}
+            `.execute(db);
+            expect(state).toEqual(
+              first === "assignment"
+                ? { held: true, status: "active" }
+                : { held: false, status: "retired" },
+            );
+          } finally {
+            await leader.query("rollback");
+            await pending;
+            await follower.query("rollback");
+            leader.release();
+            follower.release();
+          }
+        });
+      }
+    }
 
     test("subscription billing checks reject invalid intermediate states immediately", async () => {
       const userId = await makeUser();

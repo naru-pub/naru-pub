@@ -216,4 +216,9 @@ Subscription billing fields use immediate `CHECK` constraints: canceled plans
 hold neither a key nor a billing date, and active or scheduled plans have both.
 Cancellation and card replacement update the subscription atomically before
 retiring its old key. Account deletion ends its plan before retiring other keys.
-The cross-table active-key guard remains a deferred database trigger.
+A composite foreign key binds the subscription's key to its user and the
+required `active` key status. The required status is a generated column that
+application writes cannot change. This replaces the former deferred key-status
+trigger and uses PostgreSQL foreign-key locking to protect assignments against
+concurrent retirement or ownership changes. Unowned legacy keys remain stored
+but cannot be attached to a subscription.
