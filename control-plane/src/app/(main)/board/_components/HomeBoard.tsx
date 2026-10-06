@@ -20,30 +20,27 @@ export interface HomePost {
 }
 
 // Templates first: they are what the front page is for.
-const TABS: PostKind[] = ["template", "site", "question", "chat"];
+type HomeBoardTab = Exclude<PostKind, "site">;
+const TABS: HomeBoardTab[] = ["template", "question", "chat"];
 
-const EMPTY: Record<PostKind, { text: string; action: string }> = {
+const EMPTY: Record<HomeBoardTab, { text: string; action: string }> = {
   template: {
-    text: "아직 공유된 템플릿이 없어요.",
+    text: "아직 공유된 템플릿이나 사이트가 없어요.",
     action: "내 사이트를 첫 템플릿으로 공유해 보세요 →",
-  },
-  site: {
-    text: "아직 소개된 사이트가 없어요.",
-    action: "내 사이트를 자랑해 보세요 →",
   },
   question: { text: "아직 질문이 없어요.", action: "질문하기 →" },
   chat: { text: "아직 글이 없어요.", action: "첫 글 쓰기 →" },
 };
 
-// The front page's board card: a pill per kind of post, each showing its
-// newest posts. All four lists arrive with the page, so switching is instant.
+// Templates and showcased sites share the first tab.
+// All three lists arrive with the page, so switching is instant.
 // Templates and showcased sites are pictures in a grid; questions and chat
 // are a list.
-export function HomeBoard({ posts }: { posts: Record<PostKind, HomePost[]> }) {
-  const [kind, setKind] = useState<PostKind>("template");
+export function HomeBoard({ posts }: { posts: Record<HomeBoardTab, HomePost[]> }) {
+  const [kind, setKind] = useState<HomeBoardTab>("template");
   const id = useId();
   const current = posts[kind];
-  const pictures = kind === "template" || kind === "site";
+  const pictures = kind === "template";
 
   return (
     <Card className="bg-card border-2 border-border shadow-lg min-w-0 flex-1 flex flex-col">
@@ -69,12 +66,14 @@ export function HomeBoard({ posts }: { posts: Record<PostKind, HomePost[]> }) {
                     : "shrink-0 whitespace-nowrap rounded-full border border-border bg-background px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground sm:px-4"
                 }
               >
-                {POST_KIND_LABELS[value]}
+                {value === "template"
+                  ? "템플릿 / 사이트 자랑"
+                  : POST_KIND_LABELS[value]}
               </button>
             ))}
           </div>
           <Link
-            href={`/board?kind=${kind}`}
+            href={kind === "template" ? "/board" : `/board?kind=${kind}`}
             className="shrink-0 whitespace-nowrap text-primary text-sm font-medium hover:underline"
           >
             더 보기 →

@@ -155,12 +155,15 @@ export default async function Home() {
     applyCount: post.template ? post.template.applyCount : null,
     thumbnailUrl: postThumbnailUrl(post),
   });
-  const boardPosts = Object.fromEntries(
-    POST_KINDS.map((kind, index) => [
-      kind,
-      latestByKind[index].map(toHomePost),
-    ]),
-  ) as Record<PostKind, HomePost[]>;
+  const latestForKind = (kind: PostKind) => latestByKind[POST_KINDS.indexOf(kind)];
+  const boardPosts = {
+    template: [...latestForKind("template"), ...latestForKind("site")]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 6)
+      .map(toHomePost),
+    question: latestForKind("question").map(toHomePost),
+    chat: latestForKind("chat").map(toHomePost),
+  };
   return (
     <div className="bg-background min-h-screen p-6">
       <div className="mx-auto max-w-7xl space-y-8">
