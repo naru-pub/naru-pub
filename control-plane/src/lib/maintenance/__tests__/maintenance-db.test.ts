@@ -54,6 +54,64 @@ integration("durable maintenance", () => {
     await db.destroy();
   });
 
+  test("interrupted exports recover without resetting live or terminal exports", async () => {
+    const { recoverInterruptedExports } =
+      require("@/lib/export-recovery") as typeof import("@/lib/export-recovery");
+    await db.transaction().execute(async (trx) => {
+      const user = await trx
+        .insertInto("users")
+        .values({
+          login_name: "export-recovery-test",
+          password_hash: "x",
+        })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+      const old = new Date(Date.now() - 36 * 60 * 1000);
+      const rows = await trx
+        .insertInto("home_directory_exports")
+        .values([
+          {
+            user_id: user.id,
+            status: "in_progress",
+            created_at: old,
+            started_at: old,
+          },
+          {
+            user_id: user.id,
+            status: "in_progress",
+            created_at: old,
+            started_at: null,
+          },
+          { user_id: user.id, status: "in_progress", started_at: new Date() },
+          { user_id: user.id, status: "completed", started_at: old },
+          { user_id: user.id, status: "failed", started_at: old },
+        ])
+        .returning("id")
+        .execute();
+      expect(await recoverInterruptedExports(trx)).toBe(2);
+      const recovered = await trx
+        .selectFrom("home_directory_exports")
+        .selectAll()
+        .where(
+          "id",
+          "in",
+          rows.map((row) => row.id),
+        )
+        .execute();
+      const byId = new Map(recovered.map((row) => [row.id, row]));
+      expect(rows.map((row) => byId.get(row.id)?.status)).toEqual([
+        "pending",
+        "pending",
+        "in_progress",
+        "completed",
+        "failed",
+      ]);
+      expect(byId.get(rows[0].id)?.started_at).toBeNull();
+      expect(await recoverInterruptedExports(trx)).toBe(0);
+      await trx.deleteFrom("users").where("id", "=", user.id).execute();
+    });
+  });
+
   test("all schedule commands collapse repeated triggers and catch-up into one slot", async () => {
     await db.transaction().execute(async (trx) => {
       for (const job of MAINTENANCE_JOBS) {

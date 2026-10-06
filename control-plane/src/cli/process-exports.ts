@@ -11,11 +11,13 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { sendExportReadyEmail } from "@/lib/email";
 import archiver from "archiver";
 import { sql } from "kysely";
-import { createWriteStream, createReadStream, unlinkSync } from "fs";
+import { createWriteStream, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Readable } from "stream";
 import { readFile } from "fs/promises";
+import { recoverInterruptedExports } from "@/lib/export-recovery";
+import { appendExportFile } from "@/lib/export-archive";
 
 async function processExport(exportRow: { id: string; user_id: string }) {
   const user = await db
@@ -67,84 +69,104 @@ async function processExport(exportRow: { id: string; user_id: string }) {
   const archiveComplete = new Promise<void>((resolve, reject) => {
     output.on("close", resolve);
     archive.on("error", reject);
+    output.on("error", reject);
   });
 
+  // Observe failures immediately, including while a source is downloading.
+  void archiveComplete.catch(() => {});
   archive.pipe(output);
 
-  // Add files one at a time to avoid socket exhaustion
-  for (const obj of allObjects) {
-    const relativePath = obj.Key.replace(`${userDirectory}/`, "");
-    if (!relativePath || relativePath === obj.Key) continue;
+  try {
+    // Add files one at a time to avoid socket exhaustion
+    for (const obj of allObjects) {
+      const relativePath = obj.Key.replace(`${userDirectory}/`, "");
+      if (!relativePath || relativePath === obj.Key) continue;
 
-    try {
       const response = await s3Client.send(
         new GetObjectCommand({ Bucket: bucketName, Key: obj.Key }),
       );
-
-      if (response.Body) {
-        const nodeStream = Readable.from(response.Body as any);
-        archive.append(nodeStream, { name: relativePath });
-      }
-    } catch (error) {
-      console.error(`[export] Failed to download ${obj.Key}:`, error);
+      if (!response.Body) throw new Error(`Empty response for ${obj.Key}`);
+      // Wait until this entry is consumed before opening another R2 socket.
+      await Promise.race([
+        appendExportFile(
+          archive,
+          Readable.from(response.Body as any),
+          relativePath,
+        ),
+        archiveComplete.then(() => {
+          throw new Error("ZIP output closed before export finished");
+        }),
+      ]);
     }
+
+    await archive.finalize();
+    await archiveComplete;
+
+    // Upload ZIP to R2
+    const timestamp = Date.now();
+    const r2Key = `__exports/${user.login_name}/export-${timestamp}.zip`;
+    const zipBuffer = await readFile(tmpPath);
+
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: bucketName,
+        Key: r2Key,
+        Body: zipBuffer,
+        ContentType: "application/zip",
+      }),
+    );
+
+    // Update row
+    const downloadExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72 hours
+
+    await db
+      .updateTable("home_directory_exports")
+      .set({
+        status: "completed",
+        r2_key: r2Key,
+        size_bytes: zipBuffer.length,
+        download_expires_at: downloadExpiresAt,
+        completed_at: new Date(),
+      })
+      .where("id", "=", exportRow.id)
+      .execute();
+
+    try {
+      // Generate presigned URL for email (72h TTL)
+      const downloadUrl = await getSignedUrl(
+        s3Client as any,
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: r2Key,
+          ResponseContentDisposition: `attachment; filename="${user.login_name}-export.zip"`,
+        }) as any,
+        { expiresIn: 72 * 60 * 60 },
+      );
+      await sendExportReadyEmail(user.email, downloadUrl, user.login_name);
+    } catch (error) {
+      // The ZIP is ready even if email delivery fails.
+      console.error(`[export] Ready email failed for ${exportRow.id}:`, error);
+    }
+
+    console.log(
+      `[export] Completed export ${exportRow.id} for ${user.login_name} (${zipBuffer.length} bytes)`,
+    );
+  } finally {
+    archive.abort();
+    output.destroy();
+    try {
+      unlinkSync(tmpPath);
+    } catch {}
   }
-
-  await archive.finalize();
-  await archiveComplete;
-
-  // Upload ZIP to R2
-  const timestamp = Date.now();
-  const r2Key = `__exports/${user.login_name}/export-${timestamp}.zip`;
-  const zipBuffer = await readFile(tmpPath);
-
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: bucketName,
-      Key: r2Key,
-      Body: zipBuffer,
-      ContentType: "application/zip",
-    }),
-  );
-
-  // Clean up temp file
-  try {
-    unlinkSync(tmpPath);
-  } catch {}
-
-  // Update row
-  const downloadExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72 hours
-
-  await db
-    .updateTable("home_directory_exports")
-    .set({
-      status: "completed",
-      r2_key: r2Key,
-      size_bytes: zipBuffer.length,
-      download_expires_at: downloadExpiresAt,
-      completed_at: new Date(),
-    })
-    .where("id", "=", exportRow.id)
-    .execute();
-
-  // Generate presigned URL for email (72h TTL)
-  const downloadUrl = await getSignedUrl(
-    s3Client as any,
-    new GetObjectCommand({
-      Bucket: bucketName,
-      Key: r2Key,
-      ResponseContentDisposition: `attachment; filename="${user.login_name}-export.zip"`,
-    }) as any,
-    { expiresIn: 72 * 60 * 60 },
-  );
-  await sendExportReadyEmail(user.email, downloadUrl, user.login_name);
-
-  console.log(
-    `[export] Completed export ${exportRow.id} for ${user.login_name} (${zipBuffer.length} bytes)`,
-  );
 }
 
 async function processPendingExports() {
+  // Maintenance serializes runs and kills each child after 30 minutes.
+  // A five-minute margin keeps live attempts out of recovery, while retries
+  // and deployment catch-up can reclaim rows left by killed processes.
+  const recovered = await recoverInterruptedExports(db);
+  if (recovered)
+    console.log(`[export] Requeued ${recovered} interrupted export(s)`);
   const pendingExports = await db
     .selectFrom("home_directory_exports")
     .select(["id", "user_id"])
