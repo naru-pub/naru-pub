@@ -71,12 +71,12 @@ export default async function RootLayout({
                     >
                       게시판
                     </Link>
-                    <Link
+                    {/* <Link
                       href="/docs"
                       className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
                     >
                       길잡이
-                    </Link>
+                    </Link> */}
                     {/* {!entitlement?.isSupporter && (
                       <Link
                         href="/supporter"
