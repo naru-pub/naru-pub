@@ -132,6 +132,7 @@ export async function chargeOrder(opts: {
   amount: number;
   orderId: string;
   orderName: string;
+  customerName: string;
   // A charge for this order went out on an earlier try.
   sentBefore: boolean;
   beforeSend: () => Promise<void>;
@@ -173,6 +174,7 @@ export async function chargeOrder(opts: {
       amount: opts.amount,
       orderId: opts.orderId,
       orderName: opts.orderName,
+      customerName: opts.customerName,
       idempotencyKey: opts.orderId,
     });
   } catch (error) {

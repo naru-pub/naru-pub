@@ -430,6 +430,7 @@ export function chargeBillingKey(params: {
   amount: number;
   orderId: string;
   orderName: string;
+  customerName: string;
   idempotencyKey: string;
 }) {
   const { billingKey, idempotencyKey, ...body } = params;

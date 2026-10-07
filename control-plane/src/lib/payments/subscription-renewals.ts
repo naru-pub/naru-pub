@@ -477,12 +477,18 @@ async function chargeAttempt(
       keepAttemptStatus: true,
     };
   }
+  const account = await db
+    .selectFrom("users")
+    .select("login_name")
+    .where("id", "=", sub.user_id)
+    .executeTakeFirstOrThrow();
   const outcome = await chargeOrder({
     billingKey: sub.billing_key,
     customerKey: sub.customer_key,
     amount: sub.amount,
     orderId: attempt.order_id,
     orderName: PLAN_ORDER_NAMES[sub.billing_interval as BillingInterval],
+    customerName: account.login_name,
     sentBefore: attempt.charge_attempted_at != null,
     // Recorded before the call: an order Toss has not heard of is expired 45
     // minutes after its last attempt, not its creation, so a charge Toss may

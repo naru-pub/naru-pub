@@ -142,6 +142,7 @@ export default async function SupportPage({
               : null
           }
           subscription={subscription}
+          loginName={user.loginName}
           email={user.email}
           emailVerified={hasVerifiedEmail(user)}
         />

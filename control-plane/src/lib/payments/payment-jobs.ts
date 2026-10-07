@@ -565,7 +565,7 @@ async function chargeInitialSubscription(
     // must wait behind paid time acquired in the meantime.
     const account = await db
       .selectFrom("users")
-      .select("supporter_until")
+      .select(["supporter_until", "login_name"])
       .where("id", "=", sub.user_id)
       .executeTakeFirstOrThrow();
     const startsAt = scheduledRecurringStart(
@@ -603,6 +603,7 @@ async function chargeInitialSubscription(
       amount: sub.amount,
       orderId: attempt.order_id,
       orderName: PLAN_ORDER_NAMES[interval],
+      customerName: account.login_name,
       sentBefore: attempt.charge_attempted_at != null,
       beforeSend: async () => {
         await db

@@ -68,6 +68,7 @@ describe("Toss payment requests", () => {
       amount: 1000,
       orderId: "order",
       orderName: "monthly",
+      customerName: "payer",
       idempotencyKey: "order",
     });
 
@@ -75,6 +76,13 @@ describe("Toss payment requests", () => {
       "https://api.tosspayments.com/v1/billing/billing",
       expect.objectContaining({
         headers: expect.objectContaining({ "Idempotency-Key": "order" }),
+        body: JSON.stringify({
+          customerKey: "customer",
+          amount: 1000,
+          orderId: "order",
+          orderName: "monthly",
+          customerName: "payer",
+        }),
       }),
     );
     expect(fetch).toHaveBeenCalledWith(
@@ -138,6 +146,7 @@ describe("Toss payment requests", () => {
           amount: 1000,
           orderId: "order",
           orderName: "monthly",
+          customerName: "payer",
           idempotencyKey: "order",
         }),
     );

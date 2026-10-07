@@ -101,6 +101,7 @@ export default function SupportCard({
   subscription,
   email,
   emailVerified,
+  loginName,
 }: {
   billingClientKey: string;
   paymentClientKey: string;
@@ -110,6 +111,7 @@ export default function SupportCard({
   subscription: SubscriptionInfo | null;
   email: string | null;
   emailVerified: boolean;
+  loginName: string;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -224,6 +226,7 @@ export default function SupportCard({
       const tossPayments = await loadTossPayments(billingClientKey);
       const payment = tossPayments.payment({ customerKey: data.customerKey });
       await payment.requestBillingAuth({
+        customerName: loginName,
         method: "CARD",
         successUrl: `${window.location.origin}/account/subscription/callback/${data.registrationId}`,
         failUrl: `${window.location.origin}/supporter?support=failed&registration=${data.registrationId}`,
@@ -277,6 +280,7 @@ export default function SupportCard({
       const tossPayments = await loadTossPayments(paymentClientKey);
       const payment = tossPayments.payment({ customerKey: data.customerKey });
       await payment.requestPayment({
+        customerName: loginName,
         method: "CARD",
         amount: { currency: "KRW", value: data.amount },
         orderId: data.orderId,
