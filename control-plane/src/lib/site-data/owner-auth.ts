@@ -3,7 +3,13 @@ import { uuidv7 } from "@/lib/uuid";
 import { Kysely, sql } from "kysely";
 import type { DB } from "@/lib/db";
 import { db } from "@/lib/database";
-import { DataError, MAX_COLLECTIONS, name, unreservedName } from "./validation";
+import {
+  DataError,
+  MAX_COLLECTIONS,
+  name,
+  unreservedName,
+  uuidId,
+} from "./validation";
 
 export const TOKEN_SECONDS = 24 * 60 * 60;
 export function tokenLifetime(value: unknown): number {
@@ -183,6 +189,7 @@ export async function updateClient(
   id: string,
   body: Record<string, unknown>,
 ) {
+  id = uuidId(id);
   const names =
     body.collections === undefined
       ? undefined
@@ -279,6 +286,7 @@ export async function registerClient(
   });
 }
 export async function removeClient(userId: string, id: string) {
+  id = uuidId(id);
   await db.transaction().execute(async (tx) => {
     await lockOwner(tx, userId);
     await tx
@@ -289,6 +297,7 @@ export async function removeClient(userId: string, id: string) {
   });
 }
 export async function revokeClientTokens(userId: string, id: string) {
+  id = uuidId(id);
   await db.transaction().execute(async (tx) => {
     await lockOwner(tx, userId);
     const client = await tx

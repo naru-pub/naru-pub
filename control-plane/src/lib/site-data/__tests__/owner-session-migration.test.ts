@@ -1,3 +1,4 @@
+import { down as uuidDown } from "@/migrations/1791346354414_site_data_uuid_columns";
 /** @jest-environment node */
 import { afterAll, beforeAll, describe, expect, test } from "@jest/globals";
 import { sql } from "kysely";
@@ -31,6 +32,7 @@ integration("stable client and owner session migration", () => {
     await db.destroy();
   });
   test("preserves registered callbacks but invalidates old grants; rollback revokes sessions", async () => {
+    await uuidDown(db);
     // Step back past the later drop of the table this migration created.
     await restoreSiteClients(db);
     await down(db);

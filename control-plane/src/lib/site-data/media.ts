@@ -12,7 +12,7 @@ import { db, requestDeadline } from "@/lib/database";
 import { s3Client } from "@/lib/s3";
 import { userHasFeature } from "@/lib/entitlements";
 import { tokenScope } from "./owner-auth";
-import { DataError, name } from "./validation";
+import { DataError, uuidId } from "./validation";
 import { decodeCursor, encodeCursor, sorting } from "./pagination";
 
 export const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
@@ -202,6 +202,7 @@ export async function executeMedia(command: MediaCommand) {
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
       .limit(limit + 1);
+    if (cursor) uuidId(cursor.id);
     if (cursor)
       query = query.where(
         sql<boolean>`(created_at, id) < (${cursor.value}::timestamptz, ${cursor.id})`,
@@ -224,7 +225,7 @@ export async function executeMedia(command: MediaCommand) {
           : null,
     };
   }
-  const id = command.path[0] ? name(command.path[0]) : undefined;
+  const id = command.path[0] ? uuidId(command.path[0]) : undefined;
   if (command.method === "POST" && command.path.length === 0) {
     const input = uploadInput(command.body || {});
     const fileId = uuidv7();

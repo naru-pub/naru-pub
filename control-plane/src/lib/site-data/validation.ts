@@ -149,3 +149,16 @@ export async function jsonBody(
     throw new DataError(400, "Expected a JSON object.");
   }
 }
+
+/** Canonical UUID syntax; accepts historical v4 and current v7 identities. */
+export function uuidId(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  ) {
+    throw new DataError(400, "Invalid UUID identifier.");
+  }
+  return value.toLowerCase();
+}

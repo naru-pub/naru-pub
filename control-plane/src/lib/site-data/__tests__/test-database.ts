@@ -1,3 +1,7 @@
+import {
+  up as uuidUp,
+  down as uuidDown,
+} from "@/migrations/1791346354414_site_data_uuid_columns";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import {
@@ -98,8 +102,10 @@ export async function setupTestDatabase() {
   await dropSiteClientsUp(db);
   await slideTokensUp(db);
   await orderingUp(db);
+  await uuidUp(db);
 }
 export async function teardownTestDatabase() {
+  await uuidDown(db);
   await orderingDown(db);
   await slideTokensDown(db);
   await dropSiteClientsDown(db);
