@@ -5,6 +5,7 @@ import { pool } from "@/lib/database";
 import { noteJobStarted, noteJobResult } from "@/lib/scheduled-jobs";
 import { recordPaymentCronRun } from "@/lib/payments/payment-events";
 import {
+  MAINTENANCE_LOCK_SPACE,
   MAINTENANCE_QUEUE,
   MAINTENANCE_TASK,
   maintenanceJob,
@@ -12,7 +13,6 @@ import {
   type MaintenanceJob,
 } from "./jobs";
 
-const LOCK_SPACE = 0x4d41494e; // MAIN, separate from payment account locks.
 export type ScriptResult = {
   code: number | null;
   timedOut: boolean;
@@ -120,7 +120,7 @@ export async function executeMaintenance(
       rows: [row],
     } = await lock.query<{ locked: boolean }>(
       "select pg_try_advisory_lock($1, hashtext($2)) as locked",
-      [LOCK_SPACE, job.lock ?? job.name],
+      [MAINTENANCE_LOCK_SPACE, job.lock ?? job.name],
     );
     if (!row.locked) return false;
     abort.signal.throwIfAborted();

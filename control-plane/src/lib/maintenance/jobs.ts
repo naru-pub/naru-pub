@@ -1,6 +1,7 @@
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { DB } from "@/lib/db";
 
+export const MAINTENANCE_LOCK_SPACE = 0x4d41494e; // MAIN, separate from payment locks.
 export const MAINTENANCE_QUEUE = "maintenance";
 export const MAINTENANCE_TASK = "maintenance-job-v1";
 export const MAINTENANCE_RETRY_OPTIONS = {

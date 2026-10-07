@@ -37,7 +37,40 @@ integration("scheduled jobs", () => {
       .execute();
   }
 
+  async function withActiveRun(
+    check: (runId: string, unlock: () => Promise<void>) => Promise<void>,
+    taskName = "export-processor",
+    monitoredName = "export-processor",
+  ) {
+    const { MAINTENANCE_LOCK_SPACE, MAINTENANCE_TASK } =
+      require("@/lib/maintenance/jobs") as typeof import("@/lib/maintenance/jobs");
+    await sql`select * from absurd.spawn_task('maintenance', ${MAINTENANCE_TASK},
+      ${JSON.stringify({ name: taskName })}::jsonb, '{}'::jsonb)`.execute(db);
+    const {
+      rows: [run],
+    } = await sql<{ run_id: string }>`
+      select * from absurd.claim_task('maintenance', 'monitor-test', 120, 1)
+    `.execute(db);
+    await db.connection().execute(async (connection) => {
+      await sql`select pg_advisory_lock(${MAINTENANCE_LOCK_SPACE}, hashtext(${monitoredName}))`.execute(
+        connection,
+      );
+      const unlock = async () => {
+        await sql`select pg_advisory_unlock(${MAINTENANCE_LOCK_SPACE}, hashtext(${monitoredName}))`.execute(
+          connection,
+        );
+      };
+      try {
+        await check(run.run_id, unlock);
+      } finally {
+        await unlock();
+      }
+    });
+  }
+
   beforeEach(async () => {
+    await sql`truncate absurd.c_maintenance, absurd.e_maintenance, absurd.r_maintenance,
+      absurd.t_maintenance, absurd.w_maintenance cascade`.execute(db);
     await db.deleteFrom("cron_jobs").execute();
     alerts.sendOperatorAlert.mockReset();
     alerts.sendOperatorAlert.mockResolvedValue(undefined);
@@ -77,6 +110,114 @@ integration("scheduled jobs", () => {
       title: "예약 작업 재개: every-minute",
       lines: [],
     });
+  });
+
+  test("a healthy long export is not stalled, and an existing false alert recovers", async () => {
+    await registerJobs("worker", [
+      { name: "export-processor", everySeconds: 120 },
+    ]);
+    await startedAgo("export-processor", 10 * 60);
+    await withActiveRun(async () => {
+      expect(await checkStalledJobs()).toEqual({ stalled: [], recovered: [] });
+      expect(alerts.sendOperatorAlert).not.toHaveBeenCalled();
+      await db
+        .updateTable("cron_jobs")
+        .set({ stalled_at: new Date() })
+        .where("name", "=", "export-processor")
+        .execute();
+      expect(await checkStalledJobs()).toEqual({
+        stalled: [],
+        recovered: ["export-processor"],
+      });
+      expect(alerts.sendOperatorAlert).toHaveBeenLastCalledWith({
+        title: "예약 작업 재개: export-processor",
+        lines: [],
+      });
+    });
+  });
+
+  test.each([
+    "expired lease",
+    "completed run",
+    "sleeping run",
+    "released lock",
+    "hard timeout",
+  ])("%s does not hide a stalled export schedule", async (reason) => {
+    await registerJobs("worker", [
+      { name: "export-processor", everySeconds: 120 },
+    ]);
+    await startedAgo("export-processor", 10 * 60);
+    await withActiveRun(async (runId, unlock) => {
+      if (reason === "expired lease")
+        await db
+          .updateTable("absurd.r_maintenance")
+          .set({ claim_expires_at: new Date(Date.now() - 1000) })
+          .where("run_id", "=", runId)
+          .execute();
+      if (reason === "completed run" || reason === "sleeping run")
+        await db
+          .updateTable("absurd.r_maintenance")
+          .set({ state: reason === "completed run" ? "completed" : "sleeping" })
+          .where("run_id", "=", runId)
+          .execute();
+      if (reason === "released lock") await unlock();
+      if (reason === "hard timeout")
+        await startedAgo("export-processor", 1800 + 10);
+      expect(await checkStalledJobs()).toEqual({
+        stalled: ["export-processor"],
+        recovered: [],
+      });
+      expect(await checkStalledJobs()).toEqual({ stalled: [], recovered: [] });
+    });
+  });
+
+  test("completion of a long export gives the next schedule its normal grace", async () => {
+    await registerJobs("worker", [
+      { name: "export-processor", everySeconds: 120 },
+    ]);
+    await startedAgo("export-processor", 20 * 60);
+    await withActiveRun(async (runId, unlock) => {
+      await db
+        .updateTable("absurd.r_maintenance")
+        .set({ state: "completed", completed_at: new Date() })
+        .where("run_id", "=", runId)
+        .execute();
+      await db
+        .updateTable("absurd.t_maintenance")
+        .set({ state: "completed" })
+        .where("last_attempt_run", "=", runId)
+        .execute();
+      await unlock();
+      expect(await checkStalledJobs()).toEqual({ stalled: [], recovered: [] });
+      await db
+        .updateTable("absurd.r_maintenance")
+        .set({ completed_at: new Date(Date.now() - 8 * 60 * 1000) })
+        .where("run_id", "=", runId)
+        .execute();
+      expect(await checkStalledJobs()).toEqual({
+        stalled: ["export-processor"],
+        recovered: [],
+      });
+    });
+  });
+
+  test("template previews share screenshot monitoring but cannot suppress another job", async () => {
+    await registerJobs("worker", [
+      { name: "screenshot-updater", everySeconds: 60 },
+      { name: "export-processor", everySeconds: 120 },
+    ]);
+    await startedAgo("screenshot-updater", 8 * 60);
+    await startedAgo("export-processor", 10 * 60);
+    await withActiveRun(
+      async () => {
+        expect(await checkStalledJobs()).toEqual({
+          stalled: ["export-processor"],
+          recovered: [],
+        });
+      },
+      "template-preview",
+      "screenshot-updater",
+    );
   });
 
   test("an alert that cannot be posted is tried again", async () => {

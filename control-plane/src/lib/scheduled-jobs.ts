@@ -5,6 +5,12 @@ import {
   sendOperatorAlert,
 } from "@/lib/operator-alerts";
 
+import {
+  MAINTENANCE_JOBS,
+  MAINTENANCE_LOCK_SPACE,
+  MAINTENANCE_TASK,
+} from "@/lib/maintenance/jobs";
+
 // pg_cron produces durable tasks; workers record starts and check for missing
 // schedules. Failure/recovery alert state is persisted across restarts.
 
@@ -91,6 +97,47 @@ export async function checkStalledJobs(): Promise<{
   recovered: string[];
 }> {
   return db.transaction().execute(async (trx) => {
+    // A schedule interval is not an execution deadline. Exempt only bounded,
+    // live maintenance runs: a renewed Absurd lease plus the execution lock.
+    // Waiting/sleeping tasks cannot suppress a missing-schedule alert, and a
+    // frozen worker loses its exemption when its lease expires.
+    const activeRuns = sql`
+      SELECT jobs.name
+      FROM jsonb_to_recordset(${JSON.stringify(MAINTENANCE_JOBS.map((job) => ({ name: job.name, timeout: job.timeout })))}::jsonb)
+        AS jobs(name text, timeout integer)
+      JOIN cron_jobs monitored ON monitored.name = jobs.name AND monitored.process = 'worker'
+      WHERE monitored.last_started_at > now() - make_interval(secs => jobs.timeout + 5)
+        AND EXISTS (
+          SELECT 1 FROM absurd.t_maintenance task
+          JOIN absurd.r_maintenance run ON run.run_id = task.last_attempt_run
+          WHERE task.task_name = ${MAINTENANCE_TASK}
+            AND task.state = 'running' AND run.state = 'running'
+            AND run.claim_expires_at > now()
+            AND (task.params->>'name' = jobs.name
+              OR (jobs.name = 'screenshot-updater' AND task.params->>'name' = 'template-preview'))
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_locks execution
+          WHERE execution.locktype = 'advisory' AND execution.granted
+            AND execution.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+            AND execution.classid = ${MAINTENANCE_LOCK_SPACE}::oid
+            AND execution.objid = (hashtext(jobs.name)::bigint & 4294967295)::oid
+            AND execution.objsubid = 2
+        )
+      UNION
+      -- Completion is activity too: allow the next schedule its normal grace
+      -- after a long run finishes, rather than immediately flagging its old start.
+      SELECT monitored.name FROM cron_jobs monitored
+      JOIN absurd.t_maintenance task ON task.task_name = ${MAINTENANCE_TASK}
+      JOIN absurd.r_maintenance run ON run.run_id = task.last_attempt_run
+      WHERE monitored.process = 'worker'
+        AND task.state = 'completed' AND run.state = 'completed'
+        AND run.completed_at > now() - make_interval(
+          secs => monitored.every_seconds + greatest(300, round(monitored.every_seconds / 10.0))
+        )
+        AND (task.params->>'name' = monitored.name
+          OR (monitored.name = 'screenshot-updater' AND task.params->>'name' = 'template-preview'))
+    `;
     const stalled = await sql<{
       name: string;
       process: string;
@@ -99,6 +146,7 @@ export async function checkStalledJobs(): Promise<{
     }>`
       UPDATE cron_jobs SET stalled_at = now()
       WHERE stalled_at IS NULL
+        AND name NOT IN (${activeRuns})
         AND last_started_at < now() - make_interval(
           secs => every_seconds + greatest(300, round(every_seconds / 10.0))
         )
@@ -106,7 +154,8 @@ export async function checkStalledJobs(): Promise<{
     `.execute(trx);
     const recovered = await sql<{ name: string; process: string }>`
       UPDATE cron_jobs SET stalled_at = NULL
-      WHERE stalled_at IS NOT NULL AND last_started_at > stalled_at
+      WHERE stalled_at IS NOT NULL
+        AND (last_started_at > stalled_at OR name IN (${activeRuns}))
       RETURNING name, process
     `.execute(trx);
 
