@@ -64,10 +64,10 @@ function SignedOutSupportCard() {
 
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button asChild className="flex-1">
-            <Link href="/login?next=/support">로그인하고 결제하기</Link>
+            <Link href="/login?next=/supporter">로그인하고 결제하기</Link>
           </Button>
           <Button asChild variant="outline" className="flex-1">
-            <Link href="/signup?next=/support">회원가입</Link>
+            <Link href="/signup?next=/supporter">회원가입</Link>
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -149,7 +149,7 @@ export default async function SupportPage({
         <SupportPolicy />
         <div className="flex justify-end">
           <Button asChild variant="outline">
-            <Link href="/support/payments">
+            <Link href="/supporter/payments">
               <ReceiptText size={16} />
               결제 내역 보기
             </Link>

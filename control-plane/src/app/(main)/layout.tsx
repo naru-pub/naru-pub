@@ -9,7 +9,7 @@ import { getHomepageUrl } from "@/lib/site-urls";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
 import { LoadingBar } from "@/components/LoadingBar";
-import { hasSupportRelationship, PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
+import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
 import { getUserFeatures, type Feature } from "@/lib/entitlements";
 import { AccountMenu, DocsMenu, ExtensionsMenu } from "@/components/NavMenus";
 
@@ -24,12 +24,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const { user } = await validateRequest();
-  const [features, supportRelationship] = user
-    ? await Promise.all([
-        getUserFeatures(user.id),
-        hasSupportRelationship(user.id),
-      ])
-    : [new Set<Feature>(), false];
+  const features = user ? await getUserFeatures(user.id) : new Set<Feature>();
 
   return (
     <html lang="ko" suppressHydrationWarning>
@@ -88,7 +83,6 @@ export default async function RootLayout({
                         />
                         <AccountMenu
                           loginName={user.loginName}
-                          supporter={supportRelationship}
                           paymentOperator={PAYMENT_OPERATOR_USERS.has(
                             user.loginName,
                           )}
@@ -96,6 +90,12 @@ export default async function RootLayout({
                       </>
                     ) : (
                       <>
+                        <Link
+                          href="/supporter"
+                          className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+                        >
+                          결제
+                        </Link>
                         <Link
                           href="/login"
                           className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"

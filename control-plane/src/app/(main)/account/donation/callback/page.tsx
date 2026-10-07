@@ -19,7 +19,7 @@ function Callback() {
 
     // Toss omits these on cancel/failure.
     if (!paymentKey || !orderId || !amount) {
-      router.replace("/support?support=canceled");
+      router.replace("/supporter?support=canceled");
       return;
     }
 
@@ -39,15 +39,15 @@ function Callback() {
           if (res.ok && data.success) {
             router.replace(
               data.chargeQueued
-                ? `/support?processing=${encodeURIComponent(data.paymentId)}`
-                : "/support?support=success",
+                ? `/supporter?processing=${encodeURIComponent(data.paymentId)}`
+                : "/supporter?support=success",
             );
             return;
           }
           if (res.status !== 503) {
             const query = new URLSearchParams({ support: "failed" });
             if (data.message) query.set("message", data.message);
-            router.replace(`/support?${query}`);
+            router.replace(`/supporter?${query}`);
             return;
           }
           setMessage(data.message);

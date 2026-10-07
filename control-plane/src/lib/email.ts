@@ -56,7 +56,7 @@ async function sendPaymentMail(
   }
 }
 
-// `next` is a page to continue to once verified (safeNextPath): /support when
+// `next` is a page to continue to once verified (safeNextPath): /supporter when
 // the mail was asked for from the purchase page.
 export async function sendVerificationEmail(
   email: string,
@@ -284,8 +284,8 @@ export async function sendSubscriptionRenewalNoticeEmail(opts: {
   amount: number;
   nextBillingAt: Date;
 }) {
-  // Card change, cancel and re-subscribe live on /support, not /account.
-  const accountUrl = `${process.env.BASE_URL}/support`;
+  // Card change, cancel and re-subscribe live on /supporter, not /account.
+  const accountUrl = `${process.env.BASE_URL}/supporter`;
   const nextBillingLabel = formatKoreanDateTime(opts.nextBillingAt);
   const amountLabel = formatKrw(opts.amount);
 
@@ -348,8 +348,8 @@ export async function sendSubscriptionPaymentGraceEmail(opts: {
   amount: number;
   graceEndsAt: Date;
 }) {
-  // Card change, cancel and re-subscribe live on /support, not /account.
-  const accountUrl = `${process.env.BASE_URL}/support`;
+  // Card change, cancel and re-subscribe live on /supporter, not /account.
+  const accountUrl = `${process.env.BASE_URL}/supporter`;
   const graceEndsLabel = formatKoreanDateTime(opts.graceEndsAt);
   const amountLabel = formatKrw(opts.amount);
 
@@ -412,8 +412,8 @@ export async function sendSupportThankYouEmail(opts: {
   amount: number;
   supporterUntil: Date;
 }) {
-  // Card change, cancel and re-subscribe live on /support, not /account.
-  const accountUrl = `${process.env.BASE_URL}/support`;
+  // Card change, cancel and re-subscribe live on /supporter, not /account.
+  const accountUrl = `${process.env.BASE_URL}/supporter`;
   const supporterUntilLabel = formatKoreanDateTime(opts.supporterUntil);
   const amountLabel = formatKrw(opts.amount);
   const kindLabel = opts.kind === "recurring" ? "정기 결제" : "한 번만 결제";
@@ -485,7 +485,7 @@ export async function sendRecurringChargeReceiptEmail(opts: {
   nextBillingAt: Date | null;
   receiptUrl: string | null;
 }) {
-  const paymentsUrl = `${process.env.BASE_URL}/support/payments`;
+  const paymentsUrl = `${process.env.BASE_URL}/supporter/payments`;
   const amountLabel = formatKrw(opts.amount);
   const paidAtLabel = formatKoreanDateTime(opts.paidAt);
   const periodLabel = `${formatKoreanDateTime(opts.periodStart)} ~ ${formatKoreanDateTime(opts.periodEnd)}`;
@@ -567,7 +567,7 @@ export async function sendPaymentCanceledEmail(opts: {
   // Whether this refund also stopped recurring billing.
   subscriptionCanceled: boolean;
 }) {
-  const paymentsUrl = `${process.env.BASE_URL}/support/payments`;
+  const paymentsUrl = `${process.env.BASE_URL}/supporter/payments`;
   const amountLabel = formatKrw(opts.amount);
   const refundedLabel = formatKrw(opts.refundedAmount);
   const refundedAtLabel = formatKoreanDateTime(opts.refundedAt);
@@ -659,7 +659,7 @@ export async function sendSubscriptionCanceledEmail(opts: {
   // Where paid access ends; null when there is none left.
   supporterUntil: Date | null;
 }) {
-  const paymentsUrl = `${process.env.BASE_URL}/support/payments`;
+  const paymentsUrl = `${process.env.BASE_URL}/supporter/payments`;
   const canceledAtLabel = formatKoreanDateTime(opts.canceledAt);
   const scheduled = opts.reason === "user_schedule";
   const title = scheduled
@@ -754,8 +754,8 @@ export async function sendSubscriptionPastDueEmail(opts: {
   // when no date applies, as for a comp.
   accessEndsAt: Date | null | undefined;
 }) {
-  // Card change, cancel and re-subscribe live on /support, not /account.
-  const accountUrl = `${process.env.BASE_URL}/support`;
+  // Card change, cancel and re-subscribe live on /supporter, not /account.
+  const accountUrl = `${process.env.BASE_URL}/supporter`;
   const amountLabel = formatKrw(opts.amount);
   const intro =
     opts.reason === "declined"

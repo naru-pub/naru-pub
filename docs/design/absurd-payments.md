@@ -162,7 +162,7 @@ identity/reason audit event commit together. Recovery never executes money in HT
 
 The one-time callback validates the authenticated user's stored order and amount,
 then commits `toss_payment_key` and a deduplicated `confirm_one_time` task together.
-It returns 202 with the payment ID; the callback opens `/support` with a
+It returns 202 with the payment ID; the callback opens `/supporter` with a
 processing modal that polls the owner-only, uncached payment status endpoint.
 The modal displays completion, failure, scheduled start, or operator attention
 and refreshes the support status on a final result. Transient connection errors keep polling;

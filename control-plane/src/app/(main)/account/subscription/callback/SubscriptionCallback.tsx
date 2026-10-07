@@ -22,7 +22,7 @@ function Callback({ registrationId }: { registrationId: string | null }) {
     // Toss redirects here without authKey when the card registration is
     // cancelled or fails.
     if (!authKey || !customerKey) {
-      router.replace("/support?support=canceled");
+      router.replace("/supporter?support=canceled");
       return;
     }
 
@@ -39,20 +39,20 @@ function Callback({ registrationId }: { registrationId: string | null }) {
             router.replace(
               data.cardChanged
                 ? data.renewalQueued
-                  ? "/support?support=card-changed-pending"
-                  : "/support?support=card-changed"
+                  ? "/supporter?support=card-changed-pending"
+                  : "/supporter?support=card-changed"
                 : data.scheduled
-                  ? "/support?support=scheduled"
+                  ? "/supporter?support=scheduled"
                   : data.chargeQueued
-                    ? `/support?processing=${encodeURIComponent(data.paymentId)}`
-                    : "/support?support=success",
+                    ? `/supporter?processing=${encodeURIComponent(data.paymentId)}`
+                    : "/supporter?support=success",
             );
             return;
           }
           if (res.status !== 503) {
             const query = new URLSearchParams({ support: "failed" });
             if (data.message) query.set("message", data.message);
-            router.replace(`/support?${query}`);
+            router.replace(`/supporter?${query}`);
             return;
           }
           setMessage(data.message);

@@ -2,22 +2,22 @@
 
 결제 코드는 `control-plane/src/lib/payments/`에, 그 테스트는 `control-plane/src/lib/payments/__tests__/`에 있습니다.
 
-유료 기능은 **시간 기반 엔티틀먼트**로 제어됩니다. 영구 무료 제공 계정은 `users.supporter_comp`(이런 계정은 남아 있는 정기 결제가 있어도 갱신 청구·갱신 예정 안내를 하지 않고, `/support`에서 그 정기 결제를 해지할 수 있습니다), 결제로 얻은 유료 기간은 `users.supporter_until`(유료 기간이 끝나는 시각)로 나타냅니다. 접근 권한 = `supporter_comp OR supporter_until + PAYMENT_GRACE_DAYS > now()`입니다. 즉 `supporter_until`은 유료 기간 경계로 남고, 결제 유예 기간 동안은 유료 기능도 계속 열려 있습니다.
+유료 기능은 **시간 기반 엔티틀먼트**로 제어됩니다. 영구 무료 제공 계정은 `users.supporter_comp`(이런 계정은 남아 있는 정기 결제가 있어도 갱신 청구·갱신 예정 안내를 하지 않고, `/supporter`에서 그 정기 결제를 해지할 수 있습니다), 결제로 얻은 유료 기간은 `users.supporter_until`(유료 기간이 끝나는 시각)로 나타냅니다. 접근 권한 = `supporter_comp OR supporter_until + PAYMENT_GRACE_DAYS > now()`입니다. 즉 `supporter_until`은 유료 기간 경계로 남고, 결제 유예 기간 동안은 유료 기능도 계속 열려 있습니다.
 
 기능 묶음은 `lib/entitlements.ts`의 `PLAN_FEATURES`에 정의됩니다. 지금은 `supporter → [custom_domains, github_deploys, analytics]`입니다. 새 플랜은 키를 추가해 확장합니다.
 
-유료 기능 설정은 `/domains`(커스텀 도메인)과 `/deploys`(GitHub 배포)에서 관리합니다. 결제 흐름은 `/support`에 남겨둡니다. `/support`는 광고하지 않습니다 — 결제한 적 없는 방문자에게는 어디에도 보이지 않고, 카드사 심사관은 주소를 직접 받습니다. 다만 결제한 적이 있거나 현재 유료 기능을 이용 중인 계정에는 계정 메뉴에 '결제'가 뜹니다(`hasSupportRelationship`). 결제 내역·정기 결제 취소·환불 신청이 모두 그 아래에 있어서, 링크가 없으면 판매 정책에 적어 둔 환불 창구가 주소를 아는 사람에게만 열립니다.
+유료 기능 설정은 `/domains`(커스텀 도메인)과 `/deploys`(GitHub 배포)에서 관리합니다. 결제 흐름은 `/supporter`에 있습니다. 비회원에게는 상단 메뉴에, 로그인한 모든 계정에는 계정 메뉴에 결제 링크를 보여 줍니다. 비회원도 상품·가격·판매 정책을 확인하고 로그인 또는 회원가입 후 결제를 계속할 수 있습니다. 결제 내역·정기 결제 취소·환불 신청은 `/supporter/payments`에서 이용합니다. 이전 `/support` 경로는 리다이렉트 없이 제거했습니다.
 
 결제는 **Toss Payments 자동결제(빌링)** 입니다. 월 1,000원 / 연 10,000원.
 
-- **이메일 인증 선행**: 결제를 시작하려면 인증된 이메일 주소가 있어야 합니다. `subscription/prepare`와 `donation/one-time/prepare`는 `users.email`과 `users.email_verified_at`이 모두 채워져 있지 않으면 403을 반환하고, `/support`의 결제 카드도 결제 버튼 대신 인증 안내와 인증 메일 재발송 버튼을 보여줍니다. 영수증, 갱신 예정 안내, 결제 실패 안내를 반드시 전달할 수 있어야 하기 때문입니다.
+- **이메일 인증 선행**: 결제를 시작하려면 인증된 이메일 주소가 있어야 합니다. `subscription/prepare`와 `donation/one-time/prepare`는 `users.email`과 `users.email_verified_at`이 모두 채워져 있지 않으면 403을 반환하고, `/supporter`의 결제 카드도 결제 버튼 대신 인증 안내와 인증 메일 재발송 버튼을 보여줍니다. 영수증, 갱신 예정 안내, 결제 실패 안내를 반드시 전달할 수 있어야 하기 때문입니다.
 - **구독 시작**: `subscription/prepare`가 카드 등록(`card_registrations`, 종류 `signup`과 고른 주기)을 기록하고 `customerKey`를 반환 → 프런트가 `requestBillingAuth`로 카드 등록 → `/account/subscription/callback/<등록 번호>`가 `subscription/confirm` 호출 → 빌링키 발급, 새 정기 결제(`subscriptions` 한 행) 시작, 첫 결제, `active`로, `supporter_until`을 채웁니다. 두 단계의 로직은 `lib/payments/subscription-signup.ts`에 있고 라우트는 HTTP로 옮기기만 합니다. 정기 결제는 가입마다 새 행입니다 — 끝난 정기 결제를 되살리거나 고쳐 쓰지 않으므로, 옛 정기 결제의 결제가 늦게 확인돼도 그 옛 행에 기간만 부여되고 새 정기 결제는 건드리지 않습니다. 한 계정에 진행 중인(`incomplete`·`active`·`scheduled`·`past_due`) 정기 결제는 하나뿐이고(유일 인덱스), 가장 최근 행이 그 계정의 현재 정기 결제입니다(`plansOf`). 남은 유료 기간이 있으면 첫 결제는 그 기간이 끝나는 시각으로 예약(`scheduled`)됩니다. 가입의 각 단계는 계정 잠금(아래 '결제 작업의 직렬화') 안에서 돌므로 콜백이 두 번 호출돼도 한 번만 청구하고, 브라우저 기록에 남은 옛 콜백은 등록 번호가 맞지 않아 거절됩니다. prepare는 등록만 적고 정기 결제는 그대로 둡니다 — 카드 창을 닫으면 끝난 정기 결제나 `past_due`가 그대로 남습니다. confirm이 새 키를 받은 뒤에야 진행 중이던 정기 결제(`incomplete`·`past_due`)를 끝내고 옛 키를 폐기한 뒤 새 정기 결제를 만듭니다(`adoptSignupKey`). 금액은 항상 서버(`lib/payments/toss.ts`의 `PLAN_AMOUNTS`)에서 결정합니다.
   - prepare는 기존 구독의 결과가 불분명한(`pending`) 주문을 먼저 대사합니다. 여전히 불분명하면 409로 거절합니다 — 새 카드가 옛 주문번호·멱등키로 청구되거나, 늦게 확인된 옛 결제가 새 카드 등록과 엇갈리지 않게 하려는 것입니다. 다른 결제 작업이 계정 잠금을 잡고 있으면 409로 기다리게 합니다.
   - 빌링키 발급 요청은 `authKey`에서 만든 멱등키를 씁니다. `authKey`는 한 번만 쓸 수 있으므로 응답을 잃고 다시 요청하면 이미 발급된 키를 그대로 돌려받아야 합니다. 발급이 명확히 거절되면(만료·재사용된 `authKey`, 카드 거절) 402로 사유를 돌려줍니다.
   - 그 멱등키 때문에 Toss는 같은 `authKey`에 15일 동안 처음 발급한 키를 다시 돌려줍니다. 그래서 prepare마다 카드 등록을 새로 만들어 그 번호를 콜백 주소에 넣고, confirm은 그 계정의 가장 최근 등록으로 온 콜백만 받습니다. 새로 prepare한 뒤에 옛 콜백 주소를 다시 열어도 이미 폐기한 옛 카드의 키를 되살려 쓰지 않습니다. Toss가 돌려준 키가 이미 폐기된 키면(같은 키의 해시가 `billing_keys`에 `retired`·`deleted`로 있으면) 쓰지 않습니다.
   - 발급된 키는 그 등록이 아직 가장 최근이고 계정이 가입할 수 있을 때만 새 정기 결제에 줍니다. 취소는 같은 계정 잠금을 기다린 뒤 그때의 현재 정기 결제를 찾으므로, 가입 도중에 누른 취소는 가입이 끝난 뒤 그 새 정기 결제를 끝냅니다. 쓸 데가 없어진 키만 곧바로 Toss에서 지웁니다(`discardIssuedBillingKey`). 청구 직전에도 정기 결제가 그대로인지 다시 확인합니다.
   - 첫 결제가 명확히 실패하면(카드 거절, Toss가 `ABORTED`·`EXPIRED`로 끝낸 주문 — 대사든 웹훅이든) 그 가입에 쓴 빌링키를 곧바로 폐기하고(`retireUnusedSignupKey`, 계정 잠금 안에서) 정기 결제는 키 없는 `incomplete`로 남습니다. 그 등록은 이미 정기 결제를 시작했으므로, 콜백을 다시 열어도 Toss에 묻지 않고 '처음부터 다시'를 안내합니다 — Toss는 같은 `authKey`에 방금 폐기한 키를 15일 동안 그대로 돌려줍니다. 다음 가입이 그 `incomplete`를 끝냅니다. 승인도 거절도 아닌 응답(예: `IN_PROGRESS`)은 결과 불분명으로 두고 키와 주문을 지키며, 다시 열린 콜백은 받아 둔 키로 같은 주문을 다시 확인합니다. 대사가 그 주문이 Toss에 없거나 거절됐다고 확인하면 그때 키를 폐기합니다.
-- **카드 변경**: 빌링키의 유효기간은 연결된 카드의 유효기간과 같고, Toss에는 키를 갱신하는 방법이 없습니다 — 재발급된 카드는 키를 새로 발급받아야 합니다. `active`·`scheduled` 구독은 `/support`의 '카드 변경'으로 카드를 바꿉니다. `subscription/card/prepare`(`prepareCardChange`)가 결과가 불분명한 주문을 먼저 대사하고(남아 있으면 409 — 옛 카드로 청구한 주문번호를 새 카드로 다시 청구하지 않게) 종류가 `card_change`인 카드 등록을 만들면, 가입과 같은 콜백과 `subscription/confirm`이 계정 잠금 안에서 새 키를 발급받아 옛 키와 바꿉니다. 옛 키는 `retireBillingKey`로 폐기합니다. 갱신이 실패해 재시도 중이던(`next_billing_at`이 지난) 구독은 바꾼 카드로 곧바로 한 번 청구합니다. 옛 카드가 거절한 주문(`aborted`)이 남아 있어도 실패로 한 번 더 세지 않고 새 주문번호로 새 카드에 청구합니다. 밀린 갱신을 새 카드로 청구했는데도 결제되지 않았으면 응답과 화면이 그렇게 알립니다. `past_due` 구독은 카드 변경이 아니라 다시 가입(prepare)으로 새 카드를 등록하고 곧바로 결제합니다. `/support`는 `past_due`에도 상태와 '정기 결제 해지'를 보여 주므로, 다시 가입하지 않을 사람은 남아 있는 빌링키를 지울 수 있습니다.
+- **카드 변경**: 빌링키의 유효기간은 연결된 카드의 유효기간과 같고, Toss에는 키를 갱신하는 방법이 없습니다 — 재발급된 카드는 키를 새로 발급받아야 합니다. `active`·`scheduled` 구독은 `/supporter`의 '카드 변경'으로 카드를 바꿉니다. `subscription/card/prepare`(`prepareCardChange`)가 결과가 불분명한 주문을 먼저 대사하고(남아 있으면 409 — 옛 카드로 청구한 주문번호를 새 카드로 다시 청구하지 않게) 종류가 `card_change`인 카드 등록을 만들면, 가입과 같은 콜백과 `subscription/confirm`이 계정 잠금 안에서 새 키를 발급받아 옛 키와 바꿉니다. 옛 키는 `retireBillingKey`로 폐기합니다. 갱신이 실패해 재시도 중이던(`next_billing_at`이 지난) 구독은 바꾼 카드로 곧바로 한 번 청구합니다. 옛 카드가 거절한 주문(`aborted`)이 남아 있어도 실패로 한 번 더 세지 않고 새 주문번호로 새 카드에 청구합니다. 밀린 갱신을 새 카드로 청구했는데도 결제되지 않았으면 응답과 화면이 그렇게 알립니다. `past_due` 구독은 카드 변경이 아니라 다시 가입(prepare)으로 새 카드를 등록하고 곧바로 결제합니다. `/supporter`는 `past_due`에도 상태와 '정기 결제 해지'를 보여 주므로, 다시 가입하지 않을 사람은 남아 있는 빌링키를 지울 수 있습니다.
 - **자동 갱신**: pg_cron이 매시 정각에 넣은 Absurd 작업 `enqueue_due_renewals`를 결제 worker가 실행해 매일 오전 9시(KST)까지 `next_billing_at`이 된 활성 구독마다 갱신 작업(`renew_subscription`, 아래 '결제 작업 대기열')을 넣고, 계속 실행 중인 Absurd worker가 받아 빌링키로 청구하고 기간을 연장합니다. 작업의 중복 키는 구독과 그날 9시라서 한 구독은 하루에 한 작업만 생기고, 작업은 계정 잠금 안에서 구독이 아직 기한이 됐는지 다시 확인한 뒤에야 청구합니다. 계정이 바쁘거나 오류가 나면 다음 정각이 아니라 작업 대기열이 몇 분 안에 다시 시도합니다. 작업은 매시 정각에 돌지만 그날 9시까지 기한이 된 구독만, 한 구독은 하루(20시간)에 한 번만 시도하므로, 9시 실행이 배포나 데이터베이스 문제로 빠져도 그날 안에 메워지고 유예 기간 안의 재시도는 하루 간격을 지킵니다. 9시가 지나 기한이 된 구독은 다음 날 9시에 청구합니다. 카드 변경과 결제 실험실의 즉시 청구는 이 규칙을 따르지 않습니다. 한 번 실행에서 기한이 된 구독을 10개씩 모두 처리하고(같은 실행 안에서 한 구독을 두 번 시도하지는 않음), 자동결제 승인은 최대 60초가 걸리므로 Toss 요청은 90초 뒤에 포기해 결과 불분명으로 다룹니다. 구독마다 계정 잠금을 기다리지 않고 잡아 청구하며, 다른 결제 작업 중인 계정은 다음 실행으로 넘깁니다. 한 구독에서 오류(데이터베이스 오류 등)가 나면 로그를 남기고 나머지를 계속 청구합니다. Toss에 아무것도 보내지 못한 채(조회부터 실패) 끝난 시도는 유예 기간이 지나도 `past_due`로 바꾸지 않고 다음 날 다시 시도합니다 — 카드는 한 번도 시도되지 않았습니다. 실패 시 결제 유예 기간 안에서 `MAX_PAYMENT_RETRY_ATTEMPTS`까지 재시도합니다. 재시도 한도나 유예 기간 끝에 도달하면 `past_due`로 전환됩니다. 예약된 첫 결제가 실패하면 재시도하는 동안 `scheduled`로 남습니다. 청구 직전에 구독이 아직 청구 가능한지 다시 확인하고, 청구 도중 취소·환불·한 번만 결제 전환이 일어나면 그 상태를 덮어쓰지 않습니다 — 이미 청구된 돈의 기간은 부여하되 자동 갱신은 되살리지 않습니다. 어떤 청구도 `supporter_until`을 줄이지 않고, 한 번만 결제로 앞서 쌓인 기간 뒤에 이어 붙입니다. 월 단위 기간은 달의 마지막 날로 맞추고(1월 31일 → 2월 28일), 서버 시간대와 관계없이 한국 시간 달력으로 셉니다. 청구 로직은 `lib/payments/subscription-renewals.ts`에 있습니다. Toss는 한 번 쓴 `orderId`를 다시 받지 않고, 멱등키마다 첫 응답(에러 포함)을 15일 동안 그대로 돌려줍니다. 그래서 결과가 불분명한 `pending` 주문은 같은 주문번호·멱등키로 다시 확인하고, 대사가 Toss에 없는 주문이라고 확인해 `expired`로 만든 뒤에는 새 주문번호로 청구합니다(`attempt_key`에 `:r1`, `:r2`…). Toss가 `ABORTED`(승인 거절)로 알려 준 주문은 다시 청구하지 않고 실패 1회로 셉니다. 결과가 불분명한 청구는 실패로 세지 않지만(주문번호를 바꾸면 이중 청구가 될 수 있으므로), 유예 기간이 끝나면 `past_due`로 바꿉니다. 그 주문이 나중에 결제 완료로 확인되면 대사가 다시 `active`로 돌립니다. 빌링키가 없는 구독(새 카드 등록 중에 옛 갱신이 늦게 확인된 경우)은 기간만 부여하고 `active`로 바꾸지 않아, 새 카드의 confirm이 키를 저장하고 첫 결제를 예약할 수 있게 합니다. 이미 `pending`이 아닌 주문(만료·실패·환불)에는 기간을 다시 부여하지 않습니다. 그런 주문을 Toss가 승인했다고 답하면 돈은 나갔는데 기간도 없고 다시 볼 경로도 없으므로, `charge_orphaned`(결제됐으나 기간 미부여) 이벤트로 따로 남겨 운영자 메일과 `/admin` 개요의 빨간 칸(`/admin/payments?filter=orphaned`)에 띄웁니다. 그 결제 행의 'Toss에서 복구'(`recoverOrphanedCharge`)는 Toss에서 결제 완료(`DONE`)로 확인되면 행을 `pending`으로 되돌리고 보통의 대사로 기간·영수증을 부여합니다 — 완료된 결제가 되므로, 돌려줘야 하면 그 뒤 '환불'을 누릅니다(정기 결제도 함께 끝납니다). Toss에서 완료되지 않은 주문은 그대로 둡니다. 복구되면 빨간 칸에서도 빠집니다.
 - **실패 판정**: Toss가 오류로 답해도 곧바로 결제 실패로 적지 않습니다. 오류가 온 주문을 `GET /v1/payments/orders/{orderId}`로 다시 조회해(`lib/payments/toss-gateway.ts`의 `settleOrder`), 승인됐으면(`DONE`) 성공으로 처리하고, Toss가 `ABORTED`·`EXPIRED`로 끝냈거나 카드 거절 같은 '결제 자체에 대한' 거절인데 주문이 Toss에 없을 때만 실패로 적습니다. 그 밖에는 결과 불분명으로 `pending`에 남깁니다. `failed`로 적힌 결제는 대사가 다시 보지 않으므로, 승인된 결제를 실패로 적으면 돈은 나갔는데 기간이 부여되지 않기 때문입니다. 4xx라도 카드에 대한 판정이 아닌 응답 — `PROVIDER_ERROR`(일시적인 오류), `ALREADY_PROCESSING_REQUEST`·`ALREADY_PROCESSED_PAYMENT`, 401·`FORBIDDEN_REQUEST`·`INVALID_API_KEY` 같은 키 설정 오류, `INVALID_REQUEST`·`NOT_MATCHES_CUSTOMER_KEY` 같은 나루 쪽 요청 오류, `NOT_FOUND_TERMINAL_ID`·`NOT_FOUND_MERCHANT`·`API_VERSION_UPDATE_NEEDED` 같은 상점 설정 오류, 429 — 는 결과 불분명입니다(`isDefinitiveTossFailure`). 주문 조회의 404도 `NOT_FOUND_PAYMENT`일 때만 'Toss에 없는 주문'으로 보고, 빌링키 삭제의 404도 `NOT_FOUND_BILLING`일 때만 '이미 지워진 키'로 봅니다. 다른 404(`NOT_FOUND_MERCHANT` 등)는 키가 MID와 맞지 않는다는 뜻일 뿐이라, 승인된 주문을 만료하거나 아직 청구할 수 있는 키를 지워진 것으로 적지 않도록 결과 불분명·삭제 실패로 둡니다. 그래서 시크릿 키를 잘못 바꾸거나 요청을 잘못 만들어도 갱신 cron이 모든 구독자의 카드 실패로 세거나 결제 실패 메일을 보내지 않고, 가입 첫 결제의 일시적인 오류가 방금 등록한 카드를 폐기하지 않습니다.
   - **한 번만 결제를 두 번 사지 않게**: prepare는 먼저 그 계정의 대기 중인 한 번만 결제 주문을 대사합니다 — 인증까지 마친 주문(`IN_PROGRESS`)은 대사가 Absurd 승인 작업을 넣고, Toss가 승인한 주문은 기간을 부여합니다. 승인이 아직 Toss에서 진행 중인 주문이 있거나 다른 결제 작업이 계정 잠금을 잡고 있으면 409로 기다리게 하고, 정기 결제 가입의 결과가 불분명한 청구가 남아 있어도 기다리게 합니다. 결제창을 닫은 주문(Toss에 없음)은 막지 않지만, 45분 안에 확인되지 않은 주문이 열 건이면 429로 거절합니다(스크립트로 두드리면 Toss 조회와 만료 이벤트가 끝없이 늘어나므로 — 사람이 결제창을 닫고 다시 여는 정도로는 닿지 않는 수). 정기 결제 가입(prepare)도 같은 대사를 먼저 합니다 — 버려 둔 인증 완료 주문을 대사가 몇 분 뒤 승인하면 그 승인이 방금 시작한 정기 결제를 끝내기 때문입니다. 승인 작업자가 Toss에 보내기 직전에는 그 주문을 만든 뒤 다른 한 번만 결제가 완료됐는지 보고, 그랬으면 승인하지 않습니다(두 번째 탭, 느린 confirm 뒤 다시 결제) — Toss가 인증을 만료시키므로 카드에는 청구되지 않습니다. 정기 결제를 청구하는 중에도 승인하지 않고 기다립니다(callback은 503으로 다시 시도하고, 대사도 다음 실행에 다시 봅니다). 그 결제를 끝낸 뒤에 따로 산 한 번만 결제는 남은 기간 뒤에 그대로 이어 붙습니다 — 결제 중인 정기 결제(`active`)나 끝난 정기 결제(`canceled`)가 있는 계정은 남은 기간이 있어도 한 번만 결제를 살 수 있고, 1년을 넘게 쌓일 수 있습니다. 한 번만 결제는 결과를 기다리는 가입(`incomplete`)도 끝냅니다. 그 가입의 첫 결제가 늦게 성공해도 자동 갱신이 시작되지 않게 하려는 것입니다. 승인 시각보다 늦게 시작한 정기 결제는 끝내지 않으므로, 오래된 주문을 뒤늦게 복구해도 그 뒤에 시작한 정기 결제는 남습니다. 결제 행의 `paid_at`은 Toss의 승인 시각(`approvedAt`)입니다.
@@ -46,7 +46,7 @@
 
 정기 결제는 `lib/payments/subscriptions.ts`의 `endPlan` 하나로만 끝납니다 — 사용자 해지, 환불, `BILLING_DELETED`, 계정 삭제, 새 가입이 진행 중이던 정기 결제를 대체할 때. 상태(`canceled`), 다음 결제일 비우기, 빌링키 폐기(Toss가 지운 키면 삭제됨으로 기록), 결제 이벤트, 해지 메일(보낼 때)을 한 트랜잭션에서 함께 합니다. 다른 코드가 정기 결제를 끝내면 `billing-key-writes-payment.test.ts`가 실패합니다.
 
-한 번만 결제는 정기 결제가 돌고 있을 때(`active`·`scheduled`·`past_due`) 팔지 않습니다 — prepare·confirm과 대사의 자동 승인이 거절하고 `/support`도 보여 주지 않으니, 정기 결제를 해지한 뒤 삽니다. 그래도 승인된 경우(응답을 잃은 confirm이 정기 결제가 시작된 뒤 부여되는 경우)에는 정기 결제를 끄지 않고 다음 결제를 그 1년이 끝난 뒤로 미뤄, 같은 날들을 두 번 청구하지 않습니다.
+한 번만 결제는 정기 결제가 돌고 있을 때(`active`·`scheduled`·`past_due`) 팔지 않습니다 — prepare·confirm과 대사의 자동 승인이 거절하고 `/supporter`도 보여 주지 않으니, 정기 결제를 해지한 뒤 삽니다. 그래도 승인된 경우(응답을 잃은 confirm이 정기 결제가 시작된 뒤 부여되는 경우)에는 정기 결제를 끄지 않고 다음 결제를 그 1년이 끝난 뒤로 미뤄, 같은 날들을 두 번 청구하지 않습니다.
 
 ## 이용 기한 (`supporter_until`)
 
@@ -72,7 +72,7 @@
 - **웹훅** (`/admin/webhooks`): 받은 웹훅 하나하나와 나루가 한 일, 응답 코드, (가린) 본문. 기간(24시간·7일)과 5xx로 거릅니다.
 - **빌링키 삭제** (`/admin/billing-keys`): Toss에서 아직 지우지 못한 빌링키와 시도 횟수·마지막 오류.
 - **Toss 호출** (`/admin/toss-calls`): 나루가 Toss에 보낸 모든 요청과 응답(5년 보관).
-- **결제 기록** (`/admin/records`): 결제 유지보수 작업마다 마지막 실행과 그 결과·출력 끝부분(`payment_cron_runs`, 1년), 보내거나 실패한 결제 메일(`payment_mails`, 1년), 성공하지 못한 결제창(`toss_window_outcomes`, 5년). 계정 이름으로 거릅니다. 결제창 기록은 카드 등록·결제 창이 실패하거나 닫혔을 때 Toss가 failUrl이나 팝업 오류로만 알려 주는 코드와 메시지로, `/support`가 `api/account/payment-window`로 보내 남깁니다(그 계정의 등록·주문일 때만, 창과 코드마다 한 번).
+- **결제 기록** (`/admin/records`): 결제 유지보수 작업마다 마지막 실행과 그 결과·출력 끝부분(`payment_cron_runs`, 1년), 보내거나 실패한 결제 메일(`payment_mails`, 1년), 성공하지 못한 결제창(`toss_window_outcomes`, 5년). 계정 이름으로 거릅니다. 결제창 기록은 카드 등록·결제 창이 실패하거나 닫혔을 때 Toss가 failUrl이나 팝업 오류로만 알려 주는 코드와 메시지로, `/supporter`가 `api/account/payment-window`로 보내 남깁니다(그 계정의 등록·주문일 때만, 창과 코드마다 한 번).
 - **결제 실험실** (`/admin/lab`): 테스트 키 환경에서만 보입니다(아래).
 - **게시판** (`/admin/board`).
 
@@ -92,7 +92,7 @@
 
 모든 Toss 시크릿 키가 테스트 키(`test_…`)인 환경에서만 나타납니다(`isTossTestMode`). 라이브 키가 하나라도 있으면 화면도 API(`api/admin/billing-lab`)도 없습니다 — 버튼 하나가 실제로 청구·환불하기 때문입니다. 결제 운영자(`PAYMENT_OPERATOR_USERS`)만 씁니다.
 
-구독은 `/support`에서 Toss 테스트 카드로 먼저 만들고, 그 뒤 실험실에서 계정을 고릅니다. 버튼은 모두 실제 코드 경로를 부릅니다(`lib/payments/billing-lab.ts`).
+구독은 `/supporter`에서 Toss 테스트 카드로 먼저 만들고, 그 뒤 실험실에서 계정을 고릅니다. 버튼은 모두 실제 코드 경로를 부릅니다(`lib/payments/billing-lab.ts`).
 
 - **갱신 청구 접수**: `next_billing_at` 변경과 그 구독의 `renew_subscription` 작업을 함께 저장합니다. 작업자가 처리합니다. 남은 기간이 있으면 그 뒤에 이어 붙는 조기 갱신이 됩니다.
 - **Toss 응답 고르기**: `TossPayments-Test-Code` 헤더로 Toss가 지정한 오류를 돌려주게 합니다. 카드 거절(`REJECT_CARD_PAYMENT` 등)은 실패로 세고, 5xx(`FAILED_CARD_COMPANY`)와 일시적인 오류(`PROVIDER_ERROR`)는 결과 불분명으로 `pending`에 남습니다. 선택한 오류 코드는 청구 작업에 보존하며, 작업자가 테스트 키로 부를 때만 헤더를 붙입니다.
@@ -105,6 +105,10 @@
 
 ## 라이브 전환 점검
 
+공개 배포에는 스키마 변경이 없으므로 일반 무중단 배포를 사용합니다. 아래 라이브 점검을 끝낸 뒤 배포하며, 결제 기록과 미완료 결제 작업은 유지합니다. 키 변경·실결제·환불 점검은 이 코드 변경만으로 완료되지 않습니다.
+
+배포 전 `/supporter`의 비회원 가격·판매 정책과 로그인·회원가입 후 돌아오는 경로, 신규 계정의 계정 메뉴 결제 링크, 이메일 인증 후 결제 계속하기를 확인합니다. 결제 성공·실패·창 닫기·카드 변경과 영수증 메일 링크는 모두 `/supporter` 또는 `/supporter/payments`로 돌아와야 합니다. `/support`와 `/support/payments`는 리다이렉트 없이 404여야 합니다. 기존 `/account/payments`의 결제 내역 링크는 `/supporter/payments`로 이동합니다.
+
 테스트 키에서 라이브 키로 바꾼 뒤, 일반 공개 전에 운영자 계정과 실제 카드로 한 번씩 해 보고 기록을 확인합니다. 카드 정보 입력과 결제는 사람이 직접 합니다.
 
 0. 테스트 데이터 정리(키를 바꾸기 **전에**, 테스트 키가 들어 있는 동안): 테스트 카드로 만든 정기 결제·빌링키·이용 기간은 어느 키에서 왔는지 기록되지 않아, 그대로 두면 라이브 키로 바꾼 뒤 오전 9시 갱신이 테스트 빌링키를 라이브 키로 청구하려다 실패해 구독자에게 결제 실패 메일을 보냅니다. 테스트 정기 결제를 끝내고 그 키를 지우고, 테스트로 받은 이용 기간을 어떻게 할지 정합니다.
@@ -112,9 +116,9 @@
 2. 웹훅: 두 라이브 MID에 위 '웹훅 등록'대로 등록합니다. 서버의 `SITE_DATA_TRUST_CLOUDFLARE_IP=1`도 확인합니다 — 없으면 `BILLING_DELETED`의 보낸 IP를 확인하지 못해 그 웹훅을 무시합니다.
    - API 버전: 개발자센터에서 두 라이브 키의 API 버전을 확인합니다. 나루는 2024-06-01부터의 응답(카드 정보는 `card.issuerCode`·`card.number`)과 그 이전 응답을 모두 읽습니다.
    - API 키 접근 정책: 두 라이브 시크릿 키를 서버 IP에서만 쓸 수 있게 등록합니다(Toss 보안 체크리스트, 오픈 후 한 달 안 권장).
-3. 정기 결제 가입(월간, 1,000원): `/support`에서 가입 → `/admin/toss-calls`에 발급(`/v1/billing/authorizations/issue`)과 청구(`/v1/billing/…`) 200, `/admin/payments`에 결제 완료, `/admin/records`에 감사 메일.
+3. 정기 결제 가입(월간, 1,000원): `/supporter`에서 가입 → `/admin/toss-calls`에 발급(`/v1/billing/authorizations/issue`)과 청구(`/v1/billing/…`) 200, `/admin/payments`에 결제 완료, `/admin/records`에 감사 메일.
 4. 결제창 실패: 카드 등록 창을 그냥 닫아 봅니다 → `/admin/records`의 '성공하지 못한 결제창'에 `PAY_PROCESS_CANCELED`(또는 `USER_CANCEL`).
-5. 환불: 그 결제를 `/support/payments`에서 환불 → `/admin/webhooks`에 `PAYMENT_STATUS_CHANGED`(`CANCELED`)가 와서 처리되고, 정기 결제가 해지되고, 빌링키가 `/admin/billing-keys`에서 사라집니다(Toss 삭제 확인).
+5. 환불: 그 결제를 `/supporter/payments`에서 환불 → `/admin/webhooks`에 `PAYMENT_STATUS_CHANGED`(`CANCELED`)가 와서 처리되고, 정기 결제가 해지되고, 빌링키가 `/admin/billing-keys`에서 사라집니다(Toss 삭제 확인).
 6. 서명: `/admin/webhooks`의 `signature_check`를 봅니다. 라이브 웹훅에 서명이 붙어 오면(`valid`) 서명 검사를 요구하도록 바꿀 수 있습니다. 테스트 키에서는 서명이 없었습니다.
 7. MID: `/admin/payments`의 결제 행에 기록된 `toss_mid`가 두 라이브 MID와 맞는지 확인합니다(웹훅 대사는 MID가 다르면 반영하지 않습니다).
 8. `BILLING_DELETED`: 다시 가입한 뒤 Toss 대시보드에서 그 빌링키를 삭제 → `/admin/webhooks`에 신뢰하는 IP에서 온 `BILLING_DELETED`, 정기 결제 해지, 해지 메일.
@@ -159,7 +163,7 @@
 - `TOSS_BILLING_CLIENT_KEY` / `TOSS_PAYMENT_CLIENT_KEY`: 서버에서 읽어 클라이언트로 전달하는 공개 키.
 - `TOSS_BILLING_SECRET_KEY` / `TOSS_PAYMENT_SECRET_KEY`: 서버 전용 시크릿 키.
 - `TOSS_BILLING_MID`: `TOSS_BILLING_SECRET_KEY`의 상점아이디(MID). 빌링키는 발급한 MID로만 청구되므로, 갱신은 빌링키에 기록된 MID(`billing_keys.toss_mid`, 발급 응답의 `mId`)가 이 값과 다르면 청구하지 않고 '빌링키 MID 불일치' 실패 이벤트를 하루 한 번 남깁니다 — 카드 거절로 세지도, 구독자에게 실패 메일을 보내지도 않습니다. 라이브 키에서는 이 값이 없으면 아무 갱신도 청구하지 않습니다. 테스트 키에서는 없으면 확인하지 않습니다.
-- `TOSS_PAYMENT_MID`: `TOSS_PAYMENT_SECRET_KEY`의 상점아이디(MID). Toss는 결제를 그 결제를 만든 MID 아래에 두고 그 MID의 키로만 조회·취소하게 하므로, 결제에 기록된 MID(`payments.toss_mid`)가 그 결제 흐름의 MID(`TOSS_BILLING_MID`/`TOSS_PAYMENT_MID`)와 다르면 대사·환불·복구·웹훅은 Toss를 부르지 않습니다 — 대사는 이유를 `reconciliation_error`에 적고 확인한 것으로 세어 환불 동기화가 매번 다시 보지 않게 하고, 환불은 409로 거절하며 `/support/payments`에는 환불 버튼 대신 사유를 보여 줍니다. 아직 Toss가 답하지 않은 결제(`toss_mid` 없음)와 MID를 설정하지 않은 흐름은 막지 않습니다.
+- `TOSS_PAYMENT_MID`: `TOSS_PAYMENT_SECRET_KEY`의 상점아이디(MID). Toss는 결제를 그 결제를 만든 MID 아래에 두고 그 MID의 키로만 조회·취소하게 하므로, 결제에 기록된 MID(`payments.toss_mid`)가 그 결제 흐름의 MID(`TOSS_BILLING_MID`/`TOSS_PAYMENT_MID`)와 다르면 대사·환불·복구·웹훅은 Toss를 부르지 않습니다 — 대사는 이유를 `reconciliation_error`에 적고 확인한 것으로 세어 환불 동기화가 매번 다시 보지 않게 하고, 환불은 409로 거절하며 `/supporter/payments`에는 환불 버튼 대신 사유를 보여 줍니다. 아직 Toss가 답하지 않은 결제(`toss_mid` 없음)와 MID를 설정하지 않은 흐름은 막지 않습니다.
 - `CRON_HEARTBEAT_URL`(선택): worker가 1분마다 GET으로 부르는 외부 감시 주소(healthchecks.io 같은 서비스). 서버 전체가 멈춘 것은 서버 안의 어떤 프로세스도 알릴 수 없으므로, 그 서비스가 신호가 끊기면 알려 줍니다.
 - `RESEND_API_KEY` / `FROM_EMAIL` / `BASE_URL`: 결제 갱신/실패 안내 메일 발송에 사용합니다.
 - `OPERATOR_DISCORD_WEBHOOK_URL`: 운영자 알림(결제 이벤트, 작업 실패, 예약 작업 멈춤)을 올리는 Discord 웹훅. 누구든 이 주소로 채널에 글을 올릴 수 있으니 서버 환경에만 둡니다. 없으면 알리지 않습니다.

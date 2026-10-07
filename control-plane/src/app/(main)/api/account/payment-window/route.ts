@@ -5,7 +5,7 @@ import { db } from "@/lib/database";
 
 // How a Toss window the supporter opened ended, when it did not succeed: the
 // code and message Toss hands the failUrl, or the popup's rejection. No API
-// call ever sees them, so /support reports them here, and they are kept in
+// call ever sees them, so /supporter reports them here, and they are kept in
 // toss_window_outcomes (see the migration that adds it). Only for a window
 // this account opened — its card registration or its order — and once per
 // window and code, so a reloaded page or another account adds nothing.

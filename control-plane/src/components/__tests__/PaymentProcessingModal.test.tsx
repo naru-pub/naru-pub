@@ -93,7 +93,7 @@ test("closing pending processing stops polling and removes the modal URL", async
   render(<PaymentProcessingModal paymentId="payment" />);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   fireEvent.click(screen.getByRole("button", { name: "닫기" }));
-  expect(router.replace).toHaveBeenCalledWith("/support", {
+  expect(router.replace).toHaveBeenCalledWith("/supporter", {
     scroll: false,
   });
   await act(async () => {

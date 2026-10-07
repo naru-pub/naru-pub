@@ -145,7 +145,7 @@ export default async function PaymentsPage() {
       <div className="max-w-5xl mx-auto p-6 space-y-6">
         <div className="flex items-center">
           <Button asChild variant="ghost" size="sm">
-            <Link href="/support">
+            <Link href="/supporter">
               <ArrowLeft size={16} />
               결제 페이지로 돌아가기
             </Link>

@@ -114,7 +114,7 @@ export function SupportPolicy() {
           <p className="text-muted-foreground">
             환불은 로그인 후{" "}
             <Link
-              href="/support/payments"
+              href="/supporter/payments"
               className="text-primary underline hover:text-primary/80"
             >
               결제 내역

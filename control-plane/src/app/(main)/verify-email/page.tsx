@@ -81,8 +81,8 @@ export default function VerifyEmailPage() {
                 {message}
               </p>
               <Button asChild className="w-full">
-                {next === "/support" ? (
-                  <a href="/support">결제 계속하기</a>
+                {next === "/supporter" ? (
+                  <a href="/supporter">결제 계속하기</a>
                 ) : (
                   <a href="/account">계정 관리로 이동</a>
                 )}

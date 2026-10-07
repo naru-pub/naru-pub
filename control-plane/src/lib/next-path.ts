@@ -1,7 +1,7 @@
 // Where a flow may send someone back to after login, signup or verifying an
 // email: only these in-app pages, never a URL the link supplies (an open
 // redirect). A path is returned with its query string.
-const RETURN_PATHS = new Set(["/support", "/database/authorize"]);
+const RETURN_PATHS = new Set(["/supporter", "/database/authorize"]);
 
 export function safeNextPath(next: string | null | undefined): string | null {
   if (!next) return null;

@@ -69,7 +69,7 @@ export function PaymentProcessingModal({ paymentId }: { paymentId: string }) {
   function close() {
     setClosed(true);
     dialog.current?.close();
-    router.replace("/support", { scroll: false });
+    router.replace("/supporter", { scroll: false });
   }
   return (
     <dialog

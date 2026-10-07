@@ -186,7 +186,7 @@ export default function SupportCard({
         "결제 카드를 변경했습니다. 밀린 정기 결제를 처리 중이며 결과는 결제 내역에서 확인할 수 있습니다.",
       );
     } else if (support === "canceled") toast(WINDOW_CLOSED_MESSAGE);
-    router.replace("/support");
+    router.replace("/supporter");
   }, [params, router, untilLabel]);
 
   // Registers a card with Toss: prepare (a signup, or a card change) hands
@@ -226,7 +226,7 @@ export default function SupportCard({
       await payment.requestBillingAuth({
         method: "CARD",
         successUrl: `${window.location.origin}/account/subscription/callback/${data.registrationId}`,
-        failUrl: `${window.location.origin}/support?support=failed&registration=${data.registrationId}`,
+        failUrl: `${window.location.origin}/supporter?support=failed&registration=${data.registrationId}`,
       });
       // requestBillingAuth redirects the browser; control resumes on the callback page.
     } catch (error) {
@@ -282,7 +282,7 @@ export default function SupportCard({
         orderId: data.orderId,
         orderName: data.orderName,
         successUrl: `${window.location.origin}/account/donation/callback`,
-        failUrl: `${window.location.origin}/support?support=failed&order=${encodeURIComponent(data.orderId)}`,
+        failUrl: `${window.location.origin}/supporter?support=failed&order=${encodeURIComponent(data.orderId)}`,
       });
       // requestPayment redirects the browser; control resumes on the callback page.
     } catch (error) {
@@ -298,7 +298,7 @@ export default function SupportCard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // The mail's link brings the supporter back here once verified.
-        body: JSON.stringify({ next: "/support" }),
+        body: JSON.stringify({ next: "/supporter" }),
       });
       const data = await res.json();
       if (res.ok && data.success) {

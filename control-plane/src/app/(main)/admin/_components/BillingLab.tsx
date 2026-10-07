@@ -313,7 +313,7 @@ export function BillingLab({
         <p className="text-sm text-muted-foreground">
           청구·환불 요청을 접수하고 대사·웹훅을 실행합니다. 접수한 요청의 결과는
           결제 내역에서 확인해 주세요. 모든 Toss 키가 테스트 키(test_…)일
-          때만 나타납니다. 구독은 /support에서 Toss 테스트 카드로 먼저 만드세요.
+          때만 나타납니다. 구독은 /supporter에서 Toss 테스트 카드로 먼저 만드세요.
         </p>
       </div>
 
