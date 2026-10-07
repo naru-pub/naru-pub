@@ -18,6 +18,7 @@ const mockObjects = new Map<
 >();
 
 import { db } from "@/lib/database";
+import { runSdkStress } from "./sdk-stress";
 import { GET as dataRoute } from "@/app/(main)/api/data/v1/[site]/[[...path]]/route";
 import { POST as authRoute } from "@/app/(main)/api/data-auth/v1/[action]/route";
 import { executeData } from "../service";
@@ -244,6 +245,12 @@ integration("SDK and data API contract", () => {
       await db.destroy();
     }
   });
+
+  (process.env.NARU_SDK_STRESS === "1" ? test : test.skip)(
+    "local SDK stress",
+    async () => runSdkStress({ naru, admin, origin, nativeFetch }),
+    600000,
+  );
 
   test("CRUD preserves JSON, metadata, revisions, and semantic failures", async () => {
     const posts = admin.collection("crud");

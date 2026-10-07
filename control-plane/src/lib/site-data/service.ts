@@ -159,7 +159,7 @@ export async function executeData(command: DataCommand) {
     // connection the rest of the control plane also needs.
     const ownerQuery = tx
       .selectFrom("users")
-      .select("id")
+      .select(["id", "site_data_document_count", "site_data_bytes_used"])
       .where("login_name", "=", site);
     const owner = await (
       reading ? ownerQuery : ownerQuery.forUpdate()
@@ -491,19 +491,10 @@ export async function executeData(command: DataCommand) {
     const size = Buffer.byteLength(encoded);
     if (size > MAX_DOCUMENT_BYTES)
       throw new DataError(413, "Document exceeds 64 KiB.");
-    const usage = await tx
-      .selectFrom("site_data_documents as d")
-      .innerJoin("site_data_collections as c", "c.id", "d.collection_id")
-      .where("c.user_id", "=", owner.id)
-      .select([
-        sql<number>`coalesce(sum(d.size_bytes), 0)`.as("bytes"),
-        sql<number>`count(*)`.as("count"),
-      ])
-      .executeTakeFirstOrThrow();
     if (
-      Number(usage.bytes) - (existing?.size_bytes ?? 0) + size >
+      Number(owner.site_data_bytes_used) - (existing?.size_bytes ?? 0) + size >
         MAX_SITE_BYTES ||
-      (!existing && Number(usage.count) >= MAX_DOCUMENTS)
+      (!existing && Number(owner.site_data_document_count) >= MAX_DOCUMENTS)
     ) {
       throw new DataError(
         409,
@@ -586,6 +577,35 @@ export async function executeBatch(command: DataCommand) {
       .selectAll()
       .where("user_id", "=", owner.id)
       .execute();
+    // Distinct unconditional writes have no ordering dependencies. Preserve
+    // sequential execution for repeated keys and conditional operations.
+    const keys = new Set<string>();
+    const bulk = operations.every((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+      const operation = raw as Record<string, unknown>;
+      if (
+        operation.ifVersion !== undefined ||
+        typeof operation.collection !== "string" ||
+        typeof operation.id !== "string" ||
+        !(
+          operation.type === "delete" ||
+          (operation.type === "set" && Object.hasOwn(operation, "data"))
+        )
+      )
+        return false;
+      const key = JSON.stringify([operation.collection, operation.id]);
+      if (keys.has(key)) return false;
+      keys.add(key);
+      return true;
+    });
+    const sets: {
+      collection_id: string;
+      id: string;
+      data: RawBuilder<unknown>;
+      size_bytes: number;
+    }[] = [];
+    const deletes: { collection_id: string; id: string }[] = [];
+    const order: (string | null)[] = [];
     const results = [];
     for (const raw of operations) {
       if (!raw || typeof raw !== "object" || Array.isArray(raw))
@@ -621,6 +641,11 @@ export async function executeBatch(command: DataCommand) {
           )?.version,
         );
       if (operation.type === "delete") {
+        if (bulk) {
+          deletes.push({ collection_id: collection.id, id });
+          order.push(null);
+          continue;
+        }
         await tx
           .deleteFrom("site_data_documents")
           .where("collection_id", "=", collection.id)
@@ -635,12 +660,18 @@ export async function executeBatch(command: DataCommand) {
       const size = Buffer.byteLength(encoded);
       if (size > MAX_DOCUMENT_BYTES)
         throw new DataError(413, "Document exceeds 64 KiB.");
-      const insert = tx.insertInto("site_data_documents").values({
+      const values = {
         collection_id: collection.id,
         id,
         data: sql`${encoded}::jsonb`,
         size_bytes: size,
-      });
+      };
+      if (bulk) {
+        sets.push(values);
+        order.push(JSON.stringify([collection.id, id]));
+        continue;
+      }
+      const insert = tx.insertInto("site_data_documents").values(values);
       const row = await insert
         .onConflict((oc) =>
           oc.columns(["collection_id", "id"]).doUpdateSet({
@@ -660,18 +691,75 @@ export async function executeBatch(command: DataCommand) {
         updatedAt: row.updated_at,
       });
     }
+    if (bulk) {
+      if (deletes.length) {
+        await tx
+          .deleteFrom("site_data_documents")
+          .where(({ or, and, eb }) =>
+            or(
+              deletes.map((item) =>
+                and([
+                  eb("collection_id", "=", item.collection_id),
+                  eb("id", "=", item.id),
+                ]),
+              ),
+            ),
+          )
+          .execute();
+      }
+      const rows = sets.length
+        ? await tx
+            .insertInto("site_data_documents")
+            .values(sets)
+            .onConflict((oc) =>
+              oc.columns(["collection_id", "id"]).doUpdateSet({
+                data: sql`excluded.data`,
+                size_bytes: sql`excluded.size_bytes`,
+                updated_at: new Date(),
+                version: sql`site_data_documents.version + 1`,
+              }),
+            )
+            .returning([
+              "collection_id",
+              "id",
+              "version",
+              "created_at",
+              "updated_at",
+            ])
+            .execute()
+        : [];
+      // RETURNING order is not a contract; restore the caller's operation order.
+      const written = new Map(
+        rows.map((row) => [
+          JSON.stringify([row.collection_id, row.id]),
+          {
+            id: row.id,
+            version: row.version,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          },
+        ]),
+      );
+      for (const key of order) {
+        if (key === null) results.push(null);
+        else {
+          const result = written.get(key);
+          if (!result)
+            throw new Error("Batch write did not return a document.");
+          results.push(result);
+        }
+      }
+    }
+    // Document triggers maintain usage inside this transaction, including
+    // repeated IDs and deletions. A quota failure rolls it all back together.
     const usage = await tx
-      .selectFrom("site_data_documents as d")
-      .innerJoin("site_data_collections as c", "c.id", "d.collection_id")
-      .where("c.user_id", "=", owner.id)
-      .select([
-        sql<number>`coalesce(sum(d.size_bytes), 0)`.as("bytes"),
-        sql<number>`count(*)`.as("count"),
-      ])
+      .selectFrom("users")
+      .where("id", "=", owner.id)
+      .select(["site_data_bytes_used", "site_data_document_count"])
       .executeTakeFirstOrThrow();
     if (
-      Number(usage.bytes) > MAX_SITE_BYTES ||
-      Number(usage.count) > MAX_DOCUMENTS
+      Number(usage.site_data_bytes_used) > MAX_SITE_BYTES ||
+      Number(usage.site_data_document_count) > MAX_DOCUMENTS
     )
       throw new DataError(
         409,

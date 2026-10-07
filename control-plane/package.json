@@ -38,7 +38,8 @@
     "cleanup-expired-custom-domains": "tsx src/cli/cleanup-expired-custom-domains.ts",
     "cleanup-expired-github-deployments": "tsx src/cli/cleanup-expired-github-deployments.ts",
     "cleanup-site-data-grants": "tsx src/cli/cleanup-site-data-grants.ts",
-    "worker": "tsx src/cli/worker.ts"
+    "worker": "tsx src/cli/worker.ts",
+    "stress:sdk": "NARU_SDK_STRESS=1 bash scripts/test-data-sdk.sh src/lib/site-data/__tests__/sdk-integration.test.ts --testNamePattern=\"local SDK stress\""
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.892.0",

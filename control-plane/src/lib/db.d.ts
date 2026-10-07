@@ -671,6 +671,8 @@ export interface Users {
   last_activity_sent_at: Timestamp | null;
   login_name: string;
   password_hash: string;
+  site_data_bytes_used: ColumnType<string, never, never>;
+  site_data_document_count: ColumnType<string, never, never>;
   site_rendered_at: Timestamp | null;
   site_title: string | null;
   site_updated_at: Timestamp | null;

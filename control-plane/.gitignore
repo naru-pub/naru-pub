@@ -42,3 +42,6 @@ next-env.d.ts
 
 # compiled CLIs (scripts/build-cli.mjs)
 /dist
+
+# Local SDK stress output; checked-in snapshots live under docs/benchmarks.
+/stress-results/

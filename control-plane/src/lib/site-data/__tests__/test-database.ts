@@ -1,4 +1,8 @@
 import {
+  up as usageUp,
+  down as usageDown,
+} from "@/migrations/1791377967407_site_data_usage_counters";
+import {
   up as uuidUp,
   down as uuidDown,
 } from "@/migrations/1791346354414_site_data_uuid_columns";
@@ -103,8 +107,10 @@ export async function setupTestDatabase() {
   await slideTokensUp(db);
   await orderingUp(db);
   await uuidUp(db);
+  await db.transaction().execute((tx) => usageUp(tx));
 }
 export async function teardownTestDatabase() {
+  await usageDown(db);
   await uuidDown(db);
   await orderingDown(db);
   await slideTokensDown(db);
