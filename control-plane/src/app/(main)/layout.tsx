@@ -77,14 +77,14 @@ export default async function RootLayout({
                     >
                       길잡이
                     </Link>
-                    {!entitlement?.isSupporter && (
+                    {/* {!entitlement?.isSupporter && (
                       <Link
                         href="/supporter"
                         className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
                       >
                         결제
                       </Link>
-                    )}
+                    )} */}
                     {user ? (
                       <>
                         <Link
