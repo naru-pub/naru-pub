@@ -264,7 +264,7 @@ export async function runSdkStress({
       {
         recordedAt: new Date().toISOString(),
         implementation:
-          "transactional usage counters + grouped unconditional batches",
+          "transactional usage counters + grouped batches + bounded write admission",
         node: process.version,
         samples,
         cardinalities,

@@ -1,0 +1,677 @@
+{
+  "recordedAt": "2026-10-07T13:46:33.259Z",
+  "node": "v26.7.0",
+  "poolMax": 20,
+  "durationMs": 3000,
+  "documentsPerSite": 500,
+  "otherSitePayloadBytes": 256,
+  "writerPayloadBytes": 256,
+  "readWorkersPerSite": 4,
+  "boundary": "Built SDK + loopback HTTP + actual routes + disposable PostgreSQL; shared Node process; no CDN cache",
+  "cacheProbes": [
+    {
+      "probe": "anonymous before write",
+      "method": "GET",
+      "fetchCache": "default",
+      "fresh": false,
+      "credentialed": false,
+      "status": 200,
+      "cacheControl": "public, max-age=0, s-maxage=10",
+      "vary": "Origin, Authorization"
+    },
+    {
+      "probe": "other site before write",
+      "method": "GET",
+      "fetchCache": "default",
+      "fresh": false,
+      "credentialed": false,
+      "status": 200,
+      "cacheControl": "public, max-age=0, s-maxage=10",
+      "vary": "Origin, Authorization"
+    },
+    {
+      "probe": "admin write",
+      "method": "PUT",
+      "fetchCache": "no-store",
+      "fresh": false,
+      "credentialed": true,
+      "status": 200,
+      "cacheControl": "no-store",
+      "vary": "Origin, Authorization"
+    },
+    {
+      "probe": "anonymous after write",
+      "method": "GET",
+      "fetchCache": "no-store",
+      "fresh": true,
+      "credentialed": false,
+      "status": 200,
+      "cacheControl": "no-store",
+      "vary": "Origin, Authorization"
+    },
+    {
+      "probe": "other site after write",
+      "method": "GET",
+      "fetchCache": "default",
+      "fresh": false,
+      "credentialed": false,
+      "status": 200,
+      "cacheControl": "public, max-age=0, s-maxage=10",
+      "vary": "Origin, Authorization"
+    },
+    {
+      "probe": "admin read",
+      "method": "GET",
+      "fetchCache": "no-store",
+      "fresh": true,
+      "credentialed": true,
+      "status": 200,
+      "cacheControl": "no-store",
+      "vary": "Origin, Authorization"
+    }
+  ],
+  "results": [
+    {
+      "payloadBytes": 256,
+      "scenario": "read baseline",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 7353,
+          "errors": {},
+          "perSecond": 2449.6,
+          "p50Ms": 1.53,
+          "p95Ms": 2.4,
+          "p99Ms": 3.12
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 7346,
+          "errors": {},
+          "perSecond": 2446.3,
+          "p50Ms": 1.53,
+          "p95Ms": 2.4,
+          "p99Ms": 3.17
+        },
+        {
+          "label": "background",
+          "workers": 0,
+          "completed": 0,
+          "errors": {},
+          "perSecond": 0,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 8,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3003,
+      "nodeCpuMs": 3748.499,
+      "eventLoopP95Ms": 10.13,
+      "eventLoopMaxMs": 10.57
+    },
+    {
+      "payloadBytes": 256,
+      "scenario": "1 grouped batch writer",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 5260,
+          "errors": {},
+          "perSecond": 1751.5,
+          "p50Ms": 2.21,
+          "p95Ms": 3.12,
+          "p99Ms": 3.67
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 5273,
+          "errors": {},
+          "perSecond": 1756.4,
+          "p50Ms": 2.21,
+          "p95Ms": 3.1,
+          "p99Ms": 3.7
+        },
+        {
+          "label": "background",
+          "workers": 1,
+          "completed": 523,
+          "errors": {},
+          "perSecond": 174,
+          "p50Ms": 5.59,
+          "p95Ms": 6.75,
+          "p99Ms": 8.21
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 9,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3005.5,
+      "nodeCpuMs": 3562.666,
+      "eventLoopP95Ms": 10.36,
+      "eventLoopMaxMs": 10.63
+    },
+    {
+      "payloadBytes": 256,
+      "scenario": "8 grouped batch writers",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 5231,
+          "errors": {},
+          "perSecond": 1741.8,
+          "p50Ms": 2.28,
+          "p95Ms": 3.38,
+          "p99Ms": 3.92
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 5230,
+          "errors": {},
+          "perSecond": 1742.4,
+          "p50Ms": 2.27,
+          "p95Ms": 3.41,
+          "p99Ms": 3.98
+        },
+        {
+          "label": "background",
+          "workers": 8,
+          "completed": 573,
+          "errors": {},
+          "perSecond": 189.5,
+          "p50Ms": 41.77,
+          "p95Ms": 46.48,
+          "p99Ms": 59.13
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 16,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3023.3,
+      "nodeCpuMs": 3369.415,
+      "eventLoopP95Ms": 10.35,
+      "eventLoopMaxMs": 12.98
+    },
+    {
+      "payloadBytes": 256,
+      "scenario": "32 grouped batch writers",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 284,
+          "errors": {},
+          "perSecond": 93.5,
+          "p50Ms": 42.55,
+          "p95Ms": 47.88,
+          "p99Ms": 48.81
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 284,
+          "errors": {},
+          "perSecond": 94.3,
+          "p50Ms": 42.55,
+          "p95Ms": 47.28,
+          "p99Ms": 48.51
+        },
+        {
+          "label": "background",
+          "workers": 32,
+          "completed": 930,
+          "errors": {},
+          "perSecond": 300.1,
+          "p50Ms": 105.43,
+          "p95Ms": 115.33,
+          "p99Ms": 116.79
+        }
+      ],
+      "maxWaiting": 20,
+      "maxUsed": 20,
+      "queuedSamplePercent": 97.7,
+      "elapsedMs": 3099.5,
+      "nodeCpuMs": 2043.598,
+      "eventLoopP95Ms": 10.75,
+      "eventLoopMaxMs": 11.35
+    },
+    {
+      "payloadBytes": 256,
+      "scenario": "32 dependent batch writers",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 32,
+          "errors": {},
+          "perSecond": 9.8,
+          "p50Ms": 500.7,
+          "p95Ms": 552.54,
+          "p99Ms": 552.66
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 32,
+          "errors": {},
+          "perSecond": 9.8,
+          "p50Ms": 500.7,
+          "p95Ms": 552.43,
+          "p99Ms": 552.51
+        },
+        {
+          "label": "background",
+          "workers": 32,
+          "completed": 117,
+          "errors": {},
+          "perSecond": 27.5,
+          "p50Ms": 1284.82,
+          "p95Ms": 1357.48,
+          "p99Ms": 1365.83
+        }
+      ],
+      "maxWaiting": 20,
+      "maxUsed": 20,
+      "queuedSamplePercent": 81.8,
+      "elapsedMs": 4259.8,
+      "nodeCpuMs": 695.712,
+      "eventLoopP95Ms": 10.26,
+      "eventLoopMaxMs": 11.09
+    },
+    {
+      "payloadBytes": 256,
+      "scenario": "1 dependent batch writer",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 6756,
+          "errors": {},
+          "perSecond": 2250.6,
+          "p50Ms": 1.69,
+          "p95Ms": 2.46,
+          "p99Ms": 2.84
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 6770,
+          "errors": {},
+          "perSecond": 2254.5,
+          "p50Ms": 1.69,
+          "p95Ms": 2.45,
+          "p99Ms": 2.85
+        },
+        {
+          "label": "background",
+          "workers": 1,
+          "completed": 94,
+          "errors": {},
+          "perSecond": 31.2,
+          "p50Ms": 33.86,
+          "p95Ms": 36.05,
+          "p99Ms": 43.18
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 9,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3013,
+      "nodeCpuMs": 3377.354,
+      "eventLoopP95Ms": 10.17,
+      "eventLoopMaxMs": 10.9
+    },
+    {
+      "payloadBytes": 256,
+      "scenario": "8 large-page readers",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 2094,
+          "errors": {},
+          "perSecond": 697.2,
+          "p50Ms": 5.66,
+          "p95Ms": 6.65,
+          "p99Ms": 7.07
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 2095,
+          "errors": {},
+          "perSecond": 697.2,
+          "p50Ms": 5.63,
+          "p95Ms": 6.67,
+          "p99Ms": 7.19
+        },
+        {
+          "label": "background",
+          "workers": 8,
+          "completed": 3504,
+          "errors": {},
+          "perSecond": 1166.4,
+          "p50Ms": 6.71,
+          "p95Ms": 7.72,
+          "p99Ms": 8.25
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 16,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3004.8,
+      "nodeCpuMs": 3311.235,
+      "eventLoopP95Ms": 10.53,
+      "eventLoopMaxMs": 10.97
+    },
+    {
+      "payloadBytes": 16384,
+      "scenario": "read baseline",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 6620,
+          "errors": {},
+          "perSecond": 2205.4,
+          "p50Ms": 1.75,
+          "p95Ms": 2.45,
+          "p99Ms": 2.78
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 7766,
+          "errors": {},
+          "perSecond": 2586.3,
+          "p50Ms": 1.49,
+          "p95Ms": 2.15,
+          "p99Ms": 2.49
+        },
+        {
+          "label": "background",
+          "workers": 0,
+          "completed": 0,
+          "errors": {},
+          "perSecond": 0,
+          "p50Ms": 0,
+          "p95Ms": 0,
+          "p99Ms": 0
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 8,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3002.8,
+      "nodeCpuMs": 3383.142,
+      "eventLoopP95Ms": 10.13,
+      "eventLoopMaxMs": 10.78
+    },
+    {
+      "payloadBytes": 16384,
+      "scenario": "1 grouped batch writer",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 4484,
+          "errors": {},
+          "perSecond": 1493.9,
+          "p50Ms": 2.65,
+          "p95Ms": 3.51,
+          "p99Ms": 3.92
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 5267,
+          "errors": {},
+          "perSecond": 1754.3,
+          "p50Ms": 2.21,
+          "p95Ms": 3.07,
+          "p99Ms": 3.57
+        },
+        {
+          "label": "background",
+          "workers": 1,
+          "completed": 533,
+          "errors": {},
+          "perSecond": 177.4,
+          "p50Ms": 5.56,
+          "p95Ms": 6.48,
+          "p99Ms": 7.18
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 9,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3004.9,
+      "nodeCpuMs": 3337.532,
+      "eventLoopP95Ms": 10.37,
+      "eventLoopMaxMs": 10.85
+    },
+    {
+      "payloadBytes": 16384,
+      "scenario": "8 grouped batch writers",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 4318,
+          "errors": {},
+          "perSecond": 1438.1,
+          "p50Ms": 2.8,
+          "p95Ms": 3.92,
+          "p99Ms": 4.5
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 5043,
+          "errors": {},
+          "perSecond": 1679.9,
+          "p50Ms": 2.35,
+          "p95Ms": 3.43,
+          "p99Ms": 4.08
+        },
+        {
+          "label": "background",
+          "workers": 8,
+          "completed": 575,
+          "errors": {},
+          "perSecond": 190.2,
+          "p50Ms": 41.55,
+          "p95Ms": 45.61,
+          "p99Ms": 70.83
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 16,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3023.8,
+      "nodeCpuMs": 3397.637,
+      "eventLoopP95Ms": 10.36,
+      "eventLoopMaxMs": 10.82
+    },
+    {
+      "payloadBytes": 16384,
+      "scenario": "32 grouped batch writers",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 272,
+          "errors": {},
+          "perSecond": 90.3,
+          "p50Ms": 43.76,
+          "p95Ms": 58.39,
+          "p99Ms": 64.66
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 272,
+          "errors": {},
+          "perSecond": 89.6,
+          "p50Ms": 43.84,
+          "p95Ms": 58.9,
+          "p99Ms": 63.47
+        },
+        {
+          "label": "background",
+          "workers": 32,
+          "completed": 891,
+          "errors": {},
+          "perSecond": 288.3,
+          "p50Ms": 109.14,
+          "p95Ms": 125.52,
+          "p99Ms": 130.05
+        }
+      ],
+      "maxWaiting": 20,
+      "maxUsed": 20,
+      "queuedSamplePercent": 98,
+      "elapsedMs": 3090.5,
+      "nodeCpuMs": 1969.39,
+      "eventLoopP95Ms": 10.68,
+      "eventLoopMaxMs": 11.19
+    },
+    {
+      "payloadBytes": 16384,
+      "scenario": "32 dependent batch writers",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 32,
+          "errors": {},
+          "perSecond": 10,
+          "p50Ms": 485.57,
+          "p95Ms": 547.64,
+          "p99Ms": 547.65
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 32,
+          "errors": {},
+          "perSecond": 10,
+          "p50Ms": 485.65,
+          "p95Ms": 547.66,
+          "p99Ms": 547.69
+        },
+        {
+          "label": "background",
+          "workers": 32,
+          "completed": 118,
+          "errors": {},
+          "perSecond": 27.5,
+          "p50Ms": 1228.53,
+          "p95Ms": 1344.3,
+          "p99Ms": 1351.92
+        }
+      ],
+      "maxWaiting": 20,
+      "maxUsed": 20,
+      "queuedSamplePercent": 80.4,
+      "elapsedMs": 4297.7,
+      "nodeCpuMs": 719.861,
+      "eventLoopP95Ms": 10.3,
+      "eventLoopMaxMs": 10.75
+    },
+    {
+      "payloadBytes": 16384,
+      "scenario": "1 dependent batch writer",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 5666,
+          "errors": {},
+          "perSecond": 1886.8,
+          "p50Ms": 2.02,
+          "p95Ms": 2.82,
+          "p99Ms": 3.22
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 6691,
+          "errors": {},
+          "perSecond": 2229,
+          "p50Ms": 1.7,
+          "p95Ms": 2.47,
+          "p99Ms": 2.82
+        },
+        {
+          "label": "background",
+          "workers": 1,
+          "completed": 89,
+          "errors": {},
+          "perSecond": 29.6,
+          "p50Ms": 34.5,
+          "p95Ms": 36.17,
+          "p99Ms": 52.44
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 9,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3010.2,
+      "nodeCpuMs": 3348.697,
+      "eventLoopP95Ms": 10.15,
+      "eventLoopMaxMs": 10.58
+    },
+    {
+      "payloadBytes": 16384,
+      "scenario": "8 large-page readers",
+      "groups": [
+        {
+          "label": "same-site get",
+          "workers": 4,
+          "completed": 2776,
+          "errors": {},
+          "perSecond": 924.2,
+          "p50Ms": 3.39,
+          "p95Ms": 9.14,
+          "p99Ms": 13.25
+        },
+        {
+          "label": "other-site get",
+          "workers": 4,
+          "completed": 3242,
+          "errors": {},
+          "perSecond": 1079.6,
+          "p50Ms": 2.86,
+          "p95Ms": 7.6,
+          "p99Ms": 11.25
+        },
+        {
+          "label": "background",
+          "workers": 8,
+          "completed": 638,
+          "errors": {},
+          "perSecond": 211.5,
+          "p50Ms": 36.41,
+          "p95Ms": 43.12,
+          "p99Ms": 45.47
+        }
+      ],
+      "maxWaiting": 0,
+      "maxUsed": 16,
+      "queuedSamplePercent": 0,
+      "elapsedMs": 3016.1,
+      "nodeCpuMs": 4568.261,
+      "eventLoopP95Ms": 11.08,
+      "eventLoopMaxMs": 13.18
+    }
+  ]
+}

@@ -19,6 +19,7 @@ const mockObjects = new Map<
 
 import { db } from "@/lib/database";
 import { runSdkStress } from "./sdk-stress";
+import { runSdkMixedStress } from "./sdk-mixed-stress";
 import { GET as dataRoute } from "@/app/(main)/api/data/v1/[site]/[[...path]]/route";
 import { POST as authRoute } from "@/app/(main)/api/data-auth/v1/[action]/route";
 import { executeData } from "../service";
@@ -249,6 +250,12 @@ integration("SDK and data API contract", () => {
   (process.env.NARU_SDK_STRESS === "1" ? test : test.skip)(
     "local SDK stress",
     async () => runSdkStress({ naru, admin, origin, nativeFetch }),
+    600000,
+  );
+
+  (process.env.NARU_SDK_MIXED_STRESS === "1" ? test : test.skip)(
+    "local SDK mixed stress",
+    async () => runSdkMixedStress({ naru, admin }),
     600000,
   );
 

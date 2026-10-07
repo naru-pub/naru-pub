@@ -1,6 +1,12 @@
 import { validateRequest } from "@/lib/auth";
 import { executeBatch, executeData } from "./service";
-import { DataError, jsonBody, protocolError, sameOrigin } from "./validation";
+import {
+  DataError,
+  jsonBody,
+  protocolError,
+  sameOrigin,
+  type ErrorCode,
+} from "./validation";
 import { parseFilterQuery } from "./filters";
 import { isIP } from "node:net";
 import { executeMedia } from "./media";
@@ -166,6 +172,7 @@ export async function dataRequest(
       throw new DataError(400, "Use one write condition.");
     const command = {
       site: site!,
+      signal: request.signal,
       path: path[0] === "_files" ? path.slice(1) : path,
       method: request.method,
       adminUserId,
@@ -219,7 +226,7 @@ export async function dataRequest(
   } catch (error) {
     let status = 500;
     let message = "Database request failed.";
-    let code;
+    let code: ErrorCode | undefined;
     // JSONB cannot represent NUL or unpaired surrogate code points.
     if (
       error &&
@@ -231,6 +238,10 @@ export async function dataRequest(
       message = "Data contains unsupported characters or numbers.";
     } else if (error instanceof DataError) {
       ({ status, message, code } = error);
+    } else if (request.signal.aborted) {
+      status = 503;
+      message = "Request canceled.";
+      code = "UNAVAILABLE";
     } else console.error("Site database request failed", error);
     // The control panel ships with this server and reads a plain message;
     // websites get the versioned protocol's coded error.

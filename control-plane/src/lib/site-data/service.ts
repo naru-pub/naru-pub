@@ -27,6 +27,7 @@ import {
   refusePublicWriteOverLimit,
 } from "./owner-auth";
 import { userHasFeature } from "@/lib/entitlements";
+import { siteDataWriteAdmission } from "./write-admission";
 
 export type DataCommand = {
   site: string;
@@ -36,6 +37,8 @@ export type DataCommand = {
   // Mutable: tokenScope reports the expiry the renewed token now has.
   bearer?: { token: string; origin: string | null; expiresAt?: number };
   clientIp?: string;
+  /** Cancels waiting for write admission; an executing transaction still settles. */
+  signal?: AbortSignal;
   body?: Record<string, unknown>;
   /** Opaque cursor from the preceding page's nextCursor. */
   after?: string;
@@ -136,6 +139,13 @@ function filterConditions(filter: ReturnType<typeof filters>) {
 }
 
 export async function executeData(command: DataCommand) {
+  if (command.method === "GET") return executeAdmittedData(command);
+  return siteDataWriteAdmission.run(command.site, command.signal, () =>
+    executeAdmittedData(command),
+  );
+}
+
+async function executeAdmittedData(command: DataCommand) {
   const { site, path, method, adminUserId, body = {} } = command;
   if (path.length > 2) throw new DataError(404, "Not found.");
   path.forEach(name);
@@ -553,6 +563,15 @@ export async function executeBatch(command: DataCommand) {
     operations.length > 100
   )
     throw new DataError(400, "Batch requires 1–100 operations.");
+  return siteDataWriteAdmission.run(command.site, command.signal, () =>
+    executeAdmittedBatch(command, operations),
+  );
+}
+
+async function executeAdmittedBatch(
+  command: DataCommand,
+  operations: unknown[],
+) {
   return db.transaction().execute(async (tx) => {
     await requestDeadline(tx);
     // A batch is always a write, so it always takes the owner lock.

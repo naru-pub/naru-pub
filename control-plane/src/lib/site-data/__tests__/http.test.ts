@@ -346,3 +346,67 @@ test("SDK freshness reads stay uncached independently of the shared cache lifeti
     );
   }
 });
+
+test("write requests forward cancellation to admission", async () => {
+  const controller = new AbortController();
+  const request = new Request("https://naru.pub/api/data/v1/alice/posts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: 1 }),
+    signal: controller.signal,
+  });
+  await dataRequest(request, ["posts"], "alice");
+  expect(execute.mock.calls[0][0].signal).toBe(request.signal);
+});
+
+test("admission overload uses the existing uncached UNAVAILABLE protocol", async () => {
+  const { DataError } =
+    require("../validation") as typeof import("../validation");
+  execute.mockRejectedValue(
+    new DataError(
+      503,
+      "Site writes are busy. Try again shortly.",
+      "UNAVAILABLE",
+    ),
+  );
+  const response = await dataRequest(
+    new Request("https://naru.pub/api/data/v1/alice/posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: 1 }),
+    }),
+    ["posts"],
+    "alice",
+  );
+  expect(response.status).toBe(503);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({
+    error: {
+      code: "UNAVAILABLE",
+      message: "Site writes are busy. Try again shortly.",
+    },
+  });
+});
+
+test("canceled queued writes do not log an unexpected server failure", async () => {
+  const controller = new AbortController();
+  const request = new Request("https://naru.pub/api/data/v1/alice/posts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: 1 }),
+    signal: controller.signal,
+  });
+  execute.mockImplementation(async () => {
+    controller.abort();
+    throw controller.signal.reason;
+  });
+  const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    const response = await dataRequest(request, ["posts"], "alice");
+    expect(response.status).toBe(503);
+    expect((await response.json()).error.code).toBe("UNAVAILABLE");
+    expect(log).not.toHaveBeenCalled();
+  } finally {
+    log.mockRestore();
+  }
+});
