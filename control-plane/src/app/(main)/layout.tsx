@@ -10,8 +10,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ModeToggle } from "@/components/ModeToggle";
 import { LoadingBar } from "@/components/LoadingBar";
 import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
-import { getUserFeatures, type Feature } from "@/lib/entitlements";
-import { AccountMenu, DocsMenu, ExtensionsMenu } from "@/components/NavMenus";
+import { getUserEntitlement, PLAN_FEATURES, type Feature } from "@/lib/entitlements";
+import { AccountMenu, ExtensionsMenu } from "@/components/NavMenus";
 
 export const metadata: Metadata = {
   title: "나루",
@@ -24,7 +24,12 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const { user } = await validateRequest();
-  const features = user ? await getUserFeatures(user.id) : new Set<Feature>();
+  const entitlement = user ? await getUserEntitlement(user.id) : null;
+  const features = new Set<Feature>(
+    entitlement?.isSupporter
+      ? (PLAN_FEATURES[entitlement.plan ?? "supporter"] ?? [])
+      : [],
+  );
 
   return (
     <html lang="ko" suppressHydrationWarning>
@@ -66,6 +71,20 @@ export default async function RootLayout({
                     >
                       게시판
                     </Link>
+                    <Link
+                      href="/docs"
+                      className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+                    >
+                      길잡이
+                    </Link>
+                    {!entitlement?.isSupporter && (
+                      <Link
+                        href="/supporter"
+                        className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+                      >
+                        결제
+                      </Link>
+                    )}
                     {user ? (
                       <>
                         <Link
@@ -74,7 +93,6 @@ export default async function RootLayout({
                         >
                           파일
                         </Link>
-                        {features.has("database") && <DocsMenu />}
                         <ExtensionsMenu
                           analytics={features.has("analytics")}
                           database={features.has("database")}
@@ -90,12 +108,6 @@ export default async function RootLayout({
                       </>
                     ) : (
                       <>
-                        <Link
-                          href="/supporter"
-                          className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                        >
-                          결제
-                        </Link>
                         <Link
                           href="/login"
                           className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"

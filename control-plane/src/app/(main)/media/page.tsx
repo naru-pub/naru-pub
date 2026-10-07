@@ -9,8 +9,8 @@ import MediaLibrary from "./MediaLibrary";
 // entitlement as the database itself.
 export default async function MediaPage() {
   const { user } = await validateRequest();
-  if (!user) redirect("/login");
-  if (!(await userHasFeature(user.id, "database"))) redirect("/account");
+  if (!user) redirect("/supporter");
+  if (!(await userHasFeature(user.id, "database"))) redirect("/supporter");
 
   return (
     <div className="mx-auto h-full w-full max-w-7xl space-y-6 overflow-auto p-4 sm:p-6 lg:p-8">

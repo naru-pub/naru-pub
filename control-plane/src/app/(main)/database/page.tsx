@@ -6,8 +6,8 @@ import { userHasFeature } from "@/lib/entitlements";
 
 export default async function DatabasePage() {
   const { user } = await validateRequest();
-  if (!user) redirect("/login");
-  if (!(await userHasFeature(user.id, "database"))) redirect("/account");
+  if (!user) redirect("/supporter");
+  if (!(await userHasFeature(user.id, "database"))) redirect("/supporter");
   return (
     <DatabaseManager
       site={user.loginName}
