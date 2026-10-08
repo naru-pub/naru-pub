@@ -30,12 +30,14 @@ node scripts/build-cli.mjs
 node dist/cli/migrate.mjs >"$pg_dir/migrate.log"
 node dist/cli/configure-schedules.mjs
 node dist/cli/configure-schedules.mjs
+# Follow the catalog instead of assuming a fixed number of maintenance jobs.
+maintenance_count=$(node --import tsx -e "console.log(require('./src/lib/maintenance/jobs.ts').MAINTENANCE_JOBS.length)")
 psql_meta() { "$pg_bin/psql" -h "$pg_dir" -U payments_test -d postgres -At -v ON_ERROR_STOP=1 -c "$1"; }
 psql_app() { "$pg_bin/psql" -h "$pg_dir" -U payments_test -d naru_schedule_test -At -v ON_ERROR_STOP=1 -c "$1"; }
 [[ "$(psql_meta "select count(*) from cron.job where jobname='naru-renewal-scan' and database='naru_schedule_test' and schedule='0 * * * *' and active")" == 1 ]]
 [[ "$(psql_app "select count(*) from absurd.t_payments")" == 1 ]]
-[[ "$(psql_meta "select count(*) from cron.job where database='naru_schedule_test' and active")" == 17 ]]
-[[ "$(psql_app "select count(distinct params->>'name') from absurd.t_maintenance")" == 16 ]]
+[[ "$(psql_meta "select count(*) from cron.job where database='naru_schedule_test' and active")" == "$((maintenance_count + 1))" ]]
+[[ "$(psql_app "select count(distinct params->>'name') from absurd.t_maintenance")" == "$maintenance_count" ]]
 # A removed schedule is pruned without deleting already durable work; unrelated
 # schedules are untouched. Run configuration again to verify reconciliation.
 psql_meta "select cron.schedule_in_database('naru-maintenance-retired', '0 0 * * *', 'select 1', 'naru_schedule_test', 'payments_test')" >/dev/null
@@ -43,7 +45,7 @@ psql_meta "select cron.schedule_in_database('unrelated', '0 0 * * *', 'select 1'
 node dist/cli/configure-schedules.mjs
 [[ "$(psql_meta "select count(*) from cron.job where jobname='naru-maintenance-retired'")" == 0 ]]
 [[ "$(psql_meta "select count(*) from cron.job where jobname='unrelated'")" == 1 ]]
-[[ "$(psql_app "select count(distinct params->>'name') from absurd.t_maintenance")" == 16 ]]
+[[ "$(psql_app "select count(distinct params->>'name') from absurd.t_maintenance")" == "$maintenance_count" ]]
 # Prove pg_cron itself enqueues into the other database, not just the installer's
 # catch-up call. The temporary queue has no other work and no running worker.
 psql_app 'truncate absurd.c_payments, absurd.e_payments, absurd.r_payments, absurd.t_payments, absurd.w_payments, absurd.c_maintenance, absurd.e_maintenance, absurd.r_maintenance, absurd.t_maintenance, absurd.w_maintenance cascade' >/dev/null
