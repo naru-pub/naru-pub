@@ -10,6 +10,7 @@ import {
 import {
   addInterval,
   addMonths,
+  billingAnchorDay,
   oneTimeYearsForAmount,
   paymentFlowForRecord,
   paymentProviderMetadata,
@@ -59,6 +60,8 @@ type Grant =
       kind: "billing";
       subscriptionId: string;
       interval: BillingInterval;
+      // The plan's renewal day (subscriptions.billing_anchor_day).
+      anchorDay: number | null;
       from: Date;
       notice: "thank_you" | "receipt";
     };
@@ -209,7 +212,7 @@ async function grantForPayment(
   }
   const subscription = await trx
     .selectFrom("subscriptions")
-    .select(["billing_interval", "current_period_end"])
+    .select(["billing_interval", "current_period_end", "billing_anchor_day"])
     .where("id", "=", payment.subscription_id)
     .where("user_id", "=", payment.user_id)
     .executeTakeFirstOrThrow();
@@ -222,6 +225,7 @@ async function grantForPayment(
     kind: "billing",
     subscriptionId: payment.subscription_id,
     interval: subscription.billing_interval as BillingInterval,
+    anchorDay: subscription.billing_anchor_day,
     from: options.from ?? (initial || currentEnd < now ? now : currentEnd),
     notice: options.notice ?? (initial ? "thank_you" : "receipt"),
   };
@@ -245,7 +249,7 @@ async function grantApproval(
   const periodEnd =
     grant.kind === "one-time"
       ? addMonths(periodStart, 12 * grant.years)
-      : addInterval(periodStart, grant.interval);
+      : addInterval(periodStart, grant.interval, grant.anchorDay);
   // Same transaction as the ledger, entitlement, plan, event and mail intent.
   await trx
     .updateTable("payments")
@@ -296,6 +300,7 @@ async function grantApproval(
         status: renewable ? "active" : subscription.status,
         current_period_start: periodStart,
         current_period_end: periodEnd,
+        billing_anchor_day: billingAnchorDay(periodStart, grant.anchorDay),
         next_billing_at: renewable ? periodEnd : null,
         failed_charge_count: 0,
         renewal_notice_sent_at: null,

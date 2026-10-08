@@ -8,6 +8,7 @@ import {
 } from "@jest/globals";
 import {
   addInterval,
+  billingAnchorDay,
   cancelPayment,
   chargeBillingKey,
   confirmPayment,
@@ -357,6 +358,75 @@ describe("billing periods", () => {
       expect(addInterval(new Date(from), interval)).toEqual(new Date(expected));
     },
   );
+
+  // Renewing a plan period by period, each from the last one's end.
+  function renewals(
+    start: string,
+    interval: "month" | "year",
+    count: number,
+  ): string[] {
+    let from = new Date(start);
+    let anchor: number | null = null;
+    const ends: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const end = addInterval(from, interval, anchor);
+      anchor = billingAnchorDay(from, anchor);
+      ends.push(
+        new Date(end.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      );
+      from = end;
+    }
+    return ends;
+  }
+
+  test("a plan started on the 31st renews on the 31st after a short month", () => {
+    expect(renewals("2027-01-31T10:00:00+09:00", "month", 12)).toEqual([
+      "2027-02-28",
+      "2027-03-31",
+      "2027-04-30",
+      "2027-05-31",
+      "2027-06-30",
+      "2027-07-31",
+      "2027-08-31",
+      "2027-09-30",
+      "2027-10-31",
+      "2027-11-30",
+      "2027-12-31",
+      "2028-01-31",
+    ]);
+  });
+
+  test("a plan started on the 30th keeps the 30th past February", () => {
+    expect(renewals("2027-01-30T10:00:00+09:00", "month", 3)).toEqual([
+      "2027-02-28",
+      "2027-03-30",
+      "2027-04-30",
+    ]);
+  });
+
+  test("a yearly plan started on Feb 29 renews on Feb 29 in the next leap year", () => {
+    expect(renewals("2028-02-29T10:00:00+09:00", "year", 4)).toEqual([
+      "2029-02-28",
+      "2030-02-28",
+      "2031-02-28",
+      "2032-02-29",
+    ]);
+  });
+
+  test("a period starting off its anchor takes its own day, never a longer month", () => {
+    // Anchored on the 31st, but charged late on Mar 5: Apr 5, not Apr 30.
+    expect(
+      addInterval(new Date("2027-03-05T10:00:00+09:00"), "month", 31),
+    ).toEqual(new Date("2027-04-05T10:00:00+09:00"));
+    expect(billingAnchorDay(new Date("2027-03-05T10:00:00+09:00"), 31)).toBe(5);
+    // Feb 28 is the 31st's clamp in 2027, but the 28th's own day in March.
+    expect(billingAnchorDay(new Date("2027-02-28T10:00:00+09:00"), 31)).toBe(
+      31,
+    );
+    expect(billingAnchorDay(new Date("2027-03-28T10:00:00+09:00"), 31)).toBe(
+      28,
+    );
+  });
 });
 
 // Toss rejects an orderId outside 6–64 characters of [A-Za-z0-9-_], and reuses

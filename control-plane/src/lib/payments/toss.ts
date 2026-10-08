@@ -620,20 +620,52 @@ const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 // would inherit that drift. The calendar is KST's whatever the server's time
 // zone: a payment at 08:00 on Jan 31 in Seoul is still Jan 30 in UTC, and
 // would otherwise renew on Feb 28 for the wrong reason, or on the 30th.
-export function addMonths(from: Date, months: number): Date {
+// `day` lands on that day of the target month instead of `from`'s, clamped
+// the same way.
+export function addMonths(from: Date, months: number, day?: number): Date {
   const d = new Date(from.getTime() + KST_OFFSET_MS);
-  const day = d.getUTCDate();
+  const targetDay = day ?? d.getUTCDate();
   d.setUTCDate(1);
   d.setUTCMonth(d.getUTCMonth() + months);
-  const lastDay = new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
-  ).getUTCDate();
-  d.setUTCDate(Math.min(day, lastDay));
+  d.setUTCDate(Math.min(targetDay, kstLastDayOfMonth(d)));
   return new Date(d.getTime() - KST_OFFSET_MS);
 }
 
-export function addInterval(from: Date, interval: BillingInterval): Date {
-  return addMonths(from, interval === "month" ? 1 : 12);
+// `shifted` is a Date already moved to KST.
+function kstLastDayOfMonth(shifted: Date): number {
+  return new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+}
+
+// The day of the month (KST) a plan renews on. Clamping alone would forget it:
+// a plan started on Jan 31 ends on Feb 28, and adding a month to Feb 28 gives
+// Mar 28 — every renewal after one short month would come three days early.
+// The anchor carries the 31st across, so Feb 28 renews to Mar 31.
+//
+// The anchor holds only while `from` is on it (or its clamp in a short month).
+// A period that starts elsewhere — a renewal charged late, a first charge
+// after prepaid time, a date moved by a refund — starts a new anchor on its
+// own day, so a stale anchor can never stretch a period past one month.
+export function billingAnchorDay(from: Date, anchorDay: number | null): number {
+  const shifted = new Date(from.getTime() + KST_OFFSET_MS);
+  const day = shifted.getUTCDate();
+  if (anchorDay == null) return day;
+  return Math.min(anchorDay, kstLastDayOfMonth(shifted)) === day
+    ? anchorDay
+    : day;
+}
+
+export function addInterval(
+  from: Date,
+  interval: BillingInterval,
+  anchorDay: number | null = null,
+): Date {
+  return addMonths(
+    from,
+    interval === "month" ? 1 : 12,
+    billingAnchorDay(from, anchorDay),
+  );
 }
 
 // 주문번호는 두 곳에서 모양이 정해진다. 좁은 화면의 결제 내역 한 줄과,

@@ -598,6 +598,7 @@ export interface SiteDataRateLimits {
 
 export interface Subscriptions {
   amount: number;
+  billing_anchor_day: number | null;
   billing_interval: string;
   billing_key_id: string | null;
   billing_key_required_status: ColumnType<"active", never, never>;

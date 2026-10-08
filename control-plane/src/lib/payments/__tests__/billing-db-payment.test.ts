@@ -574,6 +574,35 @@ integration("payments against the database", () => {
       expect(await supporterUntil(userId)).toEqual(granted);
     });
 
+    test("a plan anchored on the 31st renews from Feb 28 to Mar 31", async () => {
+      const periodEnd = new Date("2099-02-28T10:00:00+09:00");
+      const userId = await makeUser(periodEnd);
+      const subId = await makeSubscription(userId, {
+        status: "active",
+        currentPeriodEnd: periodEnd,
+      });
+      await db
+        .updateTable("subscriptions")
+        .set({ billing_anchor_day: 31 })
+        .where("id", "=", subId)
+        .execute();
+
+      const granted = await grantRecurringFixture({
+        notice: "receipt",
+        subscriptionId: subId,
+        userId,
+        interval: "month",
+        amount: 1000,
+        from: periodEnd,
+        payment: tossPayment("anchored-renewal", 1000),
+      });
+
+      expect(granted.periodEnd).toEqual(new Date("2099-03-31T10:00:00+09:00"));
+      const sub = await subscription(subId);
+      expect(sub.billing_anchor_day).toBe(31);
+      expect(new Date(sub.next_billing_at!)).toEqual(granted.periodEnd);
+    });
+
     test("a charge that lands after a cancel keeps the subscription canceled", async () => {
       const userId = await makeUser(new Date(Date.now() - DAY));
       const subId = await makeSubscription(userId, {
