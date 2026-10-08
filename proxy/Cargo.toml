@@ -13,7 +13,7 @@ aws-sdk-s3 = "1.17"
 anyhow = "1.0"
 bytes = "1.10"
 percent-encoding = "2.3"
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "ipnetwork", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "ipnetwork", "uuid", "chrono"] }
 uuid = "1"
 ipnetwork = "0.20"
 chrono = "0.4"

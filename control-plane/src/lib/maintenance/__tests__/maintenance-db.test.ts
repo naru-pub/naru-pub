@@ -123,9 +123,11 @@ integration("durable maintenance", () => {
       .selectFrom("absurd.t_maintenance")
       .selectAll()
       .execute();
-    expect(tasks).toHaveLength(16);
+    expect(tasks).toHaveLength(MAINTENANCE_JOBS.length);
     expect(tasks.every((task) => task.max_attempts === 8)).toBe(true);
-    expect(new Set(tasks.map((task) => task.idempotency_key)).size).toBe(16);
+    expect(new Set(tasks.map((task) => task.idempotency_key)).size).toBe(
+      MAINTENANCE_JOBS.length,
+    );
   });
 
   test("daily probes preserve scheduled UTC time and dedupe intervening hourly checks", async () => {

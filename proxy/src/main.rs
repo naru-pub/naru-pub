@@ -7,7 +7,8 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use ipnetwork::IpNetwork;
+mod pageviews;
+use pageviews::{Pageview, Recorder};
 use percent_encoding::percent_decode_str;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -45,6 +46,7 @@ struct AppState {
     platform_domain: String,
     r2_public_domain: String,
     payment_grace_days: i64,
+    pageviews: Recorder,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +111,14 @@ async fn main() -> Result<()> {
         .expect("Failed to connect to database");
     println!("Connected to database");
 
+    // Analytics has one dedicated connection; bursts never occupy the routing pool.
+    let analytics_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(3))
+        .connect_lazy(&config.database_url)
+        .expect("Invalid analytics database URL");
+    let pageviews = Recorder::start(analytics_pool);
+
     // Create shared application state
     let app_state = Arc::new(AppState {
         s3_client,
@@ -117,6 +127,7 @@ async fn main() -> Result<()> {
         platform_domain: config.platform_domain,
         r2_public_domain: config.r2_public_domain,
         payment_grace_days: config.payment_grace_days,
+        pageviews,
     });
 
     // Create a TCP listener
@@ -279,77 +290,14 @@ fn directory_redirect(uri: &hyper::Uri, decoded_path: &str) -> Option<String> {
     Some(location)
 }
 
-// Record a pageview in the database (fire-and-forget)
-fn record_pageview(
-    db_pool: PgPool,
-    user_id: Uuid,
-    path: String,
-    client_ip: IpAddr,
-    referrer: Option<String>,
-    user_agent: Option<String>,
-) {
-    tokio::spawn(async move {
-        // Convert IpAddr to IpNetwork for PostgreSQL inet type
-        let ip_network = IpNetwork::from(client_ip);
-
-        // Check if this IP has already been seen today for this user
-        let is_new_visitor: bool = sqlx::query_scalar(
-            "SELECT NOT EXISTS (
-                SELECT 1 FROM pageviews
-                WHERE user_id = $1
-                AND ip = $2
-                AND timestamp >= CURRENT_DATE
-            )",
-        )
-        .bind(user_id)
-        .bind(ip_network)
-        .fetch_one(&db_pool)
-        .await
-        .unwrap_or(false);
-
-        // Insert pageview record
-        let insert_result = sqlx::query(
-            "INSERT INTO pageviews (user_id, path, ip, referrer, user_agent) VALUES ($1, $2, $3, $4, $5)"
-        )
-        .bind(user_id)
-        .bind(&path)
-        .bind(ip_network)
-        .bind(&referrer)
-        .bind(&user_agent)
-        .execute(&db_pool)
-        .await;
-
-        if let Err(e) = insert_result {
-            eprintln!("Error recording pageview: {}", e);
-            return;
-        }
-
-        // Update daily stats (upsert)
-        let unique_increment = if is_new_visitor { 1 } else { 0 };
-        let stats_result = sqlx::query(
-            "INSERT INTO pageview_daily_stats (user_id, date, views, unique_visitors)
-            VALUES ($1, CURRENT_DATE, 1, $2)
-            ON CONFLICT (user_id, date) DO UPDATE SET
-                views = pageview_daily_stats.views + 1,
-                unique_visitors = pageview_daily_stats.unique_visitors + $2",
-        )
-        .bind(user_id)
-        .bind(unique_increment)
-        .execute(&db_pool)
-        .await;
-
-        if let Err(e) = stats_result {
-            eprintln!("Error updating daily stats: {}", e);
-        }
-    });
-}
-
 // Handle individual HTTP requests
 async fn handle_request(
     req: Request<hyper::body::Incoming>,
     state: Arc<AppState>,
     socket_ip: IpAddr,
 ) -> Result<Response<Full<Bytes>>> {
+    let request_kind = pageviews::classify(req.method(), req.headers());
+    let request_time = chrono::Utc::now();
     // Get client IP from headers or socket
     let client_ip = get_client_ip(&req, socket_ip);
 
@@ -466,15 +414,18 @@ async fn handle_request(
                 }
             };
 
-            // Record pageview for HTML pages only (fire-and-forget)
+            // Classify successful HTML requests; only top-level GET navigations enqueue.
             if extension == "html" || extension == "htm" {
-                record_pageview(
-                    state.db_pool.clone(),
-                    site_owner.user_id,
-                    pageview_path,
-                    client_ip,
-                    referrer,
-                    user_agent,
+                state.pageviews.record(
+                    request_kind,
+                    Pageview {
+                        user_id: site_owner.user_id,
+                        path: pageview_path,
+                        ip: client_ip.into(),
+                        referrer,
+                        user_agent,
+                        timestamp: request_time,
+                    },
                 );
             }
 

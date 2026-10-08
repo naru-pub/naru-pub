@@ -412,6 +412,13 @@ export interface PageviewDailyStats {
   views: Generated<number>;
 }
 
+export interface PageviewDailyVisitors {
+  date: Timestamp;
+  id: Generated<string>;
+  ip: string;
+  user_id: string;
+}
+
 export interface Pageviews {
   id: Generated<string>;
   ip: string;
@@ -717,6 +724,7 @@ export interface DB {
   home_directory_exports: HomeDirectoryExports;
   home_directory_size_history: HomeDirectorySizeHistory;
   pageview_daily_stats: PageviewDailyStats;
+  pageview_daily_visitors: PageviewDailyVisitors;
   pageviews: Pageviews;
   password_reset_tokens: PasswordResetTokens;
   payment_cron_runs: PaymentCronRuns;

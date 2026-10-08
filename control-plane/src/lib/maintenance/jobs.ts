@@ -18,6 +18,12 @@ export const MAINTENANCE_RETRY_OPTIONS = {
 // deployment catch-up before today's scheduled time belongs to yesterday's run.
 export const MAINTENANCE_JOBS = [
   {
+    name: "pageview-cleanup",
+    script: "cleanup-pageviews.ts",
+    minutes: 15,
+    timeout: 300,
+  },
+  {
     name: "screenshot-updater",
     script: "update-screenshots.tsx",
     minutes: 15,
