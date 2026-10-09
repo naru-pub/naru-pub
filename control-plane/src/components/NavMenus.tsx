@@ -48,6 +48,37 @@ export function NavLink({
   );
 }
 
+// A 7×6 pixel-art heart, drawn in whole pixels to match the logo.
+const HEART_PIXELS = [
+  ".XX.XX.",
+  "XXXXXXX",
+  "XXXXXXX",
+  ".XXXXX.",
+  "..XXX..",
+  "...X...",
+];
+
+export function PixelHeart() {
+  return (
+    <svg
+      viewBox="0 0 7 6"
+      width={14}
+      height={12}
+      shapeRendering="crispEdges"
+      className="shrink-0 fill-destructive"
+      aria-hidden
+    >
+      {HEART_PIXELS.flatMap((row, y) =>
+        [...row].map((pixel, x) =>
+          pixel === "X" ? (
+            <rect key={`${x},${y}`} x={x} y={y} width={1} height={1} />
+          ) : null,
+        ),
+      )}
+    </svg>
+  );
+}
+
 type ExtensionItem = {
   href: string;
   label: string;
@@ -103,8 +134,9 @@ export function SupporterMenu({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className={TRIGGER_CLASS}>
+      <DropdownMenuTrigger className={`${TRIGGER_CLASS} gap-1.5`}>
         서포터
+        <PixelHeart />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuLabel className="flex items-center gap-2">

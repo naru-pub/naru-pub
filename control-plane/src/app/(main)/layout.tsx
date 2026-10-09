@@ -17,7 +17,12 @@ import {
   PLAN_FEATURES,
   type Feature,
 } from "@/lib/entitlements";
-import { AccountMenu, NavLink, SupporterMenu } from "@/components/NavMenus";
+import {
+  AccountMenu,
+  NavLink,
+  PixelHeart,
+  SupporterMenu,
+} from "@/components/NavMenus";
 
 // Korean comes in ~100 unicode-range slices per weight; the browser fetches
 // only the ones a page uses, so nothing is preloaded.
@@ -105,7 +110,12 @@ export default async function RootLayout({
                           githubDeploys={features.has("github_deploys")}
                         />
                       ) : (
-                        <NavLink href="/supporter">서포터</NavLink>
+                        <NavLink href="/supporter">
+                          <span className="inline-flex items-center gap-1.5">
+                            서포터
+                            <PixelHeart />
+                          </span>
+                        </NavLink>
                       )}
                     </div>
 
