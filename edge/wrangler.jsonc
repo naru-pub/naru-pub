@@ -48,7 +48,7 @@
     "R2_PUBLIC_DOMAIN": "r2.naru.pub",
     // Sites served here rather than by the proxy: logins separated by
     // commas, or "*" for every site.
-    "EDGE_SITES": "eyecntct,myoooing",
+    "EDGE_SITES": "*",
   },
   "observability": { "enabled": true },
 }
