@@ -8,9 +8,10 @@
   // this Worker, and a route only reaches a Worker in its zone's account.
   "account_id": "5d508a37b0c6ea183620094959bbc8d1",
   "main": "src/index.ts",
-  // The control plane calls /v1/sites/* at this origin. Routes below would
-  // otherwise make Wrangler disable workers.dev by default.
+  // Keep the existing control-plane endpoint available during the cutover
+  // to site-data.naru.pub. Disable after all callers use the custom domain.
   "workers_dev": true,
+  "preview_urls": false,
   "compatibility_date": "2026-10-01",
   // Buffer and node:crypto, for the control plane's cursor and filter code.
   "compatibility_flags": ["nodejs_compat"],
@@ -21,7 +22,11 @@
   // The public data API. Every site's database is a Durable Object, so the
   // Worker sees all of it; what it does not answer itself it sends on to the
   // control plane, the zone's origin.
-  "routes": [{ "pattern": "naru.pub/api/data/v1/*", "zone_name": "naru.pub" }],
+  "routes": [
+    { "pattern": "naru.pub/api/data/v1/*", "zone_name": "naru.pub" },
+    // The control plane calls /v1/sites/* through this production origin.
+    { "pattern": "site-data.naru.pub", "custom_domain": true },
+  ],
   // Anonymous requests a site may make each calendar month (UTC), unless the
   // control plane sets its own. See docs/database.md, "Monthly request budget".
   "vars": { "SITE_MONTHLY_REQUESTS": "500000" },
