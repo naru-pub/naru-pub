@@ -4,8 +4,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "naru-site-data",
-  // The account that holds the naru.pub zone: the per-site routes attach to
-  // this Worker, and a route only reaches a Worker in its zone's account.
+  // The account that holds the naru.pub zone: a route or custom domain only
+  // reaches a Worker in its zone's account.
   "account_id": "5d508a37b0c6ea183620094959bbc8d1",
   "main": "src/index.ts",
   // Production callers use site-data.naru.pub; expose no workers.dev URLs.
