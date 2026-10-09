@@ -1,6 +1,6 @@
-// The Durable Objects store for Naru site databases. One object per site,
-// named by the site; the control plane is its only caller (see
-// docs/database.md, "Durable Objects backend").
+// Naru site databases: one Durable Object per site, named by the site. The
+// Worker answers the public data API's visitors and serves the control plane
+// (see docs/database.md).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "naru-site-data",
@@ -15,6 +15,10 @@
     "bindings": [{ "name": "SITES", "class_name": "SiteData" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteData"] }],
+  // The public data API. Every site's database is a Durable Object, so the
+  // Worker sees all of it; what it does not answer itself it sends on to the
+  // control plane, the zone's origin.
+  "routes": [{ "pattern": "naru.pub/api/data/v1/*", "zone_name": "naru.pub" }],
   // Anonymous requests a site may make each calendar month (UTC), unless the
   // control plane sets its own. See docs/database.md, "Monthly request budget".
   "vars": { "SITE_MONTHLY_REQUESTS": "500000" },

@@ -9,7 +9,8 @@ import { uuidId } from "../validation";
 const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 integration("site-data UUID column migration", () => {
-  beforeAll(setupTestDatabase);
+  // The PostgreSQL collections this migration ran against.
+  beforeAll(() => setupTestDatabase({ postgresSiteData: true }));
   afterAll(async () => {
     await teardownTestDatabase();
     await db.destroy();

@@ -18,13 +18,11 @@ const mockObjects = new Map<
 >();
 
 import { db } from "@/lib/database";
-import { runSdkStress } from "./sdk-stress";
-import { runSdkMixedStress } from "./sdk-mixed-stress";
 import { GET as dataRoute } from "@/app/(main)/api/data/v1/[site]/[[...path]]/route";
 import { POST as authRoute } from "@/app/(main)/api/data-auth/v1/[action]/route";
-import { siteDataBackend } from "../backend";
-import { eraseSiteData } from "../durable-object";
 import { configureEdge } from "../edge";
+import { executeData } from "../service";
+import { eraseSiteData } from "../worker";
 import { mediaStorage } from "../media";
 import {
   approveAuthorization,
@@ -42,12 +40,10 @@ import {
 const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 
-// Real SDK -> native fetch -> HTTP -> actual route -> service -> PostgreSQL.
+// Real SDK -> native fetch -> HTTP -> actual route -> service -> the site's
+// Durable Object, in a local site-data Worker (scripts/with-site-data-worker.sh).
 // The adapter replaces Next's HTTP listener, not the route or its responses.
-// With NARU_DATA_TEST_BACKEND=durable_object (scripts/test-data-durable-
-// objects.sh) the site's documents live in the site-data Worker instead.
-const backend = process.env.NARU_DATA_TEST_BACKEND ?? "postgres";
-// With NARU_DATA_TEST_EDGE=1 too, the SDK's data requests go to the Worker,
+// With NARU_DATA_TEST_EDGE=1, the SDK's data requests go to the Worker,
 // which answers visitors itself and sends the rest on to this suite's server.
 const edge = process.env.NARU_DATA_TEST_EDGE === "1";
 integration("SDK and data API contract", () => {
@@ -184,28 +180,11 @@ integration("SDK and data API contract", () => {
     await sql`insert into sessions values ('sdk-session', ${userId}, now() + interval '1 hour')`.execute(
       db,
     );
-    if (backend === "durable_object") {
-      // The Worker's storage outlives a suite, and other suites use alice too.
-      await eraseSiteData("alice");
-      await sql`update users set site_data_backend = 'durable_object' where id = ${userId}`.execute(
-        db,
-      );
-      // The object makes UUIDs, as PostgreSQL does in production (migration
-      // 1790824144110); this schema predates that and keeps integer ids.
-      for (const table of [
-        "site_data_clients",
-        "site_data_auth_codes",
-        "site_data_access_tokens",
-      ])
-        await sql`alter table ${sql.table(table)} alter column collection_ids type text[]`.execute(
-          db,
-        );
-    }
+    // The Worker's storage outlives a suite, and other suites use alice too.
+    await eraseSiteData("alice");
     const collections = ["crud", "feed", "atomic", "private"];
     for (const name of collections)
-      await (
-        await siteDataBackend("alice")
-      ).execute({
+      await executeData({
         site: "alice",
         adminUserId: userId,
         method: "POST",
@@ -219,7 +198,7 @@ integration("SDK and data API contract", () => {
     // Registered as one address of the page and signed in from another; Naru
     // serves both as the page /admin/, and returns to the one signed in from.
     const redirectUri = `${origin}/admin`;
-    if (edge) await configureEdge("alice", userId, true);
+    if (edge) await configureEdge("alice", userId);
     await registerClient(userId, {
       redirectUri: `${origin}/admin/index.html`,
       collections,
@@ -294,18 +273,6 @@ integration("SDK and data API contract", () => {
       await db.destroy();
     }
   });
-
-  (process.env.NARU_SDK_STRESS === "1" ? test : test.skip)(
-    "local SDK stress",
-    async () => runSdkStress({ naru, admin, origin, nativeFetch }),
-    600000,
-  );
-
-  (process.env.NARU_SDK_MIXED_STRESS === "1" ? test : test.skip)(
-    "local SDK mixed stress",
-    async () => runSdkMixedStress({ naru, admin }),
-    600000,
-  );
 
   test("CRUD preserves JSON, metadata, revisions, and semantic failures", async () => {
     const posts = admin.collection("crud");

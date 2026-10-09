@@ -4,7 +4,7 @@ import { Kysely, sql } from "kysely";
 import type { DB } from "@/lib/db";
 import { db } from "@/lib/database";
 import { DataError, name, unreservedName, uuidId } from "./validation";
-import { siteDataBackend } from "./backend";
+import { createCollections, listCollections } from "./service";
 
 export const TOKEN_SECONDS = 24 * 60 * 60;
 export function tokenLifetime(value: unknown): number {
@@ -152,22 +152,21 @@ async function lockOwner(tx: Kysely<DB>, userId: string) {
     .forUpdate()
     .executeTakeFirstOrThrow();
 }
-/** The site's collections by name, from whichever store holds them. */
+/** The account behind a user id, as the site-data service names it. */
+async function siteOwner(tx: Kysely<DB>, userId: string) {
+  return tx
+    .selectFrom("users")
+    .select(["id", "login_name as loginName"])
+    .where("id", "=", userId)
+    .executeTakeFirstOrThrow();
+}
+/** The site's collections by name, from its Durable Object. */
 async function siteCollections(
   tx: Kysely<DB>,
   userId: string,
   names: string[],
 ) {
-  const owner = await tx
-    .selectFrom("users")
-    .select(["id", "login_name as loginName"])
-    .where("id", "=", userId)
-    .executeTakeFirstOrThrow();
-  return (await siteDataBackend(owner.loginName, tx)).collections(
-    owner,
-    names,
-    tx,
-  );
+  return listCollections(await siteOwner(tx, userId), names);
 }
 async function scope(tx: Kysely<DB>, userId: string, names: string[]) {
   const rows = await siteCollections(tx, userId, names);
@@ -452,23 +451,15 @@ export async function prepareAuthorization(
     const setup = await setupNeeded(tx, userId, input);
     if (!setup) return;
     if (setup.create.length) {
-      const owner = await tx
-        .selectFrom("users")
-        .select(["id", "login_name as loginName"])
-        .where("id", "=", userId)
-        .executeTakeFirstOrThrow();
-      // In PostgreSQL this joins the transaction; another store commits now,
-      // and a registration that then fails leaves only empty collections.
-      const created = await (
-        await siteDataBackend(owner.loginName, tx)
-      ).createCollections(
-        owner,
+      // The collections are in the site's Durable Object and commit now; a
+      // registration that then fails leaves only empty collections.
+      const created = await createCollections(
+        await siteOwner(tx, userId),
         setup.create.map((collection) => ({
           name: unreservedName(collection),
           read_access: "admin",
           write_access: "admin",
         })),
-        tx,
       );
       if (created === null)
         throw new DataError(409, "Collection limit reached.", "QUOTA_EXCEEDED");
@@ -775,80 +766,4 @@ export async function revokeToken(token: string, origin: string | null) {
       .where("hash", "=", digest(token))
       .execute();
   });
-}
-
-/**
- * Bounds writes that arrive with no owner credential. Every such write takes
- * the owner row lock and re-aggregates the site's whole document usage, so an
- * unbounded stranger-driven write is expensive far out of proportion to the
- * request that caused it. A `world`-writable collection is as reachable as a
- * `create` one, so both are counted here.
- */
-const currentWindow = () => new Date(Math.floor(Date.now() / 60000) * 60000);
-const publicWriteBuckets = (clientIp?: string) =>
-  [
-    ["site", 60],
-    [`ip:${digest(clientIp || "unknown")}`, 20],
-  ] as const;
-const rateLimited = () =>
-  new DataError(429, "Public write rate limit reached. Try again next minute.");
-
-/**
- * Refuses a public write that is already over its limit, before it queues for
- * the owner row lock. A burst past the limit would otherwise wait in line
- * behind the site's legitimate writes only to be refused at the front of it.
- * One unlocked read: it can let a request through that the locked count below
- * then refuses, but never refuses one that would have been allowed.
- */
-export async function refusePublicWriteOverLimit(
-  site: string,
-  clientIp?: string,
-) {
-  const buckets = publicWriteBuckets(clientIp);
-  const counts = await db
-    .selectFrom("site_data_rate_limits as r")
-    .innerJoin("users as u", "u.id", "r.user_id")
-    .select(["r.key", "r.count"])
-    .where("u.login_name", "=", site)
-    .where("r.window_start", ">=", currentWindow())
-    .where(
-      "r.key",
-      "in",
-      buckets.map(([key]) => key),
-    )
-    .execute();
-  for (const [key, maximum] of buckets)
-    if ((counts.find((row) => row.key === key)?.count ?? 0) >= maximum)
-      throw rateLimited();
-}
-
-export async function limitPublicWrite(
-  tx: Kysely<DB>,
-  userId: string,
-  clientIp?: string,
-) {
-  const window = currentWindow();
-  await tx
-    .deleteFrom("site_data_rate_limits")
-    .where("user_id", "=", userId)
-    .where("window_start", "<", window)
-    .execute();
-  for (const [key, maximum] of publicWriteBuckets(clientIp)) {
-    const bucket = await tx
-      .selectFrom("site_data_rate_limits")
-      .select("count")
-      .where("user_id", "=", userId)
-      .where("key", "=", key)
-      .executeTakeFirst();
-    if ((bucket?.count ?? 0) >= maximum) throw rateLimited();
-    await tx
-      .insertInto("site_data_rate_limits")
-      .values({ user_id: userId, key, window_start: window, count: 1 })
-      .onConflict((oc) =>
-        oc
-          .columns(["user_id", "key"])
-          .doUpdateSet({ count: sql`site_data_rate_limits.count + 1` }),
-      )
-      .execute();
-  }
 }

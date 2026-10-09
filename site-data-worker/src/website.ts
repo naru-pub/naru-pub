@@ -13,13 +13,13 @@ import {
 } from "../../control-plane/src/lib/site-data/validation";
 import type { Outcome, Served, SiteData } from "./site";
 
-// The public data API, /api/data/v1/<site>/..., for sites on Durable Objects.
-// Cloudflare routes a site here once it has moved (a Worker route per site,
-// which the control plane adds), so a visitor's request is answered at the
-// edge instead of crossing to the control plane and back. Whatever needs the
-// control plane is sent on to it unchanged: requests with an owner token
-// (sign-in scope and renewal live in PostgreSQL), media (`_files`), batches
-// (owner only), and any request the object says it is not serving.
+// The public data API, /api/data/v1/<site>/..., routed here for every site.
+// A visitor's request is answered at the edge from the site's object instead
+// of crossing to the control plane and back. Whatever needs the control plane
+// is sent on to it unchanged: requests with an owner token (sign-in scope and
+// renewal live in PostgreSQL), media (`_files`), batches (owner only), and
+// any request the object will not answer, such as a site whose paid status it
+// has not had confirmed.
 //
 // The answer is the control plane's (http.ts), from the same protocol module:
 // same headers, same caching, same errors.

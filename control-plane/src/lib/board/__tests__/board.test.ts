@@ -83,6 +83,11 @@ const {
   publishTemplatePost,
   publishTemplateVersion,
 } = require("../templates") as typeof import("../templates");
+// Site databases are Durable Objects: the script starts a local Worker.
+const { createCollections, listCollections } =
+  require("@/lib/site-data/service") as typeof import("@/lib/site-data/service");
+const { eraseSiteData } =
+  require("@/lib/site-data/worker") as typeof import("@/lib/site-data/worker");
 
 // Runs against a disposable, migrated database (scripts/test-board.sh), never
 // the developer's own.
@@ -127,6 +132,7 @@ integration("board", () => {
     alice = await makeUser("alice");
     bob = await makeUser("bob");
     carol = await makeUser("carol");
+    for (const user of [alice, bob, carol]) await eraseSiteData(user.loginName);
   });
 
   afterAll(async () => {
@@ -503,15 +509,9 @@ integration("board", () => {
     test("applies into a folder and backs up what it overwrites", async () => {
       put("alice/retro/index.html");
       put("alice/retro/guestbook.js", "application/javascript");
-      await db
-        .insertInto("site_data_collections")
-        .values({
-          user_id: alice.id,
-          name: "guestbook",
-          read_access: "world",
-          write_access: "create",
-        })
-        .execute();
+      await createCollections(alice, [
+        { name: "guestbook", read_access: "world", write_access: "create" },
+      ]);
       const { postId, templateId } = await publish({
         collections: ["guestbook"],
       });
@@ -543,13 +543,11 @@ integration("board", () => {
       expect(bucket.has("bob/guestbook.js")).toBe(true);
       expect(bucket.has("bob/about.html")).toBe(true);
 
-      const collection = await db
-        .selectFrom("site_data_collections")
-        .select(["read_access", "write_access"])
-        .where("user_id", "=", bob.id)
-        .where("name", "=", "guestbook")
-        .executeTakeFirstOrThrow();
-      expect(collection).toEqual({
+      const [collection] = await listCollections(bob, ["guestbook"]);
+      expect({
+        read_access: collection.read_access,
+        write_access: collection.write_access,
+      }).toEqual({
         read_access: "world",
         write_access: "create",
       });

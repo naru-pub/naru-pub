@@ -1,15 +1,6 @@
 /** @jest-environment node */
 import { beforeEach, expect, jest, test } from "@jest/globals";
 jest.mock("../service", () => ({ executeData: jest.fn() }));
-// Every site on PostgreSQL, without asking a database which store it is on.
-jest.mock("../backend", () => ({
-  siteDataBackend: async () => ({
-    execute: (command: unknown) =>
-      (require("../service") as typeof import("../service")).executeData(
-        command as never,
-      ),
-  }),
-}));
 jest.mock("@/lib/auth", () => ({ validateRequest: jest.fn() }));
 const { dataRequest } = require("../http") as typeof import("../http");
 const execute = jest.mocked(
@@ -356,7 +347,7 @@ test("SDK freshness reads stay uncached independently of the shared cache lifeti
   }
 });
 
-test("write requests forward cancellation to admission", async () => {
+test("requests forward cancellation to the site-data Worker call", async () => {
   const controller = new AbortController();
   const request = new Request("https://naru.pub/api/data/v1/alice/posts", {
     method: "POST",
@@ -368,13 +359,13 @@ test("write requests forward cancellation to admission", async () => {
   expect(execute.mock.calls[0][0].signal).toBe(request.signal);
 });
 
-test("admission overload uses the existing uncached UNAVAILABLE protocol", async () => {
+test("an unavailable site database uses the uncached UNAVAILABLE protocol", async () => {
   const { DataError } =
     require("../validation") as typeof import("../validation");
   execute.mockRejectedValue(
     new DataError(
       503,
-      "Site writes are busy. Try again shortly.",
+      "The site database is unavailable. Try again shortly.",
       "UNAVAILABLE",
     ),
   );
@@ -392,12 +383,12 @@ test("admission overload uses the existing uncached UNAVAILABLE protocol", async
   expect(await response.json()).toEqual({
     error: {
       code: "UNAVAILABLE",
-      message: "Site writes are busy. Try again shortly.",
+      message: "The site database is unavailable. Try again shortly.",
     },
   });
 });
 
-test("canceled queued writes do not log an unexpected server failure", async () => {
+test("canceled requests do not log an unexpected server failure", async () => {
   const controller = new AbortController();
   const request = new Request("https://naru.pub/api/data/v1/alice/posts", {
     method: "POST",

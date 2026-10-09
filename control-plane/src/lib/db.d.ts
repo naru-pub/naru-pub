@@ -559,24 +559,6 @@ export interface SiteDataClients {
   user_id: string;
 }
 
-export interface SiteDataCollections {
-  id: Generated<string>;
-  name: string;
-  read_access: Generated<string>;
-  user_id: string;
-  write_access: Generated<string>;
-}
-
-export interface SiteDataDocuments {
-  collection_id: string;
-  created_at: Generated<Timestamp>;
-  data: unknown;
-  id: string;
-  size_bytes: number;
-  updated_at: Generated<Timestamp>;
-  version: Generated<number>;
-}
-
 export interface SiteDataFiles {
   content_type: string;
   created_at: Generated<Timestamp>;
@@ -587,13 +569,6 @@ export interface SiteDataFiles {
   status: Generated<string>;
   updated_at: Generated<Timestamp>;
   user_id: string;
-}
-
-export interface SiteDataRateLimits {
-  count: number;
-  key: string;
-  user_id: string;
-  window_start: Timestamp;
 }
 
 export interface Subscriptions {
@@ -679,9 +654,8 @@ export interface Users {
   last_activity_sent_at: Timestamp | null;
   login_name: string;
   password_hash: string;
-  site_data_backend: Generated<"postgres" | "moving_to_durable_object" | "durable_object" | "moving_to_postgres">;
-  site_data_bytes_used: ColumnType<string, never, never>;
-  site_data_document_count: ColumnType<string, never, never>;
+  site_data_bytes_used: ColumnType<string, never, number>;
+  site_data_document_count: ColumnType<string, never, number>;
   site_rendered_at: Timestamp | null;
   site_title: string | null;
   site_updated_at: Timestamp | null;
@@ -739,10 +713,7 @@ export interface DB {
   site_data_access_tokens: SiteDataAccessTokens;
   site_data_auth_codes: SiteDataAuthCodes;
   site_data_clients: SiteDataClients;
-  site_data_collections: SiteDataCollections;
-  site_data_documents: SiteDataDocuments;
   site_data_files: SiteDataFiles;
-  site_data_rate_limits: SiteDataRateLimits;
   subscriptions: Subscriptions;
   toss_calls: TossCalls;
   toss_webhook_deliveries: TossWebhookDeliveries;

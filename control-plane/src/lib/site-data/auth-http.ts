@@ -2,6 +2,7 @@ import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { DataError, jsonBody, protocolError, sameOrigin } from "./validation";
 import { userHasFeature } from "@/lib/entitlements";
+import { listCollections } from "./service";
 import {
   approveAuthorization,
   authorizationInput,
@@ -67,11 +68,7 @@ export async function ownerAuthRequest(request: Request, action: string) {
         .where("user_id", "=", user.id)
         .orderBy("created_at")
         .execute();
-      const collections = await db
-        .selectFrom("site_data_collections")
-        .select(["id", "name"])
-        .where("user_id", "=", user.id)
-        .execute();
+      const collections = await listCollections(user);
       return Response.json(
         {
           clients: clients.map((c) => ({

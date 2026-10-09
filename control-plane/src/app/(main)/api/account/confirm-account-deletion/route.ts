@@ -17,7 +17,7 @@ import { dispatchActorDelete } from "@/lib/federation";
 import { deleteCustomDomainsForUser } from "@/lib/customDomains";
 import { verify } from "@node-rs/argon2";
 import { deleteUserMedia } from "@/lib/site-data/media";
-import { eraseSiteData } from "@/lib/site-data/durable-object";
+import { eraseSiteData } from "@/lib/site-data/worker";
 import { deleteUserTemplateObjects } from "@/lib/board/templates";
 import {
   CHARGE_IN_FLIGHT_MESSAGE,
@@ -146,8 +146,7 @@ export async function POST(request: NextRequest) {
     }
 
     await deleteUserMedia(user.id);
-    // PostgreSQL's site data goes with the account row below; a Durable
-    // Object's does not.
+    // The site's database is a Durable Object, outside this database.
     await eraseSiteData(user.loginName);
     // Template snapshots and the site screenshot live outside the home
     // directory.

@@ -15,7 +15,7 @@ import {
   getUserHomeDirectory,
   getUserObjectKey,
 } from "@/lib/site-urls";
-import { siteDataBackend } from "@/lib/site-data/backend";
+import { createCollections, listCollections } from "@/lib/site-data/service";
 import {
   APPLICATIONS_PER_HOUR,
   MAX_CHANGELOG_LENGTH,
@@ -190,9 +190,7 @@ async function resolveCollections(
   }
   const names = [...new Set(value as string[])];
   if (names.length === 0) return [];
-  const rows = await (
-    await siteDataBackend(user.loginName)
-  ).collections(user, names);
+  const rows = await listCollections(user, names);
   if (rows.length !== names.length) {
     throw new BoardError(400, "내 데이터베이스에 없는 컬렉션이 있어요.");
   }
@@ -595,11 +593,7 @@ export async function planApplication(
   const hasDatabase = (await getUserFeatures(user.id)).has("database");
   const collectionNames = version.data_collections.map((c) => c.name);
   const existingCollections = new Set(
-    (
-      await (
-        await siteDataBackend(user.loginName)
-      ).collections(user, collectionNames)
-    ).map((row) => row.name),
+    (await listCollections(user, collectionNames)).map((row) => row.name),
   );
 
   const planned = files.map((file) => {
@@ -752,15 +746,13 @@ export async function applyTemplate(
     return row;
   });
 
-  // After the application is recorded, in a store that may not be this
-  // database. The collections are empty, so one that fails is only reported
-  // as skipped; the files are already in place either way.
+  // After the application is recorded: the collections are in the site's
+  // Durable Object, outside this transaction. They are empty, so one that
+  // fails is only reported as skipped; the files are in place either way.
   if (toCreate.length > 0) {
     let created: string[] | null = null;
     try {
-      created = await (
-        await siteDataBackend(user.loginName)
-      ).createCollections(user, toCreate);
+      created = await createCollections(user, toCreate);
     } catch (error) {
       console.error("Template collections were not created", error);
     }

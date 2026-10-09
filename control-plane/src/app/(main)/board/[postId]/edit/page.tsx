@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { validateRequest } from "@/lib/auth";
 import { getPost } from "@/lib/board/posts";
 import { getTemplateForPost } from "@/lib/board/templates";
-import { db } from "@/lib/database";
+import { listCollections } from "@/lib/site-data/service";
 import { EditPostForm } from "./EditPostForm";
 import { NewVersionForm } from "./NewVersionForm";
 
@@ -30,14 +30,7 @@ export default async function EditPostPage({
 
   const template =
     post.kind === "template" ? await getTemplateForPost(post.id) : null;
-  const collections = template
-    ? await db
-        .selectFrom("site_data_collections")
-        .select("name")
-        .where("user_id", "=", user.id)
-        .orderBy("name")
-        .execute()
-    : [];
+  const collections = template ? await listCollections(user) : [];
   const latest = template?.versions[0] ?? null;
 
   return (

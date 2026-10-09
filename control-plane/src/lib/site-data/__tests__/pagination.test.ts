@@ -10,8 +10,8 @@ import {
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { executeData } from "../service";
+import { callSiteDataWorker, eraseSiteData } from "../worker";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
-import { down, up } from "@/migrations/1788180032055_add_site_data_created_at";
 
 // The wire form of one sort key.
 // Tests name keys the way cursors do; the wire names metadata explicitly.
@@ -24,6 +24,7 @@ function sortField(field: string) {
 }
 const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
+// Against the site's Durable Object, in a local Worker (test-data-sdk.sh).
 integration("sorted database pagination", () => {
   let ready = false,
     owner: string;
@@ -34,7 +35,32 @@ integration("sorted database pagination", () => {
       path,
       adminUserId: owner,
       ...extra,
-    });
+    }) as Promise<{
+      documents: { id: string; data: unknown }[];
+      document: {
+        id: string;
+        data: unknown;
+        createdAt: Date;
+        updatedAt: Date;
+      };
+      nextCursor: string | null;
+      totalCount?: number;
+    }>;
+  /** Sets documents' creation and modification times, as epoch ms. */
+  const setTimes = async (times: Record<string, number>) => {
+    type Snapshot = {
+      documents: { id: string; created_at: number; updated_at: number }[];
+    };
+    const snapshot = await callSiteDataWorker<Snapshot>(
+      "sorting",
+      "export",
+      {},
+    );
+    for (const document of snapshot.documents)
+      if (document.id in times)
+        document.created_at = document.updated_at = times[document.id];
+    await callSiteDataWorker("sorting", "import", snapshot);
+  };
   beforeAll(async () => {
     await setupTestDatabase();
     ready = true;
@@ -47,26 +73,20 @@ integration("sorted database pagination", () => {
     ).rows[0].id;
   });
   beforeEach(async () => {
-    await db.deleteFrom("site_data_collections").execute();
+    await eraseSiteData("sorting");
     await call("POST", [], { body: { name: "posts", read: "world" } });
-    for (const [id, time] of [
-      ["a", "2026-08-01T00:00:00.000001Z"],
-      ["b", "2026-08-01T00:00:00.000002Z"],
-      ["c", "2026-08-01T00:00:00.000002Z"],
-      ["d", "2026-08-01T00:00:00.000003Z"],
-    ]) {
+    for (const id of ["a", "b", "c", "d"])
       await call("PUT", ["posts", id], { body: { data: { title: id } } });
-      await sql`update site_data_documents set created_at=${time}::timestamptz, updated_at=${time}::timestamptz where id=${id}`.execute(
-        db,
-      );
-    }
+    // b and c share a millisecond: the id breaks the tie.
+    const at = Date.parse("2026-08-01T00:00:00Z");
+    await setTimes({ a: at + 1, b: at + 2, c: at + 2, d: at + 3 });
   });
   afterAll(async () => {
     if (ready) await teardownTestDatabase();
     await db.destroy();
   });
   test.each(["id", "createdAt", "updatedAt"])(
-    "%s traversal handles ties and submillisecond precision in both directions",
+    "%s traversal handles ties in both directions",
     async (orderBy) => {
       for (const direction of ["asc", "desc"]) {
         const ids: string[] = [];
@@ -191,7 +211,7 @@ integration("sorted database pagination", () => {
     });
     const doc = (await call("GET", ["posts", "a"])).document!;
     expect(new Date(doc.createdAt).toISOString()).toBe(
-      "2026-08-01T00:00:00.000Z",
+      "2026-08-01T00:00:00.001Z",
     );
     expect(new Date(doc.updatedAt).getTime()).toBeGreaterThan(
       new Date(doc.createdAt).getTime(),
@@ -338,20 +358,6 @@ integration("sorted database pagination", () => {
     expect(ranged.documents!.map((doc) => doc.id)).toEqual(["upper", "lower"]);
   });
 
-  test("metadata ordering still reaches its index after the sort rewrite", async () => {
-    const plan = await db.transaction().execute(async (tx) => {
-      await sql`set local enable_seqscan=off`.execute(tx);
-      return sql`explain (format json) select id from site_data_documents
-        where collection_id = 1 order by "created_at" desc, id collate "C" desc limit 2`.execute(
-        tx,
-      );
-    });
-    expect(JSON.stringify(plan.rows)).toContain(
-      "site_data_documents_created_at_idx",
-    );
-    expect(JSON.stringify(plan.rows)).not.toContain('"Node Type":"Sort"');
-  });
-
   test("two-field ordering remains global across page tokens", async () => {
     await call("PUT", ["posts", "a"], {
       body: { data: { title: "a", day: "2026-09-01" } },
@@ -362,15 +368,11 @@ integration("sorted database pagination", () => {
     await call("PUT", ["posts", "c"], {
       body: { data: { title: "c", day: "2026-09-02" } },
     });
-    await sql`update site_data_documents set created_at='2026-09-01T01:00:00Z' where id='a'`.execute(
-      db,
-    );
-    await sql`update site_data_documents set created_at='2026-09-01T03:00:00Z' where id='b'`.execute(
-      db,
-    );
-    await sql`update site_data_documents set created_at='2026-09-01T02:00:00Z' where id='c'`.execute(
-      db,
-    );
+    await setTimes({
+      a: Date.parse("2026-09-01T01:00:00Z"),
+      b: Date.parse("2026-09-01T03:00:00Z"),
+      c: Date.parse("2026-09-01T02:00:00Z"),
+    });
     const orderBy = JSON.stringify([
       ["day", "desc"],
       [{ metadata: "createdAt" }, "desc"],
@@ -388,19 +390,5 @@ integration("sorted database pagination", () => {
       pageToken = page.nextCursor ?? undefined;
     } while (pageToken);
     expect(ids.slice(0, 3)).toEqual(["c", "b", "a"]);
-  });
-  test("migration backfills creation time without changing data and supports rollback", async () => {
-    await down(db);
-    await up(db);
-    const result = await sql<{
-      equal: boolean;
-      count: string;
-    }>`select bool_and(created_at=updated_at) as equal, count(*) as count from site_data_documents`.execute(
-      db,
-    );
-    expect(result.rows[0]).toEqual({ equal: true, count: "4" });
-    expect((await call("GET", ["posts", "a"])).document!.data).toEqual({
-      title: "a",
-    });
   });
 });

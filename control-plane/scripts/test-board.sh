@@ -23,4 +23,6 @@ pg_started=1
 "$pg_bin/createdb" -h "$pg_dir" -U board_test naru_board_test
 export DATABASE_URL="postgresql://board_test@localhost/naru_board_test?host=$pg_dir"
 ./node_modules/.bin/tsx src/cli/migrate.ts >/dev/null
-NARU_BOARD_TEST=1 ./node_modules/.bin/jest --config jest.data.config.cjs --runInBand src/lib/board "$@"
+# Template collections are in site databases: Durable Objects, in a local Worker.
+NARU_BOARD_TEST=1 scripts/with-site-data-worker.sh \
+  ./node_modules/.bin/jest --config jest.data.config.cjs --runInBand src/lib/board "$@"

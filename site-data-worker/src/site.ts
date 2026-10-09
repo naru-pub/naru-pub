@@ -81,7 +81,6 @@ export type StoredDocument = {
 
 export type Snapshot = {
   ownerId: string | null;
-  frozen: boolean;
   collections: Collection[];
   documents: StoredDocument[];
 };
@@ -107,25 +106,29 @@ export type Served =
   | { pass: true }
   | { pass?: undefined; result: unknown; publicRead: boolean };
 
-/** What the control plane keeps current in each object it serves at the edge. */
+/**
+ * What the control plane keeps current in the object of each site with the
+ * database feature, so the edge can make PostgreSQL's paid-status check.
+ */
 export type EdgeConfiguration = {
   ownerId: string;
-  /** Answer anonymous requests here rather than passing them on. */
-  edge: boolean;
   /** When the site's database feature ends, epoch ms; null never. */
   entitledUntil: number | null;
+  /**
+   * Until when that is known to be current, epoch ms: the control plane
+   * renews it on every sync. Past it the object answers no visitor and the
+   * control plane decides, so a revoked feature or a stopped sync is never
+   * served from a stale date.
+   */
+  confirmedUntil: number;
   /** A budget other than the Worker's default; null restores the default. */
   monthlyRequests?: number | null;
 };
 
+export type Usage = { documents: number; bytes: number };
+
 type Row = Record<string, SqlStorageValue>;
 
-const moving = () =>
-  new DataError(
-    503,
-    "This site's database is moving. Try again in a minute.",
-    "UNAVAILABLE",
-  );
 const outsideScope = (collection: string) =>
   new DataError(
     403,
@@ -370,10 +373,6 @@ export class SiteData extends DurableObject<Env> {
       throw new DataError(503, "Site storage belongs to another account.");
   }
 
-  private writable() {
-    if (this.meta("frozen") === "1") throw moving();
-  }
-
   private collection(id: string, row: Row) {
     return { id, user_id: this.meta("owner_id"), ...row };
   }
@@ -495,20 +494,14 @@ export class SiteData extends DurableObject<Env> {
 
   /**
    * An anonymous request at the edge. The object answers it only while the
-   * control plane has it serving the site (`configure`) and it is not frozen
-   * by a move; otherwise the Worker sends the request on, and the control
-   * plane decides. The paid-status check PostgreSQL makes for the control
-   * plane is made here against the date the control plane last sent.
+   * control plane's paid-status date is confirmed (`configure`); otherwise
+   * the Worker sends the request on and the control plane decides.
    */
   async serve(input: ServeInput): Promise<Outcome<Served>> {
     const ownerId = this.meta("owner_id");
     const until = this.meta("entitled_until");
-    if (
-      ownerId === null ||
-      until === null ||
-      this.meta("edge") !== "1" ||
-      this.meta("frozen") === "1"
-    )
+    const confirmed = Number(this.meta("confirmed_until") ?? 0);
+    if (ownerId === null || until === null || confirmed <= Date.now())
       return { ok: true, value: { pass: true } };
     const spent = this.run(() => this.spend());
     if (!spent.ok) return spent;
@@ -528,20 +521,21 @@ export class SiteData extends DurableObject<Env> {
     });
   }
 
-  /** Sets what `serve` relies on; see EdgeConfiguration. */
-  async configure(input: EdgeConfiguration) {
+  /** Sets what `serve` relies on (see EdgeConfiguration); reports usage. */
+  async configure(input: EdgeConfiguration): Promise<Outcome<Usage>> {
     return this.run(() => {
       this.claim(input.ownerId);
-      this.setMeta("edge", input.edge ? "1" : null);
       this.setMeta(
         "entitled_until",
         input.entitledUntil === null ? "forever" : String(input.entitledUntil),
       );
+      this.setMeta("confirmed_until", String(input.confirmedUntil));
       if (input.monthlyRequests !== undefined)
         this.setMeta(
           "monthly_requests",
           input.monthlyRequests === null ? null : String(input.monthlyRequests),
         );
+      return this.usage();
     });
   }
 
@@ -549,7 +543,6 @@ export class SiteData extends DurableObject<Env> {
     const { path, method, access } = input;
     const body = input.body ?? {};
     const reading = method === "GET";
-    if (!reading) this.writable();
     this.claim(input.ownerId);
     const { admin, allowedIds } = access;
     let publicRead = false;
@@ -852,7 +845,6 @@ export class SiteData extends DurableObject<Env> {
     operations: unknown[];
   }) {
     return this.run(() => {
-      this.writable();
       this.claim(input.ownerId);
       const collections = this.rows(
         "SELECT id, name, read_access, write_access FROM collections",
@@ -946,7 +938,6 @@ export class SiteData extends DurableObject<Env> {
   }) {
     return this.run(() => {
       if (!input.collections.length) return [];
-      this.writable();
       this.claim(input.ownerId);
       const count = Number(
         this.rows("SELECT count(*) AS count FROM collections")[0].count,
@@ -968,19 +959,9 @@ export class SiteData extends DurableObject<Env> {
     });
   }
 
-  /** Refuses writes until `import` or `unfreeze`, so a copy cannot go stale. */
-  async freeze() {
-    return this.run(() => this.setMeta("frozen", "1"));
-  }
-
-  async unfreeze() {
-    return this.run(() => this.setMeta("frozen", null));
-  }
-
   async export(): Promise<Outcome<Snapshot>> {
     return this.run(() => ({
       ownerId: this.meta("owner_id"),
-      frozen: this.meta("frozen") === "1",
       collections: this.rows(
         "SELECT id, name, read_access, write_access FROM collections ORDER BY id",
       ) as unknown as Collection[],
@@ -999,8 +980,11 @@ export class SiteData extends DurableObject<Env> {
     }));
   }
 
-  /** Replaces the whole site with `snapshot`, keeping its ids, and unfreezes. */
-  async import(snapshot: Omit<Snapshot, "frozen">) {
+  /**
+   * Replaces the whole site with `snapshot`, keeping its ids. For restoring
+   * an `export`, and for tests; the control plane's configuration goes too.
+   */
+  async import(snapshot: Snapshot) {
     return this.run(() => {
       this.sql.exec("DELETE FROM documents");
       this.sql.exec("DELETE FROM collections");

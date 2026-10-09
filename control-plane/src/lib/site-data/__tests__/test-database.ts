@@ -1,84 +1,36 @@
-import {
-  up as usageUp,
-  down as usageDown,
-} from "@/migrations/1791377967407_site_data_usage_counters";
-import {
-  up as backendUp,
-  down as backendDown,
-} from "@/migrations/1791514826830_site_data_backend";
-import {
-  up as uuidUp,
-  down as uuidDown,
-} from "@/migrations/1791346354414_site_data_uuid_columns";
+import { up as usageUp } from "@/migrations/1791377967407_site_data_usage_counters";
+import { up as backendUp } from "@/migrations/1791514826830_site_data_backend";
+import { up as removePostgresUp } from "@/migrations/1791519830591_remove_postgres_site_data";
+import { up as uuidUp } from "@/migrations/1791346354414_site_data_uuid_columns";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
-import {
-  up as baseUp,
-  down as baseDown,
-} from "@/migrations/1788176027971_add_site_database";
-import {
-  up as authUp,
-  down as authDown,
-} from "@/migrations/1788177446828_add_site_data_owner_auth";
+import { up as baseUp } from "@/migrations/1788176027971_add_site_database";
+import { up as authUp } from "@/migrations/1788177446828_add_site_data_owner_auth";
 
-import {
-  up as sortingUp,
-  down as sortingDown,
-} from "@/migrations/1788180032055_add_site_data_created_at";
+import { up as sortingUp } from "@/migrations/1788180032055_add_site_data_created_at";
 
-import {
-  up as filterUp,
-  down as filterDown,
-} from "@/migrations/1788205003689_add_site_data_filter_index";
+import { up as filterUp } from "@/migrations/1788205003689_add_site_data_filter_index";
 
-import {
-  up as sessionsUp,
-  down as sessionsDown,
-} from "@/migrations/1788206726527_stable_site_clients_and_owner_sessions";
+import { up as sessionsUp } from "@/migrations/1788206726527_stable_site_clients_and_owner_sessions";
 
-import {
-  up as lifetimeUp,
-  down as lifetimeDown,
-} from "@/migrations/1788208716196_configurable_admin_token_lifetime";
-import {
-  up as filesUp,
-  down as filesDown,
-} from "@/migrations/1788264228670_add_site_data_files";
-import {
-  up as fileMetadataUp,
-  down as fileMetadataDown,
-} from "@/migrations/1788296417049_add_site_data_file_metadata";
-import {
-  up as versionUp,
-  down as versionDown,
-} from "@/migrations/1788299234629_add_site_data_document_version";
-import {
-  up as fileVersionUp,
-  down as fileVersionDown,
-} from "@/migrations/1788944200000_add_site_data_file_version";
-import {
-  up as dropFileMetadataUp,
-  down as dropFileMetadataDown,
-} from "@/migrations/1789273289882_drop_site_data_file_metadata";
-import {
-  up as dropFileVersionUp,
-  down as dropFileVersionDown,
-} from "@/migrations/1789273609493_drop_site_data_file_version";
-import {
-  up as dropSiteClientsUp,
-  down as dropSiteClientsDown,
-} from "@/migrations/1790078516190_drop_site_data_site_clients";
-import {
-  up as slideTokensUp,
-  down as slideTokensDown,
-} from "@/migrations/1790110700000_slide_site_data_access_tokens";
+import { up as lifetimeUp } from "@/migrations/1788208716196_configurable_admin_token_lifetime";
+import { up as filesUp } from "@/migrations/1788264228670_add_site_data_files";
+import { up as fileMetadataUp } from "@/migrations/1788296417049_add_site_data_file_metadata";
+import { up as versionUp } from "@/migrations/1788299234629_add_site_data_document_version";
+import { up as fileVersionUp } from "@/migrations/1788944200000_add_site_data_file_version";
+import { up as dropFileMetadataUp } from "@/migrations/1789273289882_drop_site_data_file_metadata";
+import { up as dropFileVersionUp } from "@/migrations/1789273609493_drop_site_data_file_version";
+import { up as dropSiteClientsUp } from "@/migrations/1790078516190_drop_site_data_site_clients";
+import { up as slideTokensUp } from "@/migrations/1790110700000_slide_site_data_access_tokens";
 
-import {
-  up as orderingUp,
-  down as orderingDown,
-} from "@/migrations/1790200121054_explicit_document_ordering";
+import { up as orderingUp } from "@/migrations/1790200121054_explicit_document_ordering";
 
-export async function setupTestDatabase() {
+/**
+ * The site-data schema of a disposable naru_data_test database. Documents and
+ * collections are in Durable Objects; `postgresSiteData` keeps the PostgreSQL
+ * tables they had, for tests of the migrations that once changed them.
+ */
+export async function setupTestDatabase({ postgresSiteData = false } = {}) {
   if (new URL(process.env.DATABASE_URL!).pathname !== "/naru_data_test")
     throw new Error("Use a disposable naru_data_test database.");
   await sql`create table users(id serial primary key, login_name text not null unique,
@@ -113,28 +65,21 @@ export async function setupTestDatabase() {
   await uuidUp(db);
   await db.transaction().execute((tx) => usageUp(tx));
   await backendUp(db);
+  if (postgresSiteData) return;
+  await removePostgresUp(db);
+  // Collections are the objects', which name them with UUIDs, as PostgreSQL
+  // has since migration 1790824144110; this schema predates that.
+  for (const table of [
+    "site_data_clients",
+    "site_data_auth_codes",
+    "site_data_access_tokens",
+  ])
+    await sql`alter table ${sql.table(table)} alter column collection_ids type uuid[] using collection_ids::text[]::uuid[]`.execute(
+      db,
+    );
 }
 export async function teardownTestDatabase() {
-  await backendDown(db);
-  await usageDown(db);
-  await uuidDown(db);
-  await orderingDown(db);
-  await slideTokensDown(db);
-  await dropSiteClientsDown(db);
-  await dropFileVersionDown(db);
-  await dropFileMetadataDown(db);
-  await fileVersionDown(db);
-  await versionDown(db);
-  await fileMetadataDown(db);
-  await filesDown(db);
-  await lifetimeDown(db);
-  await sessionsDown(db);
-  await filterDown(db);
-  await sortingDown(db);
-  await authDown(db);
-  await baseDown(db);
-  await db.schema.dropTable("custom_domains").execute();
-  await db.schema.dropTable("sessions").execute();
-  await db.schema.dropTable("subscriptions").execute();
-  await db.schema.dropTable("users").execute();
+  // The last migrations cannot be reversed, so the schema goes as a whole.
+  await sql`drop schema public cascade`.execute(db);
+  await sql`create schema public`.execute(db);
 }

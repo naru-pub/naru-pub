@@ -21,8 +21,6 @@ const OPERATIONS = [
   "batch",
   "collections",
   "createCollections",
-  "freeze",
-  "unfreeze",
   "export",
   "import",
   "erase",
@@ -48,10 +46,6 @@ function dispatch(
       return stub.collections(input);
     case "createCollections":
       return stub.createCollections(input);
-    case "freeze":
-      return stub.freeze();
-    case "unfreeze":
-      return stub.unfreeze();
     case "export":
       return stub.export();
     case "import":

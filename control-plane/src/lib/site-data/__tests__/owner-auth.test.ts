@@ -2,7 +2,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "@jest/globals";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
-import { executeData } from "../service";
+import { executeData, listCollections } from "../service";
+import { eraseSiteData } from "../worker";
 import {
   approveAuthorization,
   authorizationInput,
@@ -67,6 +68,9 @@ integration("website owner authorization", () => {
   beforeAll(async () => {
     await setupTestDatabase();
     ready = true;
+    // The Worker's storage outlives a suite, and other suites use alice too.
+    await eraseSiteData("alice");
+    await eraseSiteData("bob");
     owner = (
       await sql<{
         id: string;
@@ -351,13 +355,8 @@ integration("website owner authorization", () => {
     expect(await authorizationSetup(owner, input)).toBeNull();
     // A new collection starts private, as one made in the control panel does.
     expect(
-      await db
-        .selectFrom("site_data_collections")
-        .select(["read_access", "write_access"])
-        .where("user_id", "=", owner)
-        .where("name", "=", "notes")
-        .executeTakeFirstOrThrow(),
-    ).toEqual({ read_access: "admin", write_access: "admin" });
+      await listCollections({ id: owner, loginName: "alice" }, ["notes"]),
+    ).toMatchObject([{ read_access: "admin", write_access: "admin" }]);
     const approved = await approveAuthorization(owner, "alice-session", input);
     const grant = await exchange(
       new URL(approved.redirect).searchParams.get("code")!,
@@ -388,13 +387,11 @@ integration("website owner authorization", () => {
       bob,
       authInput({ redirectUri: page, collections: ["elsewhere"] }),
     );
-    expect(
-      await db
-        .selectFrom("site_data_collections")
-        .select("id")
-        .where("name", "=", "elsewhere")
-        .executeTakeFirst(),
-    ).toBeUndefined();
+    for (const site of [
+      { id: owner, loginName: "alice" },
+      { id: bob, loginName: "bob" },
+    ])
+      expect(await listCollections(site, ["elsewhere"])).toEqual([]);
   });
   test("every address of one page is one callback", async () => {
     // Naru serves /blog, /blog/ and /blog/index.html as the page /blog/.
@@ -656,12 +653,10 @@ integration("website owner authorization", () => {
     // What a traffic rollback would insert: the older code knows neither
     // column, so the schema has to answer for both or sign-in breaks.
     const legacy = "l".repeat(43);
-    const collection = await db
-      .selectFrom("site_data_collections")
-      .select("id")
-      .where("user_id", "=", owner)
-      .where("name", "=", "posts")
-      .executeTakeFirstOrThrow();
+    const [collection] = await listCollections(
+      { id: owner, loginName: "alice" },
+      ["posts"],
+    );
     await sql`insert into site_data_access_tokens(hash,client_id,session_id,collection_ids,expires_at)
       values (${digest(legacy)},${registrationId},'alice-session',${[collection.id]},now() + interval '10 minutes')`.execute(
       db,

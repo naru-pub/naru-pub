@@ -1,17 +1,13 @@
 import { db } from "@/lib/database";
-import { edgeConfigured, syncEdge } from "@/lib/site-data/edge";
+import { syncEdge } from "@/lib/site-data/edge";
 
-// Keeps the edge in step with PostgreSQL for sites on Durable Objects: their
-// Worker routes, and the date their database feature runs to, which the edge
-// checks in place of PostgreSQL. Does nothing until the Worker and the
-// Cloudflare API are configured.
+// Renews, for every site with the database feature, the paid-status date the
+// site-data Worker relies on to answer visitors at the edge, and copies each
+// site's database usage to `users` for /admin. See lib/site-data/edge.ts.
 async function main() {
-  if (!edgeConfigured()) return;
-  const { sites, failures } = await syncEdge((message) =>
-    console.log(`[site-data-edge-sync] ${message}`),
-  );
+  const { sites, failures } = await syncEdge();
   console.log(
-    `[site-data-edge-sync] ${sites} sites on Durable Objects` +
+    `[site-data-edge-sync] ${sites} sites` +
       (failures.length ? `, failed: ${failures.join(", ")}` : ""),
   );
   if (failures.length) process.exitCode = 1;

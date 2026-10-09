@@ -1,5 +1,5 @@
 import { validateRequest } from "@/lib/auth";
-import { siteDataBackend } from "./backend";
+import { executeBatch, executeData } from "./service";
 import {
   DataError,
   jsonBody,
@@ -93,13 +93,12 @@ export async function dataRequest(
         ? Number(url.searchParams.get("size"))
         : undefined,
     };
-    const backend = await siteDataBackend(command.site);
     const result =
       path[0] === "_files"
         ? await executeMedia(command)
         : path[0] === "_batch"
-          ? await backend.batch({ ...command, path: [] })
-          : await backend.execute(command);
+          ? await executeBatch({ ...command, path: [] })
+          : await executeData(command);
     return Response.json(admin ? result : publicResult(result), {
       headers: {
         ...headers,

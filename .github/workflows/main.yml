@@ -87,8 +87,9 @@ jobs:
           NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
 
   # Everything else in the control plane: the unit suites, then the board and
-  # site-data database tests, each against a throwaway PostgreSQL cluster its
-  # script starts. Like test-payments, part of the run deploy.sh checks.
+  # site-data database tests, each against a throwaway PostgreSQL cluster and
+  # a local site-data Worker its script starts. Like test-payments, part of
+  # the run deploy.sh checks.
   test-control-plane:
     defaults:
       run:
@@ -108,6 +109,10 @@ jobs:
       - run: pnpm test:data
       - run: pnpm test:node
       - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-16
+      # Site databases are Durable Objects: the database suites start the
+      # site-data Worker under `wrangler dev` (scripts/with-site-data-worker.sh).
+      - run: pnpm install --frozen-lockfile
+        working-directory: site-data-worker
       - run: pnpm test:board
         env:
           NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin

@@ -12,19 +12,14 @@ import {
   down as restoreSiteClients,
 } from "@/migrations/1790078516190_drop_site_data_site_clients";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
-import {
-  approveAuthorization,
-  authorizationInput,
-  digest,
-  exchangeCode,
-} from "../owner-auth";
 
 const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 integration("stable client and owner session migration", () => {
   let ready = false;
   beforeAll(async () => {
-    await setupTestDatabase();
+    // The PostgreSQL collections this migration ran against.
+    await setupTestDatabase({ postgresSiteData: true });
     ready = true;
   });
   afterAll(async () => {
@@ -49,11 +44,13 @@ integration("stable client and owner session migration", () => {
     await sql`insert into site_data_collections(user_id,name) values (${owner},'posts')`.execute(
       db,
     );
-    const collection = await db
-      .selectFrom("site_data_collections")
-      .select("id")
-      .where("user_id", "=", owner)
-      .executeTakeFirstOrThrow();
+    const collection = (
+      await sql<{
+        id: string;
+      }>`select id from site_data_collections where user_id = ${owner}`.execute(
+        db,
+      )
+    ).rows[0];
     const redirectUri = "http://localhost/admin.html";
     for (const [id, uri] of [
       ["legacy-a", redirectUri],
@@ -81,27 +78,17 @@ integration("stable client and owner session migration", () => {
     expect(
       await db.selectFrom("site_data_auth_codes").select("hash").execute(),
     ).toEqual([]);
-    const verifier = "v".repeat(43);
-    const response = await approveAuthorization(
-      owner,
-      "parent",
-      authorizationInput({
-        site: "migrate",
-        redirectUri,
-        collections: ["posts"],
-        challenge: digest(verifier),
-        state: "s".repeat(43),
-      }),
+    // A grant issued after the migration, which rolling it back revokes.
+    // (Issued directly: sign-in code reads collections from Durable Objects,
+    // which this schema from before them does not name the same way.)
+    const client = await db
+      .selectFrom("site_data_clients")
+      .select("id")
+      .executeTakeFirstOrThrow();
+    await sql`insert into site_data_access_tokens(hash,client_id,session_id,collection_ids,expires_at)
+      values ('after-migration',${client.id},'parent',${[collection.id]},now()+interval '10 minutes')`.execute(
+      db,
     );
-    const grant = await exchangeCode(
-      {
-        code: new URL(response.redirect).searchParams.get("code"),
-        verifier,
-        redirectUri,
-      },
-      "http://localhost",
-    );
-    expect(grant).toHaveProperty("accessToken");
     await down(db);
     expect(
       (await sql`select hash from site_data_access_tokens`.execute(db)).rows,

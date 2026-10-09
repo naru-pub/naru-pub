@@ -11,11 +11,8 @@ import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { executeData } from "../service";
 import { filters, parseFilterQuery } from "../filters";
+import { eraseSiteData } from "../worker";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
-import {
-  down,
-  up,
-} from "@/migrations/1788205003689_add_site_data_filter_index";
 
 describe("filter validation", () => {
   test.each([
@@ -87,7 +84,8 @@ function sortField(field: string) {
 }
 const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
-integration("indexed filtered queries", () => {
+// Against the site's Durable Object, in a local Worker (test-data-sdk.sh).
+integration("filtered queries", () => {
   let ready = false,
     owner: string;
   const call = (method: string, path: string[], extra = {}) =>
@@ -97,7 +95,11 @@ integration("indexed filtered queries", () => {
       path,
       adminUserId: owner,
       ...extra,
-    });
+    }) as Promise<{
+      documents: { id: string; data: unknown }[];
+      nextCursor: string | null;
+      totalCount?: number;
+    }>;
   beforeAll(async () => {
     await setupTestDatabase();
     ready = true;
@@ -110,7 +112,7 @@ integration("indexed filtered queries", () => {
     ).rows[0].id;
   });
   beforeEach(async () => {
-    await db.deleteFrom("site_data_collections").execute();
+    await eraseSiteData("filter-test");
     await call("POST", [], { body: { name: "posts", read: "world" } });
     const rows: [string, unknown][] = [
       [
@@ -296,7 +298,7 @@ integration("indexed filtered queries", () => {
       }),
     ).rejects.toMatchObject({ status: 400 });
   });
-  test("filters never widen read permissions and index stays current after replacements", async () => {
+  test("filters never widen read permissions and follow replacements", async () => {
     await call("PUT", ["posts", "a"], { body: { data: { category: "개발" } } });
     expect(
       (
@@ -315,20 +317,5 @@ integration("indexed filtered queries", () => {
         adminUserId: undefined,
       }),
     ).rejects.toMatchObject({ status: 403 });
-  });
-  test("automatic GIN index supports the filter predicate; rollback preserves documents", async () => {
-    const plan = await db.transaction().execute(async (tx) => {
-      await sql`set local enable_seqscan=off`.execute(tx);
-      return sql`explain (format json) select id from site_data_documents where data @> '{"category":"일상"}'::jsonb`.execute(
-        tx,
-      );
-    });
-    expect(JSON.stringify(plan.rows)).toContain("site_data_documents_data_idx");
-    await down(db);
-    await up(db);
-    expect(
-      (await call("GET", ["posts"], { filter: { category: "일상" } }))
-        .documents,
-    ).toHaveLength(2);
   });
 });
