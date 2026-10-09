@@ -202,13 +202,36 @@ export async function noteJobResult(
 }
 
 // Notification state commits only after sending, so a failed post retries next
-// heartbeat. Row locks serialize checks from multiple worker replicas.
+// heartbeat. Row locks serialize checks from multiple worker replicas. A job
+// with alertAfterMinutes is reported only once it has failed without a success
+// for that long (failed_at is the first failure since the last success), and
+// so recovers silently from shorter failures.
 export async function checkJobFailures(): Promise<void> {
+  const alertAfter = Object.fromEntries(
+    MAINTENANCE_JOBS.flatMap((job) =>
+      "alertAfterMinutes" in job ? [[job.name, job.alertAfterMinutes]] : [],
+    ),
+  );
   await db.transaction().execute(async (trx) => {
     const jobs = await trx
       .selectFrom("cron_jobs")
       .selectAll()
-      .where(sql<boolean>`(failed_at is not null) <> failure_notified`)
+      .where((eb) =>
+        eb.or([
+          eb.and([
+            eb("failed_at", "is", null),
+            eb("failure_notified", "=", true),
+          ]),
+          eb.and([
+            eb("failure_notified", "=", false),
+            eb(
+              "failed_at",
+              "<=",
+              sql<Date>`now() - make_interval(mins => coalesce((${JSON.stringify(alertAfter)}::jsonb ->> cron_jobs.name)::int, 0))`,
+            ),
+          ]),
+        ]),
+      )
       .forUpdate()
       .execute();
     for (const job of jobs) {

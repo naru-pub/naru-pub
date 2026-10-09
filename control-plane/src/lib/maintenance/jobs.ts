@@ -84,6 +84,10 @@ export const MAINTENANCE_JOBS = [
     script: "sync-edge.ts",
     minutes: 5,
     timeout: 120,
+    // A site's object or the domain table can be unavailable for a few runs
+    // (Cloudflare 503s), and a missed sync costs nothing until the three-day
+    // confirmation runs out: report only failures that last an hour.
+    alertAfterMinutes: 60,
   },
   {
     name: "edge-pageview-drain",
@@ -170,6 +174,8 @@ export type MaintenanceJob = {
   hour?: number;
   minute?: number;
   payment?: boolean;
+  /** Report a failure only once runs have failed without a success this long. */
+  alertAfterMinutes?: number;
   args?: string[];
   lock?: string;
 };

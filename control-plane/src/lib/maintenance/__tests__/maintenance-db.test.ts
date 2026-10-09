@@ -283,6 +283,39 @@ integration("durable maintenance", () => {
     expect(alerts.sendOperatorAlert.mock.calls[1][0].title).toContain("복구");
   });
 
+  test("a job with alertAfterMinutes reports only failures that last that long", async () => {
+    await noteJobResult("edge-sync", new Error("unavailable"));
+    await checkJobFailures();
+    await noteJobResult("edge-sync", null);
+    await checkJobFailures();
+    expect(alerts.sendOperatorAlert).not.toHaveBeenCalled();
+
+    await noteJobResult("edge-sync", new Error("unavailable"));
+    await db
+      .updateTable("cron_jobs")
+      .set({ failed_at: sql<Date>`now() - interval '59 minutes'` })
+      .where("name", "=", "edge-sync")
+      .execute();
+    await noteJobResult("edge-sync", new Error("still unavailable"));
+    await checkJobFailures();
+    expect(alerts.sendOperatorAlert).not.toHaveBeenCalled();
+    await db
+      .updateTable("cron_jobs")
+      .set({ failed_at: sql<Date>`now() - interval '61 minutes'` })
+      .where("name", "=", "edge-sync")
+      .execute();
+    await checkJobFailures();
+    expect(alerts.sendOperatorAlert).toHaveBeenCalledTimes(1);
+    expect(alerts.sendOperatorAlert.mock.calls[0][0].lines).toEqual([
+      "still unavailable",
+    ]);
+    await noteJobResult("edge-sync", null);
+    await checkJobFailures();
+    expect(alerts.sendOperatorAlert.mock.calls[1][0].title).toBe(
+      "작업 복구: edge-sync",
+    );
+  });
+
   test("failed alert delivery retains state for the next worker heartbeat", async () => {
     await noteJobResult("media-cleanup", new Error("failed"));
     alerts.sendOperatorAlert.mockRejectedValueOnce(new Error("offline"));
