@@ -56,7 +56,7 @@ export async function dataRequest(
     }
     // Only enable behind a proxy that replaces this header and blocks direct ingress.
     const forwardedIp =
-      process.env.SITE_DATA_TRUST_CLOUDFLARE_IP === "1"
+      process.env.TRUST_CLOUDFLARE_IP === "1"
         ? request.headers.get("cf-connecting-ip")
         : null;
     // PATCH only reaches here from the control panel, to change a collection's

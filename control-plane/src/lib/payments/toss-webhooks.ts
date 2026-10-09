@@ -77,11 +77,11 @@ const TOSS_WEBHOOK_IPS = new Set([
 // BILLING_DELETED is unsigned and, unlike a payment event, cannot be checked
 // against the API — Toss has no lookup for billing keys. The sender's address
 // is the one thing left to check, and only where the ingress overwrites
-// CF-Connecting-IP (SITE_DATA_TRUST_CLOUDFLARE_IP, see docs/database.md);
+// CF-Connecting-IP (TRUST_CLOUDFLARE_IP, see docs/database.md);
 // anywhere else the header is the caller's to forge, so no check is made.
 export function isTrustedWebhookSource(
   cfConnectingIp: string | null,
-  trustForwardedIp = process.env.SITE_DATA_TRUST_CLOUDFLARE_IP === "1",
+  trustForwardedIp = process.env.TRUST_CLOUDFLARE_IP === "1",
 ): boolean {
   if (!trustForwardedIp) return true;
   return cfConnectingIp != null && TOSS_WEBHOOK_IPS.has(cfConnectingIp.trim());
