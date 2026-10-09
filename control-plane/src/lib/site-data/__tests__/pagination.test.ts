@@ -249,7 +249,7 @@ integration("sorted database pagination", () => {
       ["numeric", { date: 20260101 }],
     ] as const)
       await call("PUT", ["notes", id], { body: { data } });
-    // JSONB sorts null below strings below numbers; an absent field sorts with
+    // Document ordering puts null below strings below numbers; an absent field sorts with
     // null and IDs break ties, so every document has one stable position.
     const ascending = [
       "missing",

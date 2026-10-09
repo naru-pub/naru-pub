@@ -314,7 +314,7 @@ integration("Durable Objects site database", () => {
     });
   });
 
-  test("data JSONB cannot store is refused like PostgreSQL refuses it", async () => {
+  test("document data rejects NUL and unpaired surrogates", async () => {
     await call("POST", [], { name: "strings" }, true);
     for (const data of ["a\u0000b", { "\ud800": 1 }, ["\udc00"]])
       await expect(

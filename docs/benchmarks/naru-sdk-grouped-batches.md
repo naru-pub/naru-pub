@@ -1,5 +1,8 @@
 # Grouped SDK batches
 
+> Historical benchmark of the former PostgreSQL document backend. Its storage and write-admission details do not describe the current Durable Object implementation.
+
+
 `executeBatch()` now groups unconditional operations on distinct document keys
 into at most one delete statement and one multi-row upsert. That removes the
 per-operation SQL round trips and lets the usage triggers aggregate each

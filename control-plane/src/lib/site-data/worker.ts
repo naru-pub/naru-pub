@@ -13,12 +13,6 @@ const unavailable = () =>
     "UNAVAILABLE",
   );
 
-export function siteDataWorkerConfigured() {
-  return Boolean(
-    process.env.SITE_DATA_WORKER_URL && process.env.SITE_DATA_WORKER_SECRET,
-  );
-}
-
 /**
  * Calls one operation on a site's object. A refusal the object made arrives
  * as the DataError it threw; anything else the Worker answers is logged and

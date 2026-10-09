@@ -63,8 +63,7 @@ function comparisons(field: string, input: Record<string, unknown>) {
         400,
         "Range bounds must be strings or finite numbers.",
       );
-    // JSONB orders every number above every string, so a range mixing the two
-    // would silently select on type rather than on value.
+    // A range must compare values within one JSON type.
     if (parsed.length && typeof parsed[0][2] !== typeof bound)
       throw new DataError(400, "Range bounds on one field must share a type.");
     parsed.push([field, operator as ComparisonOperator, checkString(bound)]);

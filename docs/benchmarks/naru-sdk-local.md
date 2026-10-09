@@ -1,5 +1,8 @@
 # Local Naru SDK stress test
 
+> Historical benchmark of the former PostgreSQL document backend. Its storage and write-admission details do not describe the current Durable Object implementation.
+
+
 Run from `control-plane`:
 
 ```sh

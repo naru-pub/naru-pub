@@ -28,8 +28,8 @@ const OPERATIONS = [
 ] as const;
 type Operation = (typeof OPERATIONS)[number];
 
-// Site names, and the `compare:<site>` scratch objects of site-data-compare.
-const SITE = /^(?:compare:)?[a-zA-Z0-9_-]{1,64}$/;
+// Site names.
+const SITE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 // A stub's methods are remote calls, so each is named rather than looked up.
 function dispatch(

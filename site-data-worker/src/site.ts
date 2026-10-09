@@ -27,8 +27,8 @@ import {
 } from "../../control-plane/src/lib/site-data/pagination";
 import { uuidv7 } from "../../control-plane/src/lib/uuid";
 
-// One site's collections and documents: a SQLite port of the control plane's
-// lib/site-data/service.ts, checks in the same order with the same messages.
+// One site's collections and documents, stored in SQLite. The control plane
+// uses the same validation, filter and cursor modules.
 // What lives in PostgreSQL stays there: the control plane resolves the owner,
 // paid status and sign-in scope, then calls in with the outcome (`Access`).
 //
@@ -182,7 +182,7 @@ function matchVersion(expected: number, actual: number | undefined) {
   );
 }
 
-/** What PostgreSQL's JSONB refuses: NUL and unpaired surrogates, in keys too. */
+/** The v1 data contract rejects NUL and unpaired surrogates, in keys too. */
 function storable(value: unknown): void {
   if (typeof value === "string") {
     if (value.includes("\u0000") || !value.isWellFormed()) throw unsupported();
@@ -202,14 +202,14 @@ function encode(data: unknown) {
   return { encoded, size };
 }
 
-/** PostgreSQL's cursor form for a time, which keeps microseconds; ours are ms. */
+/** Preserve the existing six-digit timestamp cursor format; storage is ms. */
 const cursorTime = (ms: number) =>
   new Date(ms).toISOString().replace("Z", "000Z");
 const cursorMs = (value: string) => Date.parse(value.slice(0, 23) + "Z");
 
 // Naru ordering: null/missing/non-scalars, strings, numbers, booleans. The
-// four keys the PostgreSQL backend builds with ROW(...), as SQLite columns.
-// Strings compare as bytes (SQLite's BINARY, PostgreSQL's COLLATE "C").
+// four scalar keys are represented as SQLite columns.
+// Strings compare as bytes (SQLite's BINARY collation).
 // `field` has passed NAME, so it cannot close the quoted JSON path.
 const jsonPath = (field: string) => `'$."${field}"'`;
 function fieldOrder(field: string) {
@@ -276,7 +276,7 @@ function filterConditions(filter: ReturnType<typeof filters>) {
     }
   }
   for (const [field, operator, bound] of filter.ranges) {
-    // Ranges compare within the bound's own type, as JSONB does.
+    // Ranges compare within the bound's own JSON type.
     const type = `json_type(data, ${jsonPath(field)})`;
     conditions.push(
       `${type} ${typeof bound === "string" ? "= 'text'" : "IN ('integer', 'real')"} AND json_extract(data, ${jsonPath(field)}) ${COMPARISONS[operator]} ?`,
@@ -783,7 +783,7 @@ export class SiteData extends DurableObject<Env> {
         pageWhere.push(`(${branches.join(" OR ")})`);
       }
     }
-    // Cursor values: a field's JSON text, or a time in PostgreSQL's form.
+    // Cursor values: a field's JSON text, or a six-digit timestamp.
     const cursorColumns = sorts.map((item, index) =>
       item.orderBy === "id"
         ? `NULL AS cursor_value_${index}`
@@ -903,7 +903,7 @@ export class SiteData extends DurableObject<Env> {
         // Metadata only: the caller already holds the data it wrote.
         results.push({ id, version, createdAt, updatedAt });
       }
-      // Checked once at the end, like the PostgreSQL backend: a batch may
+      // Checked once at the end: a batch may
       // pass through a larger total on its way to a smaller one.
       const usage = this.usage();
       if (usage.bytes > MAX_SITE_BYTES || usage.documents > MAX_DOCUMENTS)

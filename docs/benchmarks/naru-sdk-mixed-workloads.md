@@ -1,5 +1,8 @@
 # Mixed-site SDK workloads and public cache audit
 
+> Historical benchmark of the former PostgreSQL document backend. Its storage and write-admission details do not describe the current Durable Object implementation.
+
+
 The next performance priority is to control write admission before requests
 occupy database connections. Valid write bursts on one site can starve reads
 on a different site through the shared pool. The existing per-site PostgreSQL

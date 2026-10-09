@@ -36,7 +36,7 @@ describe("filter validation", () => {
     { date: { gte: Infinity } },
     { date: { gte: String.fromCharCode(0) } },
     { date: { gte: String.fromCharCode(0xd800) } },
-    // A range spanning two JSONB types would select on type, not on value.
+    // Range bounds must share one JSON type.
     { date: { gte: "2026-01-01", lte: 3 } },
     // Two bounds on each of three fields exceed the predicate budget.
     { a: { gte: 1, lte: 2 }, b: { gte: 1, lte: 2 }, c: { gte: 1, lte: 2 } },
@@ -167,7 +167,7 @@ integration("filtered queries", () => {
       expect(result.documents!.map((d) => d.id)).toEqual(ids);
     }
   });
-  test("range filters compare within one JSONB type and combine with equality", async () => {
+  test("range filters compare within one JSON type and combine with equality", async () => {
     await call("POST", [], { body: { name: "notes", read: "world" } });
     const rows: [string, unknown][] = [
       ["jan", { date: "2026-01-15", tag: "diary", score: 10 }],

@@ -1,5 +1,8 @@
 # Write admission before database checkout
 
+> Historical benchmark of the former PostgreSQL document backend. Its storage and write-admission details do not describe the current Durable Object implementation.
+
+
 Document and collection writes now enter bounded process-local admission before
 service SQL, including anonymous-write rate-limit preflight. Reads bypass
 admission. Cookie authentication for control-plane HTTP requests can run before

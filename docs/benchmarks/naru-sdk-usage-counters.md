@@ -1,5 +1,8 @@
 # Transactional quota counters: implementation and measurements
 
+> Historical benchmark of the former PostgreSQL document backend. Its storage and write-admission details do not describe the current Durable Object implementation.
+
+
 The SDK write path now reads site usage counters from the owner row instead of
 aggregating every document. Quotas remain enforced within the write transaction.
 The site's existing owner lock still serializes writes and collection changes.

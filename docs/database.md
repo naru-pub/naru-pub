@@ -1,6 +1,6 @@
 # Site databases (Naru Data v1)
 
-Naru Data stores per-site collections of JSON documents in the control plane's existing PostgreSQL database. Static sites use a dependency-free browser ES module; owners manage data and collection permissions at `/database` in the control plane. No Rust proxy changes or separate database hostname are required.
+Naru Data stores each site’s collections and JSON documents in a SQLite-backed Cloudflare Durable Object. PostgreSQL holds accounts, entitlements, website authentication, and media metadata. Static sites use a dependency-free browser ES module; owners manage data and collection permissions at `/database` in the control plane. No Rust proxy changes or separate database hostname are required.
 
 The concise public contract is documented in the [Naru Data SDK v1 API
 reference](sdk-v1-api.md). This document covers setup, server operation, limits,
@@ -8,7 +8,7 @@ and the private HTTP protocol behind that interface.
 
 ## Setup
 
-From `control-plane`, install dependencies and run `pnpm migrate` against your intended development database before starting the app. For production, run the migration as part of the normal deployment procedure before serving the new API. The migrations add document storage, website registrations, authorization-code/token hashes, and rate-limit counters; they do not modify hosted files. The owner-auth migration preserves existing permissions. Reverting just that migration removes website authorization and converts `create` permissions to `admin` (fail closed). Back up PostgreSQL before production migrations. Do not roll back the migration unless you intend to delete all site databases.
+From `control-plane`, install dependencies and run `pnpm migrate` against your intended development database before starting the app. For production, run the migration as part of the normal deployment procedure before serving the new API. PostgreSQL migrations maintain accounts, website registrations, authorization-code/token hashes, and media metadata. Worker deployments maintain the per-site SQLite schema. Historical migrations remain necessary for upgrades; the removal migration refuses to drop PostgreSQL collections belonging to sites that were never moved. Such installations must migrate their data using the previous release before upgrading. Do not roll back historical migrations to restore the former document backend.
 
 For reverse-proxy deployments, owner request checks use `SITE_DATA_CONTROL_PLANE_ORIGIN` (an origin such as `https://naru.pub`). In production it defaults to `https://${NEXT_PUBLIC_DOMAIN}`, or `https://naru.pub` if unset. Configure it explicitly if the control plane uses another hostname. This avoids trusting forwarded host headers or comparing against Next's internal localhost URL. For local production-build tests, set it to the localhost origin used by the test client.
 
@@ -195,10 +195,9 @@ There are at most 20 registrations per site, 20 pending codes and 50 live tokens
 - 100 collections, 10,000 documents, and 10 MiB of serialized JSON per site, separate from the hosted-file quota.
 - Maximum request body: 64 KiB, including the `{ data }` envelope; enforced while streaming, even without Content-Length.
 - Collection names and document IDs: 1–64 ASCII letters, numbers, underscores or hyphens.
-- Pages: 1–100 documents (default 50), defaulting to ID ascending under the database collation. See sorting below; pagination is not a snapshot across concurrent changes.
+- Pages: 1–100 documents (default 50), defaulting to ID ascending in byte order. See sorting below; pagination is not a snapshot across concurrent changes.
 - Documents use JSON values with JavaScript number precision and no significant object key order. Application-visible ordering is defined by Naru, not by database collation.
-- Owner-row locks serialize permission checks, writes, and quota checks across server processes. Reads take no such lock. Deletes free quota; account deletion cascades through collections and documents.
-- Document and collection writes wait for admission before database checkout: one admitted writer per site per server process, and at most `max(1, floor(DATABASE_POOL_MAX / 2))` admitted writers globally in that process (10 with the default pool of 20). Queues hold at most 64 writes per site and 256 globally; a wait expires after 10 seconds. Overflow and expired waits return HTTP 503 with `UNAVAILABLE` before writing. Canceled queued requests are removed; an executing transaction is allowed to settle. These limits are process-local and do not replace PostgreSQL owner locks or reserve connections from other request paths. Media writes use their existing path.
+- Each site's Durable Object serializes document and collection operations in synchronous SQLite transactions, including permission and quota checks. Deletes free quota; account deletion erases the site's object. Media operations retain their PostgreSQL transaction path.
 - A site holds at most 10,000 media files: the byte quota alone does not bound row count, since the smallest accepted file is one byte.
 - Each individual replacement or delete is atomic. `admin.batch()` makes its ID-addressed sets and deletes one atomic server transaction. Writes are last-write-wins when no condition is supplied; `condition.revision` rejects stale writes and `condition.absent` guards creation. There are no realtime subscriptions, offline persistence, custom indexes, arbitrary query expressions, per-document rules, or visitor accounts in v1.
 
@@ -263,22 +262,21 @@ is the same, headers and CORS preflight included, so the bucket's existing CORS
 rule covers it. `XMLHttpRequest` cannot refuse a redirect, so a response whose
 `responseURL` is not the signed URL is treated as a failed upload.
 
-Public access intentionally permits callers from any origin. Every write that arrives without an owner credential — creates into a `create` collection and replacements or deletes in a `world`-writable one alike — uses database-backed fixed-minute limits of 60 successful writes per site and 20 per caller/IP per site, shared across collections and server processes. Owner writes do not consume these limits. Failed writes roll back their counters. A credential-less write that is already over either limit is refused with one unlocked read before it waits for the site's owner-row lock, so a burst past the limit does not queue behind legitimate writes; the locked count remains the authoritative check.
+Public access permits callers from any origin. Anonymous writes into `create` or `world` collections use fixed-minute limits of 60 successful writes per site and 20 per caller/IP per site. Each site's Durable Object stores and checks these counters in the write transaction. Owner writes do not count, and failed writes roll back their counters.
 
-By default, callers share an `unknown` bucket (20/minute/site). Set `SITE_DATA_TRUST_CLOUDFLARE_IP=1` **only** when a trusted ingress replaces `CF-Connecting-IP` and direct access to the application is blocked. Otherwise clients can spoof the header to evade IP limits. The production gateway that `deploy-server.sh` renders satisfies this requirement: it recovers the visitor address from the Cloudflare Tunnel's `X-Forwarded-For` chain only for private tunnel peers, then overwrites `CF-Connecting-IP` before proxying to the application. With the setting enabled, valid IPs get separate buckets while invalid/missing headers still share `unknown`. Only a digest is stored in the bucket key; it is not guaranteed anonymization. Old buckets are removed on the next create for that site.
+The Worker reads the visitor IP from Cloudflare’s trusted header. Requests forwarded through the control plane share an `unknown` bucket (20/minute/site) unless trusted IP forwarding is enabled. Set `SITE_DATA_TRUST_CLOUDFLARE_IP=1` **only** when a trusted ingress replaces `CF-Connecting-IP` and direct access to the application is blocked. Otherwise clients can spoof the header to evade IP limits. The production gateway that `deploy-server.sh` renders satisfies this requirement: it recovers the visitor address from the Cloudflare Tunnel's `X-Forwarded-For` chain only for private tunnel peers, then overwrites `CF-Connecting-IP` before proxying to the application. With the setting enabled, valid IPs get separate buckets while invalid/missing headers still share `unknown`. Only a digest is stored in the bucket key; it is not guaranteed anonymization. The object removes expired buckets during anonymous-write admission.
 
-Old buckets are also swept by `cleanup-site-data-grants`, along with expired authorization codes and access tokens, so a site that is used once and left alone does not keep them forever.
+`cleanup-site-data-grants` periodically removes expired authorization codes and access tokens from PostgreSQL. It does not touch the object’s rate-limit buckets.
 
-These limits do not protect reads, invalid requests or authorization endpoints from high request volumes. `deploy-server.sh` renders per-client nginx limits for `/api/data/*` (30 r/s, burst 60) and `/api/data-auth/*` (2 r/s, burst 10) with matching body caps, keyed on the visitor address recovered from the trusted tunnel's forwarding chain. PostgreSQL backups must include these new tables; the existing hosted-file export does not include database records.
+These limits do not protect reads, invalid requests or authorization endpoints from high request volumes. `deploy-server.sh` renders per-client nginx limits for `/api/data/*` (30 r/s, burst 60) and `/api/data-auth/*` (2 r/s, burst 10) with matching body caps, keyed on the visitor address recovered from the trusted tunnel's forwarding chain. PostgreSQL backups cover authentication and media metadata, not the documents stored in Durable Objects. The existing hosted-file export does not include site database documents.
 
-### Reads, caching and locks
+### Reads and caching
 
-Reads do not take the owner row lock; writes do. Serializing reads behind one
-row per site would have queued a popular site's whole audience on a single lock,
-each waiter holding a connection from the pool the rest of the control plane
-shares. Request transactions also carry a statement deadline, and the pool has
-an explicit size (`DATABASE_POOL_MAX`, default 20) and checkout timeout, so a
-saturated pool sheds requests instead of hanging on them.
+Anonymous document reads normally reach only the Worker and its Durable Object.
+Requests requiring the control plane use PostgreSQL for admission and
+credentials, with statement deadlines, a bounded pool (`DATABASE_POOL_MAX`,
+default 20), and a checkout timeout. Document operations run in the object's
+SQLite transaction, independently of the PostgreSQL pool.
 
 A read of a `world`-readable collection that carries no credential returns the
 same bytes to everyone, so it is served with
@@ -309,136 +307,68 @@ cd control-plane
 pnpm exec tsc --noEmit
 pnpm exec jest --config jest.data.config.cjs --runInBand
 node --test tests/naru-data-sdk.test.mjs
-# Disposable local PostgreSQL database only; tests create/drop tables:
-NARU_DATA_TEST=1 DATABASE_URL=postgresql://localhost/naru_data_test \
-  pnpm exec jest --config jest.data.config.cjs --runInBand
 ```
 
 Integration tests require an empty database named exactly `naru_data_test`. They cover all permission combinations, create-only restrictions, rate/quota races, PKCE, single-use codes, token scope, expiry, renewal and its bounds, revocation, domain validation and session/registration deletion. HTTP tests cover cookie isolation, same-origin admin protection, authentication and preflight; SDK tests cover CRUD transport and errors. The dedicated Jest config avoids obsolete global Lucia and Request mocks in the existing test setup.
 
-The Durable Objects backend has its own suite, which also runs the reads of
-`site-data-compare` against both stores on deliberately awkward data. It needs
-`pnpm install` in `site-data-worker/` first; it starts a scratch PostgreSQL
-cluster and the Worker under `wrangler dev`:
+The full database suite starts a scratch PostgreSQL cluster for accounts and
+authentication and a local Worker under `wrangler dev`. Install dependencies
+in both `control-plane/` and `site-data-worker/` first:
 
 ```sh
 cd control-plane
-pnpm test:data:do
+pnpm test:data:db
 ```
 
 ## Durable Objects backend
 
-A site's collections and documents can live in PostgreSQL or in a Cloudflare
-Durable Object, one object per site, named by the site. Which one is
-`users.site_data_backend`, and everything outside `lib/site-data` reaches the
-data through `siteDataBackend(site)` (`lib/site-data/backend.ts`), so the API,
-the SDK and the control panel are the same either way. Visitors' requests for
-a moved site are answered at Cloudflare's edge (below); everything else still
-goes through the control plane, which forwards a moved site's requests to its
-object.
+All site collections and documents live in the `naru-site-data` Worker, in one
+SQLite-backed Durable Object per site, named by the site. The control plane's
+`lib/site-data/service.ts` checks account existence, paid status, and owner
+sign-in scope before calling private Worker operations over HTTPS with a
+shared secret. Configure `SITE_DATA_WORKER_URL=https://site-data.naru.pub`
+and `SITE_DATA_WORKER_SECRET`; there is no PostgreSQL document fallback.
 
-What stays in PostgreSQL for every site: accounts and paid status, page
-registrations, authorization codes and tokens, and media metadata (the bytes
-are in R2 already). For a moved site the control plane admits each request
-there (the site exists, has the database feature, and the sign-in's scope,
-renewing its token) and then calls the site-data Worker with the outcome over
-HTTPS with a shared secret (`SITE_DATA_WORKER_URL`, `SITE_DATA_WORKER_SECRET`).
-The object (`site-data-worker/src/site.ts`) is a SQLite port of `service.ts`:
-the same checks in the same order, the same messages, and the control plane's
-own validation, filter and cursor modules, which it imports. A Durable Object
-handles one request at a time, which replaces the owner-row lock and the write
-queue; public-write rate limits are counted in the object.
-
-The object answers like PostgreSQL does, with these differences:
-
-- Times are kept to the millisecond, not the microsecond. Documents created in
-  the same millisecond sort by id, as ties already do.
-- The control panel lists collections in byte order of their names, where
-  PostgreSQL uses the database's collation.
-- Object keys in `data` come back in the order they were written. JSONB
-  reorders them; the contract gives key order no meaning.
-- Usage counters on `users` (the `/admin` usage page) are not updated for a
-  moved site; they show its usage when it moved.
+PostgreSQL retains accounts, entitlements, website registrations,
+authorization codes and tokens, and media metadata. Media bytes remain in R2.
+The object uses the shared validation, filter and cursor modules and serializes
+operations in synchronous SQLite transactions. Public-write rate limits are
+counted in the object. Timestamps have millisecond precision, collection names
+are listed in byte order, and JSON object key order has no contract meaning.
 
 ### Answering visitors at the edge
 
-When a site moves, the control plane adds a Worker route for it,
-`naru.pub/api/data/v1/<site>/*` (`lib/site-data/edge.ts`), so only moved
-sites pass through the Worker; the rest of the data API reaches the control
-plane directly, as before. The Worker (`site-data-worker/src/website.ts`)
-answers a request with no owner token from the site's object, with the
-control plane's headers, caching and errors (both use
-`lib/site-data/protocol.ts`). It sends on, unchanged, everything that needs
-the control plane: requests with an owner token (sign-in scope and renewal
-are in PostgreSQL), `_files`, `_batch`, and any request the object is not
-serving.
+The configured `naru.pub/api/data/v1/*` Worker route covers every site.
+`site-data-worker/src/website.ts` answers anonymous document requests from
+that site's object using shared headers, caching and errors. It forwards
+requests with owner tokens, `_files`, `_batch`, and requests the object cannot
+serve to the control plane. That fallback still uses the same Durable Object
+for documents; PostgreSQL handles authentication and media metadata.
 
-The object serves visitors only while the control plane has told it to
-(`configure`, with the date the site's database feature runs to, which is the
-check PostgreSQL made) and it is not frozen by a move. Otherwise it hands the
-request back and the control plane decides, so a stale route or configuration
-is never wrong, only slower. The `site-data-edge-sync` job (every 5 minutes)
-adds missing routes, removes routes of sites no longer on Durable Objects, and
-carries paid-status changes (a renewal, a refund) to the objects. A move
-updates the edge itself; if that fails, the site is answered by the control
-plane until the next sync.
+The object serves visitors only while its database entitlement is valid and
+its confirmation is current. The `site-data-edge-sync` job runs every five
+minutes, sends the entitlement end date and a one-hour confirmation, and copies
+document count and bytes used to `users` for admin reporting. It includes
+active complimentary accounts and subscriptions that expired within the last
+60 days. Expired confirmations defer to the control plane's entitlement check.
+The job does not create routes or copy documents.
 
-Public reads the control plane would let a shared cache keep for ten seconds
-are kept for ten seconds in the edge's cache, by the Worker; the zone's cache
-rule for public data reads does not apply to responses a Worker produces.
-`fresh=1` reads are never cached.
+Public reads may be cached at the edge for ten seconds. `fresh=1` reads are
+never cached. The zone's cache rule does not apply to Worker responses.
 
 ### Monthly request budget
 
-A site on a Durable Object answers at most 500,000 requests from visitors per
-calendar month (UTC), counted in its object; owners' requests are never
-counted. Past it, visitors get 429 `RATE_LIMITED` with the date the budget
-resets, and the Worker refuses the site's visitors without asking the object
-until then. The default is the Worker's `SITE_MONTHLY_REQUESTS`; one site's
-own budget is `monthlyRequests` in `configure`. The count is kept in memory and
-saved every 25 requests, so an evicted object can forget up to 24. Requests the
-edge's cache answers are not counted: they cost no object request. The budget
-bounds what a site can cost: at about ₩1,500 per million requests past
-Cloudflare's included allowance, a full budget is under ₩750 a month, below
-what a subscriber pays. Sites on PostgreSQL have no budget.
+Each site answers at most 500,000 anonymous requests per calendar month (UTC)
+by default. Owner requests and requests answered from the edge cache do not
+count. After the budget is spent, visitors receive 429 `RATE_LIMITED` until
+the next month. `SITE_MONTHLY_REQUESTS` sets the default; `monthlyRequests`
+in `configure` overrides it for a site. Counts are persisted every 25 requests,
+so an evicted object can forget up to 24 requests.
 
-### Moving a site
-
-```sh
-cd control-plane
-pnpm site-data-compare <site>                 # before a site's first move
-pnpm site-data-move <site> durable_object
-pnpm site-data-move <site> postgres           # and back
-```
-
-In production, run them in the jobs image like the other CLIs
-(`docker compose exec worker node dist/cli/site-data-move.mjs <site> durable_object`).
-
-`site-data-compare` copies a site still on PostgreSQL into a scratch object,
-`compare:<site>`, and runs the same reads against both: every field the site's
-documents use, sorted both ways and with a time tie-breaker, filtered by
-equality, null and ranges, in pages of seven so the cursors are walked. It
-lists any query whose results differ and erases the scratch object.
-
-A move copies collections and documents with their ids, revisions and
-timestamps, so registrations, outstanding sign-ins and conditional writes
-carry across. While a site is `moving_to_durable_object` or
-`moving_to_postgres`, reads come from where it came from and writes fail with
-503 `UNAVAILABLE`, which the SDK already reports: PostgreSQL checks the state
-under the owner row lock the move takes, and the object is frozen before it is
-copied. The copy is checked against the source before the state changes, and
-a move that fails anywhere puts the site back as it was. Writes are refused
-for the seconds the copy takes, so tell a site's owner before moving it. Moving
-back first removes the site's route, so visitors return to the control plane.
-
-The source keeps its copy: PostgreSQL's rows stay as they were when the site
-moved, and an object a site moved back from stays frozen. A later move
-replaces them; deleting the account erases the object.
-
-A collection the control plane creates outside a request (page registration,
-applying a board template) commits in the object on its own. Applying a
-template now records the application first and creates its collections after;
-one that fails is reported as skipped.
+Collection creation outside a document request, such as website registration
+or board-template application, commits in the object separately from the
+PostgreSQL transaction. Template applications record the application first;
+failed collection creation is reported as skipped.
 
 ## Public guide and example
 
@@ -467,7 +397,7 @@ order. User fields sort ascending as missing/null/non-scalars, strings, numbers,
 then booleans (false before true). Strings use Unicode code-point order without
 locale rules or normalization; numbers compare numerically. Descending reverses
 the order. Arrays and objects tie with null and missing fields. The SQL builds
-these keys explicitly rather than exposing PostgreSQL JSONB ordering.
+these keys explicitly rather than relying on database-native JSON ordering.
 The explicit-document-ordering migration sets ID collation to C and rebuilds
 the existing primary and metadata indexes. It holds a table lock while doing so;
 allow a maintenance window for large installations. Its rollback restores the
@@ -500,7 +430,7 @@ HTTP: `GET /api/data/v1/:site/:collection?filter=<URL-encoded JSON object>&sort=
 
 Equality types match exactly: number 1 differs from string "1"; null matches an explicit null field, not an absent field. Strings match case-sensitively. Arrays and objects cannot be equality values. Range comparisons operate only within the bound's JSON type, so a string bound never selects numeric fields and vice versa; multiple bounds for one field must use the same type. Store sortable dates in a fixed-width representation such as ISO `YYYY-MM-DD`. Missing fields do not match ranges. Nested paths, array membership, OR, and substring search are not supported. Filters are carried in URLs; do not put secrets in them.
 
-A shared PostgreSQL GIN `jsonb_path_ops` index automatically supports equality containment candidate lookup; exact per-field JSONB comparisons enforce scalar equality semantics. Existing collection/ID and collection/time/ID indexes support tenant narrowing and metadata ordering. Range predicates and `data.<field>` sorting scan within the collection narrowed by the site, collection, and any equality candidates, so prefer an equality condition alongside a frequently used range where the data model permits it. PostgreSQL chooses its execution plan based on selectivity; an index does not guarantee every query avoids scanning. No user-managed index configuration is needed. The index migration creates no new document data and its rollback only drops the index. Index creation can block writes while building; schedule production migration accordingly for large databases.
+SQLite indexes support collection/ID and collection/time ordering. Document-field filters and sorting use SQLite JSON expressions within the selected collection. There are no user-managed indexes; field sorting and filtering may scan that collection.
 
 Opaque cursors include a SHA-256 fingerprint of normalized filters. Reordering equivalent keys works; changing, adding or dropping a filter invalidates the cursor. Read permissions and admin scopes are checked on each page. Filters are not authorization: publicly readable collections remain readable without filters.
 
@@ -514,7 +444,7 @@ Draft and public copies share an ID. Saving a private draft does not unpublish o
 
 ### Website identity and admin tokens
 
-Sign-in no longer uses a client ID; `site_data_site_clients`, which held one per owner, is unused and will be dropped. Each registered page retains its callback and collection IDs. Changing a callback URL or its collection permissions revokes all of its codes and access tokens, including when widening scope. Reducing its token lifetime also revokes them. Increasing only the lifetime preserves existing tokens with their original deadlines; pending codes retain the duration already approved. Saving an unchanged registration does not revoke access. Removing a callback cascades the same revocation.
+Sign-in identifies the site and registered page URL. Each registered page retains its callback and collection IDs. Changing a callback URL or its collection permissions revokes all of its codes and access tokens, including when widening scope. Reducing its token lifetime also revokes them. Increasing only the lifetime preserves existing tokens with their original deadlines; pending codes retain the duration already approved. Saving an unchanged registration does not revoke access. Removing a callback cascades the same revocation.
 
 Every `/api/data-auth/v1/token` exchange returns `{ accessToken, expiresIn, expiresAt }`; the token is sent as `Authorization: Bearer <accessToken>`. `expiresIn` is the lifetime in whole seconds, which the SDK measures on the browser's clock; `expiresAt` is the same expiry in Unix milliseconds on the server's clock, kept for SDK files that read it. Accepted owner requests renew the idle window within the hard bounds described under authentication above; the `Naru-Owner-Expires-In` response header on a renewal keeps the SDK current. `POST /api/data-auth/v1/revoke` takes the bearer token and revokes it idempotently. The unpublished renewal tables and `/refresh` and `/end-session` endpoints have been removed; the existing access-token table is sufficient. Requests use explicit credentials and never ambient cookies.
 

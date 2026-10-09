@@ -122,8 +122,9 @@ export async function dataRequest(
     let status = 500;
     let message = "Database request failed.";
     let code: ErrorCode | undefined;
-    // JSONB cannot represent NUL or unpaired surrogate code points.
+    // Media metadata still uses PostgreSQL; documents arrive as Worker DataErrors.
     if (
+      path[0] === "_files" &&
       error &&
       typeof error === "object" &&
       "code" in error &&

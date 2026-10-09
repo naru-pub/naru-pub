@@ -143,7 +143,7 @@ active-slot file is lost, inspect the nginx configuration and restore
 
 ## Site-data Worker (Durable Objects)
 
-Sites moved off PostgreSQL keep their databases in the `naru-site-data` Worker
+All sites keep their databases in the `naru-site-data` Worker
 ([`site-data-worker/`](../site-data-worker), see
 [database.md](database.md#durable-objects-backend)). It is not part of the
 images and deploys on its own, from the development machine, with an account
@@ -157,21 +157,18 @@ pnpm run deploy
 openssl rand -base64 32 | tr -d '\n' | pnpm exec wrangler secret put SITE_DATA_WORKER_SECRET
 ```
 
-Then set `SITE_DATA_WORKER_URL` (the Worker's `workers.dev` address, or a
-route of your own) and the same `SITE_DATA_WORKER_SECRET` in the server's
-`.env`, and deploy the control plane so it reads them. Until then every site
-stays on PostgreSQL and `site-data-move` refuses to run. The Worker only
-answers requests carrying the secret, and the control plane is its only
-caller; change the secret in both places together.
+Set `SITE_DATA_WORKER_URL=https://site-data.naru.pub` and the same
+`SITE_DATA_WORKER_SECRET` in the server's `.env`, then deploy the control
+plane so application and background processes read them. Without these
+settings, site database operations are unavailable. Change the secret in
+both places together; private `/v1/sites/*` operations require it.
 
-The control plane also adds and removes one Worker route per moved site,
-`naru.pub/api/data/v1/<site>/*`, through the Cloudflare API with
-`CLOUDFLARE_USER_API_TOKEN`, which needs **Zone → Workers Routes → Edit** on
-the zone. Set `SITE_DATA_WORKER_NAME` only if the Worker is not named
-`naru-site-data`. The `site-data-edge-sync` maintenance job puts back any route
-that goes missing within five minutes, including after a `wrangler deploy`
-(the routes are not in `wrangler.jsonc`); until then the control plane
-answers the site, more slowly.
+`wrangler.jsonc` declares the `site-data.naru.pub` custom domain and the
+public `naru.pub/api/data/v1/*` route. Cloudflare manages the custom domain's
+DNS and certificate. Both `workers.dev` and Preview URLs are disabled.
+The public route handles every site; the control plane does not manage
+per-site Worker routes. The `site-data-edge-sync` maintenance job renews
+entitlements and updates usage counters every five minutes.
 
 Deploy the Worker before a control plane that relies on what is new in it,
 and redeploy it whenever `site-data-worker/` or the control-plane modules it
@@ -237,54 +234,18 @@ are `REVALIDATED` or `EXPIRED`, never `DYNAMIC`:
 curl -s -o /dev/null -D - "https://eyecntct.naru.pub/" | grep -iE 'cf-cache-status|cache-control'
 ```
 
-## Cloudflare cache rule for public data reads
+## Public data caching
 
-The site data API marks anonymous reads of `world`-readable collections
-`Cache-Control: public, max-age=0, s-maxage=10`, but Cloudflare does not cache
-API responses on its own. Without the rule below every visitor's read reaches
-PostgreSQL. The rule is zone configuration, not code: recreate it by hand if the
-`naru.pub` zone is ever rebuilt.
+The site-data Worker caches anonymous reads of world-readable collections
+for ten seconds using Cloudflare's Cache API. A zone Cache Rule is not needed
+for these Worker responses. The former `Public site data reads` rule can be
+removed from the zone configuration.
 
-**Caching → Cache Rules → `Public site data reads`**
+Owner requests, writes, errors, and `fresh=1` reads are never cached. The SDK
+uses `fresh=1` after its own writes for the loaded module's lifetime. Permission
+changes may take up to ten seconds to hide previously cached public data.
 
-Expression:
-
-```
-(http.request.method eq "GET"
- and starts_with(http.request.uri.path, "/api/data/")
- and not len(http.request.headers["authorization"]) > 0)
-```
-
-| Setting                                | Value                                                    |
-| -------------------------------------- | -------------------------------------------------------- |
-| Cache eligibility                      | Eligible for cache                                       |
-| Edge TTL                               | Use cache-control header if present, bypass cache if not |
-| Browser TTL                            | Respect origin TTL                                       |
-| Cache key                              | Defaults; the query string must stay part of the key     |
-| Serve stale content while revalidating | Off                                                      |
-
-The trailing slash in `/api/data/` keeps sign-in (`/api/data-auth/`) and the
-control panel (`/api/account/database`) out. The origin decides what is actually
-stored: requests with a token, admin-only collections, `/_files`, writes and
-every error carry `no-store`, and anonymous public responses use
-`Access-Control-Allow-Origin: *`, so ignoring `Vary` cannot hand one caller's
-response to another. Stale serving stays off because the 10-second window is
-also how long a collection just changed from `world` to `admin` can still be
-served. The browser SDK reads a collection with `cache: "no-store"` and the private
-`fresh=1` query parameter after its own write for the rest of the loaded module's lifetime. The server returns `no-store` for that query variant. Keep query
-strings in the cache key and respect origin headers: this makes read-after-write
-independent of the shared cache duration. A request with `fresh=1` must never
-be a cache HIT.
-
-Check it with GET requests; `curl -I` sends HEAD, which the expression does not
-match and which always reports `DYNAMIC`:
-
-```bash
-curl -s -o /dev/null -D - "https://naru.pub/api/data/v1/eyecntct/posts?size=1" | grep -i cf-cache-status
-```
-
-Within 10 seconds a repeat is `HIT`, after that `EXPIRED`; with an
-`Authorization` header it is `DYNAMIC`, and error responses are `BYPASS`.
+## Federation worker shutdown
 
 The federation worker aborts its queue listener on SIGTERM, drains heartbeat
 work, and closes both the postgres.js client and the shared Kysely pool before
