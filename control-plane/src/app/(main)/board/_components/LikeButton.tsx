@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { boardRequest } from "./api";
 
 export function LikeButton({
@@ -44,18 +45,21 @@ export function LikeButton({
   }
 
   return (
-    <button
+    <Button
       type="button"
+      variant={compact ? "ghost" : "outline"}
       onClick={toggle}
       disabled={busy}
       aria-pressed={liked}
       className={
         compact
-          ? `text-xs hover:text-foreground ${liked ? "font-bold text-primary" : "text-muted-foreground"}`
-          : `h-11 border px-4 text-sm ${liked ? "border-primary text-primary" : "border-border text-foreground hover:bg-accent"}`
+          ? `h-8 px-2 text-xs hover:text-foreground ${liked ? "font-bold text-primary" : "font-normal text-muted-foreground"}`
+          : liked
+            ? "border-primary text-primary hover:text-primary"
+            : undefined
       }
     >
       반가워요 {count}
-    </button>
+    </Button>
   );
 }

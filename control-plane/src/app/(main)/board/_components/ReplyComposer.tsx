@@ -3,6 +3,8 @@
 import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { MAX_REPLY_BODY_LENGTH } from "@/lib/board/constants";
 import { boardRequest } from "./api";
 
@@ -53,7 +55,7 @@ export function ReplyComposer({
   return (
     <form
       onSubmit={submit}
-      className={`flex flex-col border ${parentId ? "border-primary" : "border-border"}`}
+      className={`flex flex-col border focus-within:ring-2 focus-within:ring-ring ${parentId ? "border-primary" : "border-border"}`}
     >
       <label
         htmlFor={id}
@@ -61,7 +63,7 @@ export function ReplyComposer({
       >
         {label}
       </label>
-      <textarea
+      <Textarea
         id={id}
         value={body}
         onChange={(event) => setBody(event.target.value)}
@@ -69,25 +71,17 @@ export function ReplyComposer({
         autoFocus={autoFocus}
         rows={3}
         placeholder="답글을 남겨 주세요."
-        className="resize-y bg-background px-3 py-2 text-sm text-foreground focus:outline-none"
+        className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
       />
       <div className="flex justify-end gap-2 border-t border-border p-2">
         {onDone && (
-          <button
-            type="button"
-            onClick={onDone}
-            className="h-10 border border-border px-3 text-sm text-muted-foreground hover:bg-accent"
-          >
+          <Button type="button" variant="outline" onClick={onDone}>
             취소
-          </button>
+          </Button>
         )}
-        <button
-          type="submit"
-          disabled={busy || !body.trim()}
-          className="h-10 bg-primary px-4 text-sm font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
+        <Button type="submit" disabled={busy || !body.trim()}>
           답글 달기
-        </button>
+        </Button>
       </div>
     </form>
   );

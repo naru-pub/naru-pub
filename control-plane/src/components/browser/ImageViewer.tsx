@@ -74,7 +74,7 @@ const ImageViewer = forwardRef<ImageViewerRef, ImageViewerProps>(
               src={src}
               alt={alt}
               onError={() => setImageError(true)}
-              className="max-w-full max-h-full border border-border rounded"
+              className="max-w-full max-h-full border border-border"
               style={{
                 display: "block",
                 maxWidth: zoom === 1 ? "100%" : "none",

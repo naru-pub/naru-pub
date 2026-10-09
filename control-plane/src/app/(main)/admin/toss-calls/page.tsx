@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/lib/database";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -65,83 +66,85 @@ export default async function TossCallsPage({
           </>
         ) : null}
       </p>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>시각</TableHead>
-            <TableHead>요청</TableHead>
-            <TableHead>주문</TableHead>
-            <TableHead>응답</TableHead>
-            <TableHead>시간</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {calls.map((call) => (
-            <TableRow key={call.id}>
-              <TableCell className="whitespace-nowrap">
-                {formatDate(call.created_at)}
-              </TableCell>
-              <TableCell className="max-w-md">
-                <span className="font-mono text-xs break-all">
-                  {call.method} {call.path}
-                </span>
-                <span className="block text-xs text-muted-foreground">
-                  {call.flow === "billing" ? "자동결제" : "한 번만 결제"}
-                </span>
-                <details className="mt-1">
-                  <summary className="cursor-pointer text-xs text-muted-foreground">
-                    본문
-                  </summary>
-                  <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all bg-muted p-2 text-xs">
-                    {`요청\n${pretty(call.request_body)}\n\n응답\n${pretty(call.response_body)}`}
-                  </pre>
-                </details>
-              </TableCell>
-              <TableCell className="font-mono text-xs">
-                {call.order_id ? (
-                  <Link
-                    href={`/admin/toss-calls?order=${encodeURIComponent(call.order_id)}`}
-                    className="underline"
-                  >
-                    {call.order_id}
-                  </Link>
-                ) : (
-                  "-"
-                )}
-              </TableCell>
-              <TableCell className="whitespace-nowrap">
-                <Badge
-                  variant={
-                    call.http_status == null || call.http_status >= 400
-                      ? "destructive"
-                      : "secondary"
-                  }
-                >
-                  {call.http_status ?? "응답 없음"}
-                </Badge>
-                {call.error_code || call.error ? (
-                  <span className="block text-xs text-muted-foreground">
-                    {call.error_code ?? call.error}
-                  </span>
-                ) : null}
-              </TableCell>
-              <TableCell className="whitespace-nowrap text-xs">
-                {call.duration_ms}ms
-              </TableCell>
-            </TableRow>
-          ))}
-          {calls.length === 0 ? (
+      <Card>
+        <Table>
+          <TableHeader>
             <TableRow>
-              <TableCell
-                colSpan={5}
-                className="py-10 text-center text-muted-foreground"
-              >
-                Toss 호출 기록이 없습니다.
-              </TableCell>
+              <TableHead>시각</TableHead>
+              <TableHead>요청</TableHead>
+              <TableHead>주문</TableHead>
+              <TableHead>응답</TableHead>
+              <TableHead>시간</TableHead>
             </TableRow>
-          ) : null}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {calls.map((call) => (
+              <TableRow key={call.id}>
+                <TableCell className="whitespace-nowrap tabular-nums">
+                  {formatDate(call.created_at)}
+                </TableCell>
+                <TableCell className="max-w-md">
+                  <span className="font-mono text-xs break-all">
+                    {call.method} {call.path}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {call.flow === "billing" ? "자동결제" : "한 번만 결제"}
+                  </span>
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs text-muted-foreground">
+                      본문
+                    </summary>
+                    <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all bg-muted p-2 text-xs">
+                      {`요청\n${pretty(call.request_body)}\n\n응답\n${pretty(call.response_body)}`}
+                    </pre>
+                  </details>
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  {call.order_id ? (
+                    <Link
+                      href={`/admin/toss-calls?order=${encodeURIComponent(call.order_id)}`}
+                      className="underline"
+                    >
+                      {call.order_id}
+                    </Link>
+                  ) : (
+                    "-"
+                  )}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  <Badge
+                    variant={
+                      call.http_status == null || call.http_status >= 400
+                        ? "destructive"
+                        : "secondary"
+                    }
+                  >
+                    {call.http_status ?? "응답 없음"}
+                  </Badge>
+                  {call.error_code || call.error ? (
+                    <span className="block text-xs text-muted-foreground">
+                      {call.error_code ?? call.error}
+                    </span>
+                  ) : null}
+                </TableCell>
+                <TableCell className="whitespace-nowrap font-mono text-xs">
+                  {call.duration_ms}ms
+                </TableCell>
+              </TableRow>
+            ))}
+            {calls.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  className="py-10 text-center text-muted-foreground"
+                >
+                  Toss 호출 기록이 없습니다.
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </Card>
     </div>
   );
 }

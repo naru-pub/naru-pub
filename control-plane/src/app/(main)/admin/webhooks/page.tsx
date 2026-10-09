@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/lib/database";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -106,7 +107,7 @@ export default async function WebhookDeliveriesPage({
         </Link>
       </div>
 
-      <div className="overflow-x-auto border-2 border-line bg-card">
+      <Card>
         <Table>
           <TableHeader>
             <TableRow>
@@ -121,7 +122,7 @@ export default async function WebhookDeliveriesPage({
           <TableBody>
             {deliveries.map((delivery) => (
               <TableRow key={delivery.id} className="align-top">
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(delivery.received_at)}
                   {delivery.retried_count ? (
                     <span className="block text-xs text-muted-foreground">
@@ -129,7 +130,7 @@ export default async function WebhookDeliveriesPage({
                     </span>
                   ) : null}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap font-mono text-xs">
                   {delivery.event_type}
                 </TableCell>
                 <TableCell className="font-mono text-xs">
@@ -168,7 +169,7 @@ export default async function WebhookDeliveriesPage({
                   >
                     {delivery.http_status}
                   </Badge>
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block font-mono text-xs text-muted-foreground">
                     {delivery.duration_ms}ms
                   </span>
                 </TableCell>
@@ -186,7 +187,7 @@ export default async function WebhookDeliveriesPage({
             ) : null}
           </TableBody>
         </Table>
-      </div>
+      </Card>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import {
 } from "@/lib/payments/payment-events";
 import { isTossLiveMode, isTossTestMode } from "@/lib/payments/toss";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { STUCK_AFTER_ATTEMPTS } from "@/lib/payments/billing-keys";
 import { formatDate, formatKrw } from "./_components/format";
 import {
@@ -35,17 +36,20 @@ function Stat({
   alert?: boolean;
 }) {
   return (
-    <Link
-      href={href}
-      className={`block border-2 bg-card p-4 hover:border-primary ${alert ? "border-destructive" : "border-border"}`}
-    >
-      <div className="text-sm text-muted-foreground">{label}</div>
-      <div className={`text-2xl font-bold ${alert ? "text-destructive" : ""}`}>
-        {value}
-      </div>
-      {detail ? (
-        <div className="text-xs text-muted-foreground">{detail}</div>
-      ) : null}
+    <Link href={href} className="group block">
+      <Card
+        className={`h-full p-4 group-hover:border-primary ${alert ? "border-destructive" : ""}`}
+      >
+        <div className="text-sm text-muted-foreground">{label}</div>
+        <div
+          className={`text-2xl font-bold tabular-nums ${alert ? "text-destructive" : ""}`}
+        >
+          {value}
+        </div>
+        {detail ? (
+          <div className="text-xs text-muted-foreground">{detail}</div>
+        ) : null}
+      </Card>
     </Link>
   );
 }
@@ -311,26 +315,32 @@ export default async function AdminOverviewPage() {
               전체 보기
             </Link>
           </div>
-          <ul className="divide-y-2 divide-border border-2 border-line bg-card text-sm">
-            {recentEvents.map((event) => (
-              <li key={event.id} className="space-y-0.5 p-3">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span>{formatDate(event.created_at)}</span>
-                  <span className="font-medium text-foreground">
-                    {event.login_name ?? "-"}
-                  </span>
-                  <Badge variant="outline">
-                    {PAYMENT_EVENT_LABELS[event.kind as PaymentEventKind] ??
-                      event.kind}
-                  </Badge>
-                </div>
-                <div className="break-words">{event.summary}</div>
-              </li>
-            ))}
-            {recentEvents.length === 0 ? (
-              <li className="p-3 text-muted-foreground">이벤트가 없습니다.</li>
-            ) : null}
-          </ul>
+          <Card>
+            <ul className="divide-y-2 divide-border text-sm">
+              {recentEvents.map((event) => (
+                <li key={event.id} className="space-y-0.5 p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="tabular-nums">
+                      {formatDate(event.created_at)}
+                    </span>
+                    <span className="font-medium text-foreground">
+                      {event.login_name ?? "-"}
+                    </span>
+                    <Badge variant="outline">
+                      {PAYMENT_EVENT_LABELS[event.kind as PaymentEventKind] ??
+                        event.kind}
+                    </Badge>
+                  </div>
+                  <div className="break-words">{event.summary}</div>
+                </li>
+              ))}
+              {recentEvents.length === 0 ? (
+                <li className="p-3 text-muted-foreground">
+                  이벤트가 없습니다.
+                </li>
+              ) : null}
+            </ul>
+          </Card>
         </section>
 
         <section className="space-y-2">
@@ -340,34 +350,40 @@ export default async function AdminOverviewPage() {
               전체 보기
             </Link>
           </div>
-          <ul className="divide-y-2 divide-border border-2 border-line bg-card text-sm">
-            {recentDeliveries.map((delivery) => (
-              <li key={delivery.id} className="space-y-0.5 p-3">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span>{formatDate(delivery.received_at)}</span>
-                  <span className="font-medium text-foreground">
-                    {delivery.event_type}
-                  </span>
-                  <Badge
-                    variant={
-                      delivery.http_status >= 500 ? "destructive" : "secondary"
-                    }
-                  >
-                    {delivery.http_status}
-                  </Badge>
-                  {delivery.subject ? (
-                    <span className="font-mono">{delivery.subject}</span>
-                  ) : null}
-                </div>
-                <div className="break-words">{delivery.outcome}</div>
-              </li>
-            ))}
-            {recentDeliveries.length === 0 ? (
-              <li className="p-3 text-muted-foreground">
-                받은 웹훅이 없습니다.
-              </li>
-            ) : null}
-          </ul>
+          <Card>
+            <ul className="divide-y-2 divide-border text-sm">
+              {recentDeliveries.map((delivery) => (
+                <li key={delivery.id} className="space-y-0.5 p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="tabular-nums">
+                      {formatDate(delivery.received_at)}
+                    </span>
+                    <span className="font-mono font-medium text-foreground">
+                      {delivery.event_type}
+                    </span>
+                    <Badge
+                      variant={
+                        delivery.http_status >= 500
+                          ? "destructive"
+                          : "secondary"
+                      }
+                    >
+                      {delivery.http_status}
+                    </Badge>
+                    {delivery.subject ? (
+                      <span className="font-mono">{delivery.subject}</span>
+                    ) : null}
+                  </div>
+                  <div className="break-words">{delivery.outcome}</div>
+                </li>
+              ))}
+              {recentDeliveries.length === 0 ? (
+                <li className="p-3 text-muted-foreground">
+                  받은 웹훅이 없습니다.
+                </li>
+              ) : null}
+            </ul>
+          </Card>
         </section>
       </div>
     </div>

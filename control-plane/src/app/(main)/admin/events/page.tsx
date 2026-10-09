@@ -10,6 +10,7 @@ import {
 import { isTossLiveMode } from "@/lib/payments/toss";
 import { operatorAlertsConfigured } from "@/lib/operator-alerts";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -132,7 +133,7 @@ export default async function PaymentEventsPage({
         ) : null}
       </div>
 
-      <div className="overflow-x-auto border-2 border-line bg-card">
+      <Card>
         <Table>
           <TableHeader>
             <TableRow>
@@ -146,7 +147,7 @@ export default async function PaymentEventsPage({
           <TableBody>
             {events.map((event) => (
               <TableRow key={event.id}>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(event.created_at)}
                 </TableCell>
                 <TableCell className="font-medium">
@@ -175,7 +176,7 @@ export default async function PaymentEventsPage({
                 <TableCell className="max-w-xl break-words">
                   {event.summary}
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-muted-foreground">
+                <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
                   {event.notified_at ? (
                     <span
                       className="flex items-center gap-1"
@@ -204,7 +205,7 @@ export default async function PaymentEventsPage({
             ) : null}
           </TableBody>
         </Table>
-      </div>
+      </Card>
     </div>
   );
 }

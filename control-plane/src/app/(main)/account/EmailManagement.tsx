@@ -121,10 +121,13 @@ export default function EmailManagement({ currentEmail, emailVerifiedAt }: Email
                       <Clock size={12} />
                       인증 대기
                     </span>
-                    <button
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
                       onClick={handleResendVerification}
                       disabled={isResending}
-                      className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50"
+                      className="h-auto gap-1 px-0 text-xs"
                     >
                       {isResending ? (
                         <>
@@ -137,7 +140,7 @@ export default function EmailManagement({ currentEmail, emailVerifiedAt }: Email
                           재발송
                         </>
                       )}
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>

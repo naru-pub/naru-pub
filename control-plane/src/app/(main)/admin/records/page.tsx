@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -84,14 +87,17 @@ export default async function PaymentRecordsPage({
 
   return (
     <div className="space-y-8">
-      <form className="flex gap-2 text-sm">
-        <input
+      <form className="flex gap-2">
+        <Input
           name="user"
           defaultValue={loginName ?? ""}
           placeholder="계정 이름으로 거르기"
-          className="border-2 border-line bg-background px-2 py-1"
+          aria-label="계정 이름"
+          className="h-9 w-56"
         />
-        <button className="border-2 border-line px-3 py-1">보기</button>
+        <Button type="submit" variant="outline" size="sm">
+          보기
+        </Button>
       </form>
 
       <section className="space-y-2">
@@ -100,42 +106,44 @@ export default async function PaymentRecordsPage({
           작업마다 가장 최근 실행(1년 보관). 매분 도는 작업 대기열은 한 일이
           있거나 실패한 실행만 남깁니다.
         </p>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>작업</TableHead>
-              <TableHead>시작</TableHead>
-              <TableHead>결과</TableHead>
-              <TableHead>출력 끝부분</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {runs.map((run) => (
-              <TableRow key={run.id}>
-                <TableCell className="font-mono text-xs">
-                  {run.script}
-                </TableCell>
-                <TableCell className="whitespace-nowrap">
-                  {formatDate(run.started_at)}
-                </TableCell>
-                <TableCell>
-                  {run.timed_out ? (
-                    <Badge variant="destructive">시간 초과</Badge>
-                  ) : run.exit_code === 0 ? (
-                    "성공"
-                  ) : (
-                    <Badge variant="destructive">
-                      종료 코드 {run.exit_code ?? "없음"}
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell className="max-w-xl whitespace-pre-wrap break-words font-mono text-xs">
-                  {run.output_tail?.split("\n").slice(-6).join("\n") ?? "—"}
-                </TableCell>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>작업</TableHead>
+                <TableHead>시작</TableHead>
+                <TableHead>결과</TableHead>
+                <TableHead>출력 끝부분</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {runs.map((run) => (
+                <TableRow key={run.id}>
+                  <TableCell className="font-mono text-xs">
+                    {run.script}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap tabular-nums">
+                    {formatDate(run.started_at)}
+                  </TableCell>
+                  <TableCell>
+                    {run.timed_out ? (
+                      <Badge variant="destructive">시간 초과</Badge>
+                    ) : run.exit_code === 0 ? (
+                      <Badge variant="success">성공</Badge>
+                    ) : (
+                      <Badge variant="destructive">
+                        종료 코드 {run.exit_code ?? "없음"}
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="max-w-xl whitespace-pre-wrap break-words font-mono text-xs">
+                    {run.output_tail?.split("\n").slice(-6).join("\n") ?? "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
       </section>
 
       <section className="space-y-2">
@@ -143,38 +151,42 @@ export default async function PaymentRecordsPage({
         <p className="text-sm text-muted-foreground">
           최근 100통(1년 보관). 실패한 메일은 결제 작업 대기열이 다시 보냅니다.
         </p>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>시각</TableHead>
-              <TableHead>종류</TableHead>
-              <TableHead>계정</TableHead>
-              <TableHead>받는 사람</TableHead>
-              <TableHead>결과</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {mails.map((mail) => (
-              <TableRow key={mail.id}>
-                <TableCell className="whitespace-nowrap">
-                  {formatDate(mail.created_at)}
-                </TableCell>
-                <TableCell>{MAIL_KINDS[mail.kind] ?? mail.kind}</TableCell>
-                <TableCell>{mail.login_name ?? "—"}</TableCell>
-                <TableCell className="text-xs">{mail.recipient}</TableCell>
-                <TableCell className="max-w-md break-words text-xs">
-                  {mail.error ? (
-                    <Badge variant="destructive">{mail.error}</Badge>
-                  ) : (
-                    <span className="font-mono">
-                      {mail.message_id ?? "보냄"}
-                    </span>
-                  )}
-                </TableCell>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>시각</TableHead>
+                <TableHead>종류</TableHead>
+                <TableHead>계정</TableHead>
+                <TableHead>받는 사람</TableHead>
+                <TableHead>결과</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {mails.map((mail) => (
+                <TableRow key={mail.id}>
+                  <TableCell className="whitespace-nowrap tabular-nums">
+                    {formatDate(mail.created_at)}
+                  </TableCell>
+                  <TableCell>{MAIL_KINDS[mail.kind] ?? mail.kind}</TableCell>
+                  <TableCell>{mail.login_name ?? "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {mail.recipient}
+                  </TableCell>
+                  <TableCell className="max-w-md break-words text-xs">
+                    {mail.error ? (
+                      <Badge variant="destructive">{mail.error}</Badge>
+                    ) : (
+                      <span className="font-mono">
+                        {mail.message_id ?? "보냄"}
+                      </span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
       </section>
 
       <section className="space-y-2">
@@ -183,38 +195,47 @@ export default async function PaymentRecordsPage({
           카드 등록이나 결제 창이 실패하거나 닫혔을 때 Toss가 알려 준 코드와
           메시지(5년 보관). API 호출에는 남지 않는 기록입니다.
         </p>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>시각</TableHead>
-              <TableHead>계정</TableHead>
-              <TableHead>창</TableHead>
-              <TableHead>코드</TableHead>
-              <TableHead>메시지</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {windows.map((outcome) => (
-              <TableRow key={outcome.id}>
-                <TableCell className="whitespace-nowrap">
-                  {formatDate(outcome.created_at)}
-                </TableCell>
-                <TableCell>{outcome.login_name ?? "—"}</TableCell>
-                <TableCell>
-                  {outcome.window === "billing_auth"
-                    ? "카드 등록"
-                    : `결제 ${outcome.order_id}`}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {outcome.code}
-                </TableCell>
-                <TableCell className="max-w-md break-words">
-                  {outcome.message ?? "—"}
-                </TableCell>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>시각</TableHead>
+                <TableHead>계정</TableHead>
+                <TableHead>창</TableHead>
+                <TableHead>코드</TableHead>
+                <TableHead>메시지</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {windows.map((outcome) => (
+                <TableRow key={outcome.id}>
+                  <TableCell className="whitespace-nowrap tabular-nums">
+                    {formatDate(outcome.created_at)}
+                  </TableCell>
+                  <TableCell>{outcome.login_name ?? "—"}</TableCell>
+                  <TableCell>
+                    {outcome.window === "billing_auth" ? (
+                      "카드 등록"
+                    ) : (
+                      <>
+                        결제{" "}
+                        <span className="font-mono text-xs">
+                          {outcome.order_id}
+                        </span>
+                      </>
+                    )}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {outcome.code}
+                  </TableCell>
+                  <TableCell className="max-w-md break-words">
+                    {outcome.message ?? "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
       </section>
     </div>
   );

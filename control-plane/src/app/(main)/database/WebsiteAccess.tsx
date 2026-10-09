@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useConfirm } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
 
 type Client = {
@@ -36,6 +38,7 @@ export default function WebsiteAccess({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const confirm = useConfirm();
   const reload = async () => {
     const result = await api();
     setClients(result.clients);
@@ -151,12 +154,11 @@ export default function WebsiteAccess({
                   className="flex min-w-0 gap-2 items-center border px-3 py-2 text-sm break-all"
                   key={c.name}
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={selected.includes(c.name)}
-                    onChange={(e) =>
+                    onCheckedChange={(checked) =>
                       setSelected((current) =>
-                        e.target.checked
+                        checked === true
                           ? [...current, c.name]
                           : current.filter((n) => n !== c.name),
                       )
@@ -229,11 +231,14 @@ export default function WebsiteAccess({
                 </Button>
                 <Button
                   variant="destructive"
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      window.confirm(
-                        "이 웹사이트 등록을 제거하고 발급된 권한을 모두 취소할까요?",
-                      )
+                      await confirm({
+                        title:
+                          "이 웹사이트 등록을 제거하고 발급된 권한을 모두 취소할까요?",
+                        confirmText: "제거",
+                        destructive: true,
+                      })
                     )
                       void run(async () => {
                         await api("DELETE", { id: c.id });

@@ -8,7 +8,7 @@ export default async function File() {
   if (!user) {
     return (
       <div className="max-w-md mx-auto p-6">
-        <div className="bg-card border-2 border-line rounded-lg p-6 text-center">
+        <div className="bg-card border-2 border-line p-6 text-center">
           <h1 className="text-xl font-bold text-foreground mb-2">로그인 필요</h1>
           <p className="text-muted-foreground">파일 관리를 위해 로그인이 필요합니다.</p>
         </div>

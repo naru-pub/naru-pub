@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { FileNode } from "@/lib/fileUtils";
 
 // The deepest folder holding every path, as "a/b", or "" when they sit in
@@ -115,34 +117,28 @@ export function FolderPicker({
               style={{ paddingLeft: `${0.25 + depth * 1.25}rem` }}
             >
               {node.isDirectory ? (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   onClick={() => toggleOpen(node.path)}
                   aria-label={
                     open ? `${node.name} 접기` : `${node.name} 펼치기`
                   }
                   aria-expanded={open}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+                  className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
                 >
-                  {open ? (
-                    <ChevronDown size={14} />
-                  ) : (
-                    <ChevronRight size={14} />
-                  )}
-                </button>
+                  {open ? <ChevronDown /> : <ChevronRight />}
+                </Button>
               ) : (
                 <span className="w-8 shrink-0" />
               )}
-              <label className="flex min-w-0 flex-1 items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  ref={(input) => {
-                    if (input) input.indeterminate = partial;
-                  }}
+              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={partial ? "indeterminate" : checked}
                   disabled={files.length === 0}
-                  onChange={() => setFiles(files, !checked)}
-                  className="h-4 w-4 accent-primary"
+                  onCheckedChange={() => setFiles(files, !checked)}
+                  className="data-[state=indeterminate]:bg-primary data-[state=indeterminate]:shadow-[inset_0_0_0_3px_hsl(var(--card))] data-[state=indeterminate]:[&_svg]:hidden"
                 />
                 <span
                   className={`truncate ${count > 0 ? "text-foreground" : "text-muted-foreground"}`}

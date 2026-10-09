@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { boardRequest } from "./api";
 
 export function PostActions({
@@ -18,13 +20,21 @@ export function PostActions({
   isTemplate: boolean;
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
 
   async function remove() {
-    const warning = isTemplate
-      ? "이 글과 템플릿 파일을 지울까요? 이미 적용한 사이트의 파일은 그대로 남아요."
-      : "이 글을 지울까요?";
-    if (!window.confirm(warning)) return;
+    const confirmed = await confirm(
+      isTemplate
+        ? {
+            title: "이 글과 템플릿 파일을 지울까요?",
+            description: "이미 적용한 사이트의 파일은 그대로 남아요.",
+            confirmText: "지우기",
+            destructive: true,
+          }
+        : { title: "이 글을 지울까요?", confirmText: "지우기", destructive: true },
+    );
+    if (!confirmed) return;
     setBusy(true);
     try {
       await boardRequest(`/api/board/posts/${postId}`, "DELETE");
@@ -48,30 +58,24 @@ export function PostActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        onClick={copyLink}
-        className="h-11 border border-border px-4 text-sm hover:bg-accent"
-      >
+      <Button type="button" variant="outline" onClick={copyLink}>
         링크 복사
-      </button>
+      </Button>
       {canEdit && (
-        <Link
-          href={`/board/${postId}/edit`}
-          className="flex h-11 items-center border border-border px-4 text-sm hover:bg-accent"
-        >
-          고치기
-        </Link>
+        <Button asChild variant="outline">
+          <Link href={`/board/${postId}/edit`}>고치기</Link>
+        </Button>
       )}
       {canDelete && (
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={remove}
           disabled={busy}
-          className="h-11 border border-destructive px-4 text-sm text-destructive hover:bg-destructive/10"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
         >
           지우기
-        </button>
+        </Button>
       )}
     </div>
   );

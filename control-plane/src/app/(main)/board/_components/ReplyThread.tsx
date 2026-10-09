@@ -4,6 +4,10 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
+import { Textarea } from "@/components/ui/textarea";
 import { MAX_REPLY_BODY_LENGTH } from "@/lib/board/constants";
 import { boardRequest } from "./api";
 import { LikeButton } from "./LikeButton";
@@ -173,6 +177,10 @@ function Avatar({ name }: { name: string }) {
   );
 }
 
+// The quiet text actions under a reply and in its header.
+const quietAction =
+  "h-8 px-2 text-xs font-normal text-muted-foreground hover:text-foreground";
+
 function ReplyItemView({
   postId,
   reply,
@@ -205,6 +213,7 @@ function ReplyItemView({
   onEditDone: () => void;
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [draft, setDraft] = useState(reply.body ?? "");
   const [busy, setBusy] = useState(false);
   const own = !!viewer && viewer.id === reply.userId;
@@ -227,14 +236,15 @@ function ReplyItemView({
     return (
       <div className="flex items-center gap-3 py-3 text-sm text-muted-foreground">
         <span>[삭제된 답글]</span>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={onToggle}
-          className="text-xs hover:text-foreground"
+          className={quietAction}
           aria-expanded={!collapsed}
         >
           {collapsed ? `[+${descendants}]` : "[−]"}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -247,21 +257,13 @@ function ReplyItemView({
           <span className="font-bold text-foreground">
             {reply.authorLoginName}
           </span>
-          {isPostAuthor && (
-            <span className="border border-link px-1.5 text-[11px] text-link">
-              작성자
-            </span>
-          )}
+          {isPostAuthor && <Badge variant="link">작성자</Badge>}
           {reply.appliedVersion !== null && (
-            <span className="border border-primary px-1.5 text-[11px] text-primary">
+            <Badge variant="outline" className="text-primary">
               v{reply.appliedVersion} 적용함
-            </span>
+            </Badge>
           )}
-          {solved && (
-            <span className="bg-success/10 px-1.5 text-[11px] text-success">
-              해결한 답글
-            </span>
-          )}
+          {solved && <Badge variant="success">해결한 답글</Badge>}
           <Link
             href={`/board/${postId}/replies/${reply.id}`}
             className="hover:underline"
@@ -269,15 +271,16 @@ function ReplyItemView({
             {reply.time}
           </Link>
           {reply.edited && <span>(고침)</span>}
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={onToggle}
-            className="hover:text-foreground"
+            className={`${quietAction} h-6 px-1`}
             aria-expanded={!collapsed}
             aria-label={collapsed ? "펼치기" : "접기"}
           >
             {collapsed ? `[+${descendants}]` : "[−]"}
-          </button>
+          </Button>
         </div>
 
         {collapsed ? null : editing ? (
@@ -285,17 +288,17 @@ function ReplyItemView({
             <label htmlFor={`edit-${reply.id}`} className="sr-only">
               답글 고치기
             </label>
-            <textarea
+            <Textarea
               id={`edit-${reply.id}`}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               maxLength={MAX_REPLY_BODY_LENGTH}
               rows={3}
-              className="w-full resize-y border border-border bg-background px-3 py-2 text-sm"
             />
             <div className="flex gap-2">
-              <button
+              <Button
                 type="button"
+                size="sm"
                 disabled={busy || !draft.trim()}
                 onClick={() =>
                   run(async () => {
@@ -309,17 +312,17 @@ function ReplyItemView({
                     onEditDone();
                   })
                 }
-                className="h-9 bg-primary px-3 text-sm font-bold text-primary-foreground disabled:opacity-50"
               >
                 저장
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={onEditDone}
-                className="h-9 border border-border px-3 text-sm"
               >
                 취소
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
@@ -327,15 +330,16 @@ function ReplyItemView({
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90">
               {reply.body}
             </p>
-            <div className="flex flex-wrap items-center gap-4 text-xs">
+            <div className="-ml-2 flex flex-wrap items-center gap-1 text-xs">
               {viewer?.canWrite && (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={onReply}
-                  className="text-muted-foreground hover:text-foreground"
+                  className={quietAction}
                 >
                   답글
-                </button>
+                </Button>
               )}
               <LikeButton
                 url={`/api/board/replies/${reply.id}/like`}
@@ -345,20 +349,29 @@ function ReplyItemView({
                 compact
               />
               {own && viewer?.canWrite && (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={onEdit}
-                  className="text-muted-foreground hover:text-foreground"
+                  className={quietAction}
                 >
                   고치기
-                </button>
+                </Button>
               )}
               {canDelete && (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   disabled={busy}
-                  onClick={() => {
-                    if (!window.confirm("이 답글을 지울까요?")) return;
+                  onClick={async () => {
+                    if (
+                      !(await confirm({
+                        title: "이 답글을 지울까요?",
+                        confirmText: "지우기",
+                        destructive: true,
+                      }))
+                    )
+                      return;
                     run(
                       () =>
                         boardRequest(
@@ -368,14 +381,15 @@ function ReplyItemView({
                       "답글을 지웠어요.",
                     );
                   }}
-                  className="text-muted-foreground hover:text-destructive"
+                  className={`${quietAction} hover:text-destructive`}
                 >
                   지우기
-                </button>
+                </Button>
               )}
               {isQuestion && viewerIsQuestionAuthor && (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   disabled={busy}
                   onClick={() =>
                     run(() =>
@@ -384,10 +398,10 @@ function ReplyItemView({
                       }),
                     )
                   }
-                  className="text-muted-foreground hover:text-foreground"
+                  className={quietAction}
                 >
                   {solved ? "해결 표시 취소" : "이 답글로 해결"}
-                </button>
+                </Button>
               )}
             </div>
           </>

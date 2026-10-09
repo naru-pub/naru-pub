@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { boardRequest } from "../../board/_components/api";
 
 // Deleting uses the same routes an author does; admins may delete anyone's.
@@ -17,11 +19,19 @@ export function ModerationButton({
   action: "delete" | "restore";
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const noun = target === "post" ? "글" : "답글";
 
   async function run() {
-    if (action === "delete" && !window.confirm(`이 ${noun}을 지울까요?`)) {
+    if (
+      action === "delete" &&
+      !(await confirm({
+        title: `이 ${noun}을 지울까요?`,
+        confirmText: "삭제",
+        destructive: true,
+      }))
+    ) {
       return;
     }
     setBusy(true);
@@ -42,17 +52,19 @@ export function ModerationButton({
   }
 
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
+      size="sm"
       onClick={run}
       disabled={busy}
       className={
         action === "delete"
-          ? "h-9 border border-destructive px-3 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
-          : "h-9 border border-border px-3 text-xs hover:bg-accent disabled:opacity-50"
+          ? "text-destructive hover:bg-destructive/10 hover:text-destructive"
+          : undefined
       }
     >
       {action === "delete" ? "지우기" : "되살리기"}
-    </button>
+    </Button>
   );
 }

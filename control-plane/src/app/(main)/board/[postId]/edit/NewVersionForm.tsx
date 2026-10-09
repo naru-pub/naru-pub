@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import { MAX_CHANGELOG_LENGTH } from "@/lib/board/constants";
 import { boardRequest } from "../../_components/api";
 import { FolderPicker } from "../../_components/FolderPicker";
@@ -63,19 +66,17 @@ export function NewVersionForm({
             {collections.map((name) => (
               <label
                 key={name}
-                className="flex h-10 items-center gap-2 border border-border px-3 text-sm"
+                className="flex h-10 cursor-pointer items-center gap-2 border border-border px-3 text-sm"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={chosen.includes(name)}
-                  onChange={(event) =>
+                  onCheckedChange={(checked) =>
                     setChosen((current) =>
-                      event.target.checked
+                      checked === true
                         ? [...current, name]
                         : current.filter((c) => c !== name),
                     )
                   }
-                  className="h-4 w-4 accent-primary"
                 />
                 <code>{name}</code>
               </label>
@@ -87,23 +88,18 @@ export function NewVersionForm({
         <label htmlFor="changelog" className="text-sm font-bold">
           바뀐 점
         </label>
-        <textarea
+        <Textarea
           id="changelog"
           value={changelog}
           onChange={(event) => setChangelog(event.target.value)}
           maxLength={MAX_CHANGELOG_LENGTH}
           rows={3}
-          className="w-full resize-y border border-border bg-background px-3 py-2 text-sm"
         />
       </div>
       <div className="flex justify-end">
-        <button
-          type="submit"
-          disabled={busy}
-          className="h-12 bg-primary px-6 text-sm font-bold text-primary-foreground disabled:opacity-50"
-        >
+        <Button type="submit" size="lg" disabled={busy} className="text-sm">
           {busy ? "파일을 복사하는 중…" : "새 버전 올리기"}
-        </button>
+        </Button>
       </div>
     </form>
   );

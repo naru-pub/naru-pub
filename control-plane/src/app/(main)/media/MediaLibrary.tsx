@@ -15,7 +15,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useConfirm } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 
 type MediaFile = {
   id: string;
@@ -106,6 +108,7 @@ export default function MediaLibrary() {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const confirm = useConfirm();
 
   async function refresh() {
     // The listing pages now. Search and sort below run over the whole library,
@@ -209,9 +212,13 @@ export default function MediaLibrary() {
 
   async function remove(file: MediaFile) {
     if (
-      !window.confirm(
-        `'${file.name}'을 영구 삭제할까요? 이 URL을 사용하는 글의 이미지나 다운로드가 깨질 수 있습니다.`,
-      )
+      !(await confirm({
+        title: `'${file.name}'을 영구 삭제할까요?`,
+        confirmText: "삭제",
+        description:
+          "이 URL을 사용하는 글의 이미지나 다운로드가 깨질 수 있습니다.",
+        destructive: true,
+      }))
     )
       return;
     setBusy(true);
@@ -232,9 +239,10 @@ export default function MediaLibrary() {
   return (
     <section className="space-y-6" aria-busy={busy}>
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_320px]">
+        {/* eslint-disable-next-line react/forbid-elements -- a large drop target, not a button-shaped control */}
         <button
           type="button"
-          className="group flex min-h-44 flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed bg-muted/20 p-6 text-center transition-colors hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group flex min-h-44 flex-col items-center justify-center gap-3 border-2 border-dashed bg-muted/20 p-6 text-center transition-colors hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => inputRef.current?.click()}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
@@ -242,7 +250,7 @@ export default function MediaLibrary() {
             void chooseFiles(event.dataTransfer.files);
           }}
         >
-          <span className="rounded-full bg-primary/10 p-3 text-primary">
+          <span className="bg-primary/10 p-3 text-primary">
             <Upload className="size-6" aria-hidden="true" />
           </span>
           <span className="font-semibold">파일을 끌어 놓거나 선택하세요</span>
@@ -260,19 +268,19 @@ export default function MediaLibrary() {
                   / {formatBytes(usage.maxBytes)}
                 </span>
               </p>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+              <div className="mt-3 h-2 overflow-hidden bg-muted">
                 <div
-                  className="h-full rounded-full bg-primary transition-all"
+                  className="h-full bg-primary transition-all"
                   style={{ width: percent + "%" }}
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="rounded-md bg-muted/50 p-3">
+              <div className="bg-muted/50 p-3">
                 <p className="text-muted-foreground">파일</p>
                 <p className="font-semibold">{usage.count}</p>
               </div>
-              <div className="rounded-md bg-muted/50 p-3">
+              <div className="bg-muted/50 p-3">
                 <p className="text-muted-foreground">처리 중</p>
                 <p className="font-semibold">{usage.pending}</p>
               </div>
@@ -291,7 +299,7 @@ export default function MediaLibrary() {
       />
 
       {!!uploads.length && (
-        <div className="space-y-3 rounded-lg border p-4">
+        <div className="space-y-3 border p-4">
           <div className="flex items-center justify-between gap-3">
             <h3 className="font-semibold">업로드</h3>
             <Button
@@ -318,7 +326,7 @@ export default function MediaLibrary() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                <div className="h-1.5 flex-1 overflow-hidden bg-muted">
                   <div
                     className={
                       "h-full " +
@@ -362,8 +370,7 @@ export default function MediaLibrary() {
           <span className="text-sm text-muted-foreground">
             {visible.length}개
           </span>
-          <select
-            className="h-10 rounded-md border bg-background px-3 text-sm"
+          <Select
             value={sort}
             onChange={(event) => setSort(event.target.value)}
             aria-label="정렬"
@@ -372,7 +379,7 @@ export default function MediaLibrary() {
             <option value="oldest">오래된 순</option>
             <option value="name">이름순</option>
             <option value="largest">큰 파일순</option>
-          </select>
+          </Select>
         </div>
       </div>
 
@@ -382,13 +389,13 @@ export default function MediaLibrary() {
         </p>
       )}
       {busy && !files.length && (
-        <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed p-12 text-sm text-muted-foreground">
+        <div className="flex items-center justify-center gap-2 border border-dashed p-12 text-sm text-muted-foreground">
           <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
           미디어를 불러오는 중…
         </div>
       )}
       {!busy && !visible.length && (
-        <div className="rounded-lg border border-dashed p-12 text-center">
+        <div className="border border-dashed p-12 text-center">
           <ImageIcon
             className="mx-auto mb-3 size-8 text-muted-foreground"
             aria-hidden="true"

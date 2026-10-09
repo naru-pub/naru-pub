@@ -4,6 +4,14 @@ import { useState, useRef } from "react";
 import { EDITABLE_FILE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, AUDIO_FILE_EXTENSIONS } from "@/lib/const";
 import { FileNode } from "@/lib/fileUtils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { useConfirm } from "@/components/ui/confirm";
 import { toast } from "sonner";
 import {
   Folder,
@@ -96,8 +104,7 @@ function TreeNode({
   dragOverDirectory: string | null;
   onDragOverDirectoryChange: (directory: string | null) => void;
 }) {
-  const [showContextMenu, setShowContextMenu] = useState(false);
-  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const confirm = useConfirm();
   const [isDragging, setIsDragging] = useState(false);
   const isExpanded = expandedFolders.has(node.path);
   const isSelected = selectedFile === node.path;
@@ -114,13 +121,7 @@ function TreeNode({
     }
   };
 
-  const handleRightClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setContextMenuPosition({ x: e.clientX, y: e.clientY });
-    setShowContextMenu(true);
-  };
-
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (node.isDirectory) {
       // For directories, show all files that will be deleted
       const getFilesInDirectory = (dirNode: FileNode): string[] => {
@@ -140,31 +141,43 @@ function TreeNode({
       const affectedFiles = getFilesInDirectory(node);
       const fileCount = affectedFiles.length;
 
-      let confirmMessage = `정말로 폴더 "${node.name}"을(를) 삭제하시겠습니까?`;
+      let description: string;
 
       if (fileCount > 0) {
-        confirmMessage += `\n\n이 작업으로 ${fileCount}개의 파일이 함께 삭제됩니다:`;
+        description = `이 작업으로 ${fileCount}개의 파일이 함께 삭제됩니다:`;
         const maxShowFiles = 10;
         const filesToShow = affectedFiles.slice(0, maxShowFiles);
-        confirmMessage += `\n• ${filesToShow.join('\n• ')}`;
+        description += `\n• ${filesToShow.join('\n• ')}`;
 
         if (fileCount > maxShowFiles) {
-          confirmMessage += `\n... 그리고 ${fileCount - maxShowFiles}개 파일 더`;
+          description += `\n... 그리고 ${fileCount - maxShowFiles}개 파일 더`;
         }
       } else {
-        confirmMessage += '\n\n(빈 폴더입니다)';
+        description = '(빈 폴더입니다)';
       }
 
-      if (confirm(confirmMessage)) {
+      if (
+        await confirm({
+          title: `정말로 폴더 "${node.name}"을(를) 삭제하시겠습니까?`,
+          description,
+          confirmText: "삭제",
+          destructive: true,
+        })
+      ) {
         onDelete(node.path);
       }
     } else {
       // For files, simple confirmation
-      if (confirm(`정말로 "${node.name}"을(를) 삭제하시겠습니까?`)) {
+      if (
+        await confirm({
+          title: `정말로 "${node.name}"을(를) 삭제하시겠습니까?`,
+          confirmText: "삭제",
+          destructive: true,
+        })
+      ) {
         onDelete(node.path);
       }
     }
-    setShowContextMenu(false);
   };
 
   // Drag handlers
@@ -243,49 +256,36 @@ function TreeNode({
       onDragLeave={node.isDirectory ? handleDragLeave : undefined}
       onDrop={node.isDirectory ? handleDrop : undefined}
     >
-      <div
-        className={`flex items-center py-1 px-2 cursor-pointer hover:bg-accent text-sm transition-all duration-300 border-2 border-dashed ${
-          isSelected ? "bg-primary/10 font-medium text-primary" : ""
-        } ${isFlashing ? "bg-success/10 animate-pulse" : ""} ${
-          isDragging ? "opacity-50" : ""
-        } ${isDragOver && node.isDirectory ? "bg-primary/20 border-primary" : isInDragTargetSubtree && node.isDirectory ? "border-primary/50" : "border-transparent"}`}
-        style={{ paddingLeft: `${level * 16 + 8}px` }}
-        draggable={!node.isDirectory}
-        onClick={handleClick}
-        onContextMenu={handleRightClick}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        {node.isDirectory && (
-          <span className="mr-1 text-xs">
-            {isExpanded ? "▼" : "▶"}
-          </span>
-        )}
-        <span className="mr-2">{getFileIcon(node.name, node.isDirectory)}</span>
-        <span className="text-sm text-foreground truncate">{node.name}</span>
-      </div>
-
-      {/* Context Menu */}
-      {showContextMenu && (
-        <>
-          <div 
-            className="fixed inset-0 z-10" 
-            onClick={() => setShowContextMenu(false)}
-          />
-          <div 
-            className="fixed z-20 bg-card border-2 border-line rounded py-1"
-            style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            className={`flex items-center py-1 px-2 cursor-pointer hover:bg-accent text-sm transition-all duration-300 border-2 border-dashed ${
+              isSelected ? "bg-primary/10 font-medium text-primary" : ""
+            } ${isFlashing ? "bg-success/10 animate-pulse" : ""} ${
+              isDragging ? "opacity-50" : ""
+            } ${isDragOver && node.isDirectory ? "bg-primary/20 border-primary" : isInDragTargetSubtree && node.isDirectory ? "border-primary/50" : "border-transparent"}`}
+            style={{ paddingLeft: `${level * 16 + 8}px` }}
+            draggable={!node.isDirectory}
+            onClick={handleClick}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
           >
-            <button
-              className="flex items-center gap-2 w-full text-left px-3 py-1 text-sm hover:bg-accent text-destructive"
-              onClick={handleDelete}
-            >
-              <Trash2 size={14} className="shrink-0" /> 삭제
-            </button>
+            {node.isDirectory && (
+              <span className="mr-1 text-xs">
+                {isExpanded ? "▼" : "▶"}
+              </span>
+            )}
+            <span className="mr-2">{getFileIcon(node.name, node.isDirectory)}</span>
+            <span className="text-sm text-foreground truncate">{node.name}</span>
           </div>
-        </>
-      )}
-      
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem destructive onSelect={handleDelete}>
+            <Trash2 /> 삭제
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
       {node.isDirectory && isExpanded && node.children && (
         <div>
           {node.children.map((child) => (
@@ -608,15 +608,15 @@ export default function DirectoryTree({
 
           {showNewDirectoryInput && (
             <div className="flex space-x-1">
-              <input
+              <Input
                 type="text"
                 value={newDirectoryName}
                 onChange={(e) => setNewDirectoryName(e.target.value)}
                 placeholder="폴더 이름"
-                className="min-w-0 flex-1 border-2 border-input bg-card px-2 py-1 text-xs"
+                className="h-8 min-w-0 flex-1 px-2 py-1 text-xs md:text-xs"
                 onKeyDown={(e) => e.key === "Enter" && handleCreateDirectory()}
               />
-              <Button size="sm" onClick={handleCreateDirectory} className="text-xs">
+              <Button size="sm" onClick={handleCreateDirectory} className="h-8 text-xs">
                 생성
               </Button>
             </div>
@@ -624,15 +624,15 @@ export default function DirectoryTree({
 
           {showNewFileInput && (
             <div className="flex space-x-1">
-              <input
+              <Input
                 type="text"
                 value={newFileName}
                 onChange={(e) => setNewFileName(e.target.value)}
                 placeholder="파일 이름 (예: test.html)"
-                className="min-w-0 flex-1 border-2 border-input bg-card px-2 py-1 text-xs"
+                className="h-8 min-w-0 flex-1 px-2 py-1 text-xs md:text-xs"
                 onKeyDown={(e) => e.key === "Enter" && handleCreateFile()}
               />
-              <Button size="sm" onClick={handleCreateFile} className="text-xs">
+              <Button size="sm" onClick={handleCreateFile} className="h-8 text-xs">
                 생성
               </Button>
             </div>
@@ -675,7 +675,7 @@ export default function DirectoryTree({
 
         {/* Root Drop Zone at bottom */}
         <div
-          className={`mt-4 p-4 border-2 border-dashed rounded-lg text-center transition-all duration-200 ${
+          className={`mt-4 p-4 border-2 border-dashed text-center transition-all duration-200 ${
             isRootDropZone
               ? "bg-primary/20 border-primary text-primary"
               : "border-muted-foreground/30 text-muted-foreground hover:border-muted-foreground/50"

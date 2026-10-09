@@ -3,14 +3,16 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { boardRequest } from "../_components/api";
 
 export function MarkAllReadButton() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   return (
-    <button
+    <Button
       type="button"
+      variant="outline"
       disabled={busy}
       onClick={async () => {
         setBusy(true);
@@ -23,9 +25,8 @@ export function MarkAllReadButton() {
           setBusy(false);
         }
       }}
-      className="h-11 border border-border px-4 text-sm hover:bg-accent"
     >
       모두 읽음으로 표시
-    </button>
+    </Button>
   );
 }

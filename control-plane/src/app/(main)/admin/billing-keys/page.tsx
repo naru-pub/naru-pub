@@ -3,6 +3,7 @@ import { maskSecret } from "@/lib/payments/toss";
 import { db } from "@/lib/database";
 import { STUCK_AFTER_ATTEMPTS } from "@/lib/payments/billing-keys";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -46,7 +47,7 @@ export default async function RetiredBillingKeysPage() {
         </p>
       </div>
 
-      <div className="overflow-x-auto border-2 border-line bg-card">
+      <Card>
         <Table>
           <TableHeader>
             <TableRow>
@@ -63,17 +64,17 @@ export default async function RetiredBillingKeysPage() {
                 <TableCell className="font-mono text-xs">
                   {maskSecret(key.billing_key ?? "")}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(key.retired_at)}
                 </TableCell>
-                <TableCell>
+                <TableCell className="tabular-nums">
                   {key.attempts >= STUCK_AFTER_ATTEMPTS ? (
                     <Badge variant="destructive">{key.attempts}</Badge>
                   ) : (
                     key.attempts
                   )}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(key.last_attempted_at)}
                 </TableCell>
                 <TableCell className="max-w-xl break-words">
@@ -93,7 +94,7 @@ export default async function RetiredBillingKeysPage() {
             ) : null}
           </TableBody>
         </Table>
-      </div>
+      </Card>
     </div>
   );
 }

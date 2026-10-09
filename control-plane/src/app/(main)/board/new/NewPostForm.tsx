@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   MAX_POST_BODY_LENGTH,
   MAX_TITLE_LENGTH,
@@ -82,7 +86,7 @@ export function NewPostForm({
           {POST_KINDS.map((value) => (
             <label
               key={value}
-              className={`flex h-12 cursor-pointer items-center justify-center gap-2 text-sm ${kind === value ? "bg-primary font-bold text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
+              className={`flex h-12 cursor-pointer items-center justify-center gap-2 text-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-primary-foreground ${kind === value ? "bg-primary font-bold text-primary-foreground" : "text-muted-foreground hover:bg-accent"}`}
             >
               <input
                 type="radio"
@@ -107,13 +111,13 @@ export function NewPostForm({
         <label htmlFor="post-title" className="text-sm font-bold">
           제목
         </label>
-        <input
+        <Input
           id="post-title"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           maxLength={MAX_TITLE_LENGTH}
           required
-          className="h-12 w-full border border-border bg-background px-3 text-base"
+          className="h-12 md:text-base"
         />
       </div>
 
@@ -129,7 +133,7 @@ export function NewPostForm({
             <label htmlFor="template-slug" className="text-sm font-bold">
               템플릿 이름
             </label>
-            <input
+            <Input
               id="template-slug"
               value={effectiveSlug}
               onChange={(event) => {
@@ -140,7 +144,6 @@ export function NewPostForm({
               maxLength={64}
               required
               placeholder="retro-home"
-              className="h-11 w-full border border-border bg-background px-3 text-sm"
             />
             <p className="text-xs text-muted-foreground">
               고른 파일의 최상위 폴더 이름으로 채워져요. 다른 사람이 새 폴더에
@@ -168,13 +171,12 @@ export function NewPostForm({
               만든 코드, 글꼴, 이미지의 라이선스와 저작권 표시는 유지하고, 함께
               공유할 수 있는 자료만 포함해 주세요.
             </p>
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <Checkbox
                 checked={cc0Accepted}
-                onChange={(event) => setCc0Accepted(event.target.checked)}
+                onCheckedChange={(checked) => setCc0Accepted(checked === true)}
                 required
-                className="mt-1"
+                className="mt-0.5"
               />
               내가 만든 부분을 CC0 1.0으로 공개하는 데 동의해요.
             </label>
@@ -193,19 +195,17 @@ export function NewPostForm({
                 {collections.map((name) => (
                   <label
                     key={name}
-                    className="flex h-10 items-center gap-2 border border-border px-3 text-sm"
+                    className="flex h-10 cursor-pointer items-center gap-2 border border-border px-3 text-sm"
                   >
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={chosenCollections.includes(name)}
-                      onChange={(event) =>
+                      onCheckedChange={(checked) =>
                         setChosenCollections((current) =>
-                          event.target.checked
+                          checked === true
                             ? [...current, name]
                             : current.filter((c) => c !== name),
                         )
                       }
-                      className="h-4 w-4 accent-primary"
                     />
                     <code>{name}</code>
                   </label>
@@ -220,14 +220,13 @@ export function NewPostForm({
         <label htmlFor="post-body" className="text-sm font-bold">
           {kind === "template" ? "설명" : "본문"}
         </label>
-        <textarea
+        <Textarea
           id="post-body"
           value={body}
           onChange={(event) => setBody(event.target.value)}
           maxLength={MAX_POST_BODY_LENGTH}
           required={kind === "question" || kind === "chat"}
           rows={8}
-          className="w-full resize-y border border-border bg-background px-3 py-2 text-sm leading-relaxed"
         />
         <p className="text-xs text-muted-foreground">
           빈 줄로 문단을 나눠요. 웹 주소는 링크가 돼요.
@@ -237,24 +236,22 @@ export function NewPostForm({
       </div>
 
       <div className="flex justify-end gap-2">
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="lg"
           onClick={() => router.back()}
-          className="h-12 border border-border px-5 text-sm"
+          className="text-sm"
         >
           취소
-        </button>
-        <button
-          type="submit"
-          disabled={busy}
-          className="h-12 bg-primary px-6 text-sm font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
+        </Button>
+        <Button type="submit" size="lg" disabled={busy} className="text-sm">
           {busy
             ? kind === "template"
               ? "파일을 복사하는 중…"
               : "올리는 중…"
             : "게시하기"}
-        </button>
+        </Button>
       </div>
     </form>
   );

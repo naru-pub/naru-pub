@@ -3,6 +3,7 @@ import Link from "next/link";
 import { db } from "@/lib/database";
 import { addPaymentGrace, isCurrentPlan } from "@/lib/payments/subscriptions";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -53,7 +54,7 @@ export default async function SupportersPage() {
         </p>
       </div>
 
-      <div className="overflow-x-auto border-2 border-line bg-card">
+      <Card>
         <Table>
           <TableHeader>
             <TableRow>
@@ -93,7 +94,7 @@ export default async function SupportersPage() {
                       <Badge variant="outline">결제</Badge>
                     )}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-nowrap tabular-nums">
                     {user.supporter_comp
                       ? "-"
                       : formatDate(user.supporter_until)}
@@ -104,7 +105,7 @@ export default async function SupportersPage() {
                         user.subscription_status)
                       : "-"}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-nowrap tabular-nums">
                     {formatDate(user.next_billing_at)}
                   </TableCell>
                 </TableRow>
@@ -122,7 +123,7 @@ export default async function SupportersPage() {
             ) : null}
           </TableBody>
         </Table>
-      </div>
+      </Card>
     </div>
   );
 }

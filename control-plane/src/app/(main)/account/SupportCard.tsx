@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useConfirm } from "@/components/ui/confirm";
 import { renewalChargeAt } from "@/lib/payments/renewal-time";
 
 // 카드사 심사는 서비스 제공기간이 1년을 넘는 상품을 허용하지 않으므로, 일회성
@@ -114,6 +115,7 @@ export default function SupportCard({
   loginName: string;
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const params = useSearchParams();
   const toasted = useRef(false);
   const [pending, setPending] = useState(false);
@@ -318,11 +320,14 @@ export default function SupportCard({
   }
 
   async function cancel() {
-    if (
-      !confirm(
-        "정기 결제를 해지하시겠어요? 더 이상 자동으로 결제되지 않으며, 결제한 기간 동안은 계속 이용하실 수 있습니다. 환불은 결제 내역에서 따로 신청합니다.",
-      )
-    ) {
+    const ok = await confirm({
+      title: "정기 결제를 해지할까요?",
+      description:
+        "더 이상 자동으로 결제되지 않으며, 결제한 기간 동안은 계속 이용하실 수 있습니다. 환불은 결제 내역에서 따로 신청합니다.",
+      confirmText: "해지",
+      destructive: true,
+    });
+    if (!ok) {
       return;
     }
     setPending(true);

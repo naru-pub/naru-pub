@@ -1,15 +1,24 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { toast } from "sonner";
 import { loadingFetch } from "@/lib/loading-bar";
 
 export default function DeleteButton({ filename }: { filename: string }) {
+  const confirm = useConfirm();
+
   return (
     <Button
       variant="destructive"
       onClick={async () => {
-        if (!confirm("정말로 삭제하시겠습니까?")) {
+        if (
+          !(await confirm({
+            title: "정말로 삭제하시겠습니까?",
+            confirmText: "삭제",
+            destructive: true,
+          }))
+        ) {
           return;
         }
 

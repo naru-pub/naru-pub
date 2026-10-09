@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { tabLinkClass } from "@/components/ui/tab-link";
 import { validateRequest } from "@/lib/auth";
 import {
   POST_KINDS,
@@ -66,20 +68,19 @@ export default async function BoardPage({
               나루 사람들의 사이트, 템플릿, 그리고 이야기.
             </p>
           </div>
-          <Link
-            href={kind ? `/board/new?kind=${kind}` : "/board/new"}
-            className="flex items-center gap-2 bg-primary px-4 py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus size={16} aria-hidden="true" /> 새 글 쓰기
-          </Link>
+          <Button asChild>
+            <Link href={kind ? `/board/new?kind=${kind}` : "/board/new"}>
+              <Plus aria-hidden="true" />새 글 쓰기
+            </Link>
+          </Button>
         </div>
 
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
           <section className="min-w-0 flex-1 border-2 border-line bg-card">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-line bg-secondary px-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-2">
               <nav
                 aria-label="글 종류"
-                className="flex overflow-x-auto text-sm"
+                className="flex min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 {[null, ...POST_KINDS].map((value) => (
                   <Link
@@ -93,11 +94,7 @@ export default async function BoardPage({
                           : sort,
                     )}
                     aria-current={value === kind ? "page" : undefined}
-                    className={
-                      value === kind
-                        ? "-mb-0.5 whitespace-nowrap border-b-2 border-primary px-3 py-3 font-bold text-foreground"
-                        : "whitespace-nowrap px-3 py-3 text-muted-foreground hover:text-foreground"
-                    }
+                    className={tabLinkClass(value === kind)}
                   >
                     {value ? POST_KIND_LABELS[value] : "전체"}
                   </Link>

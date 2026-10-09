@@ -10,6 +10,11 @@ import {
   type ModerationStatus,
 } from "@/lib/board/moderation";
 import { LOGIN_NAME_REGEX } from "@/lib/const";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { tabLinkClass } from "@/components/ui/tab-link";
 import { formatRelative } from "../../board/_components/format";
 import { ModerationButton } from "./ModerationButton";
 
@@ -76,11 +81,6 @@ export default async function BoardModerationPage({
       : null;
   const hasMore = posts?.hasMore ?? replies?.hasMore ?? false;
 
-  const tab = (active: boolean) =>
-    active
-      ? "-mb-0.5 border-b-2 border-primary px-3 py-3 font-bold text-foreground"
-      : "px-3 py-3 text-muted-foreground hover:text-foreground";
-
   return (
     <div className="space-y-6">
       <div>
@@ -91,20 +91,20 @@ export default async function BoardModerationPage({
         </p>
       </div>
 
-      <section className="border-2 border-line bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-line bg-secondary px-2">
-          <nav aria-label="종류" className="flex text-sm">
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-2">
+          <nav aria-label="종류" className="flex">
             <Link
               href={href({ view: "posts" })}
               aria-current={view === "posts" ? "page" : undefined}
-              className={tab(view === "posts")}
+              className={tabLinkClass(view === "posts")}
             >
               글
             </Link>
             <Link
               href={href({ view: "replies" })}
               aria-current={view === "replies" ? "page" : undefined}
-              className={tab(view === "replies")}
+              className={tabLinkClass(view === "replies")}
             >
               답글
             </Link>
@@ -136,19 +136,16 @@ export default async function BoardModerationPage({
               <label htmlFor="moderation-author" className="sr-only">
                 작성자
               </label>
-              <input
+              <Input
                 id="moderation-author"
                 name="author"
                 defaultValue={author ?? ""}
                 placeholder="작성자 아이디"
-                className="h-9 w-36 border border-border bg-background px-2 text-xs"
+                className="h-9 w-36 md:text-xs"
               />
-              <button
-                type="submit"
-                className="h-9 border border-border px-3 hover:bg-accent"
-              >
+              <Button type="submit" variant="outline" size="sm">
                 찾기
-              </button>
+              </Button>
               {author && (
                 <Link
                   href={href({ author: null })}
@@ -175,9 +172,9 @@ export default async function BoardModerationPage({
                 >
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span className="border border-border px-1.5">
+                      <Badge variant="outline">
                         {POST_KIND_LABELS[post.kind]}
-                      </span>
+                      </Badge>
                       {post.deletedAt && (
                         <span className="text-destructive">
                           삭제됨 · {formatRelative(post.deletedAt)}
@@ -319,7 +316,7 @@ export default async function BoardModerationPage({
             )}
           </div>
         )}
-      </section>
+      </Card>
     </div>
   );
 }

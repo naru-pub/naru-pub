@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 
 // 환불이 완료되면 유료 기능이 닫히므로, 신청 전에 한 번
 // 확인한다. 결제 내역(유료 이용자)과 /admin(운영자)이 같은 엔드포인트를 쓰되 확인
@@ -21,6 +22,7 @@ export function RefundPaymentButton({
   requested?: boolean;
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [sending, setSending] = useState(false);
   const [state, setState] = useState<
     "idle" | "pending" | "completed" | "failed"
@@ -63,7 +65,13 @@ export function RefundPaymentButton({
   }, [pending, paymentId, router]);
 
   async function refund() {
-    if (!confirm(confirmMessage)) return;
+    const ok = await confirm({
+      title: "환불할까요?",
+      description: confirmMessage,
+      confirmText: label,
+      destructive: true,
+    });
+    if (!ok) return;
     setSending(true);
     try {
       const response = await fetch(

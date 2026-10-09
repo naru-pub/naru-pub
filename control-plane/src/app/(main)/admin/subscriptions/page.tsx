@@ -5,6 +5,8 @@ import Link from "next/link";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { tabLinkClass } from "@/components/ui/tab-link";
 import {
   Table,
   TableBody,
@@ -71,23 +73,31 @@ export default async function SubscriptionsPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2 text-sm">
+      <nav
+        aria-label="상태"
+        className="flex min-w-0 overflow-x-auto border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         <Link
           href="/admin/subscriptions"
-          className={`border-2 px-3 py-1 ${status === null ? "border-primary font-bold" : "border-border text-muted-foreground"}`}
+          aria-current={status === null ? "page" : undefined}
+          className={tabLinkClass(status === null)}
         >
-          전체 {total}
+          전체<span className="ml-1.5 tabular-nums">{total}</span>
         </Link>
         {Object.entries(SUBSCRIPTION_STATUS_LABELS).map(([key, label]) => (
           <Link
             key={key}
             href={`/admin/subscriptions?status=${key}`}
-            className={`border-2 px-3 py-1 ${status === key ? "border-primary font-bold" : "border-border text-muted-foreground"}`}
+            aria-current={status === key ? "page" : undefined}
+            className={tabLinkClass(status === key)}
           >
-            {label} {countOf.get(key as SubscriptionStatus) ?? 0}
+            {label}
+            <span className="ml-1.5 tabular-nums">
+              {countOf.get(key as SubscriptionStatus) ?? 0}
+            </span>
           </Link>
         ))}
-      </div>
+      </nav>
 
       <div className="space-y-1">
         <h2 className="text-xl font-bold">
@@ -103,7 +113,7 @@ export default async function SubscriptionsPage({
         </p>
       </div>
 
-      <div className="overflow-x-auto border-2 border-line bg-card">
+      <Card>
         <Table>
           <TableHeader>
             <TableRow>
@@ -138,20 +148,22 @@ export default async function SubscriptionsPage({
                     {SUBSCRIPTION_STATUS_LABELS[sub.status] ?? sub.status}
                   </Badge>
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {sub.billing_interval === "year" ? "연간" : "월간"}{" "}
                   {formatKrw(sub.amount)}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(sub.current_period_end)}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(sub.next_billing_at)}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(sub.supporter_until)}
                 </TableCell>
-                <TableCell>{sub.failed_charge_count || "-"}</TableCell>
+                <TableCell className="tabular-nums">
+                  {sub.failed_charge_count || "-"}
+                </TableCell>
                 <TableCell className="font-mono text-xs">
                   {sub.billing_key
                     ? [
@@ -163,7 +175,7 @@ export default async function SubscriptionsPage({
                         .join(" ")
                     : "-"}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(sub.updated_at)}
                 </TableCell>
               </TableRow>
@@ -180,7 +192,7 @@ export default async function SubscriptionsPage({
             ) : null}
           </TableBody>
         </Table>
-      </div>
+      </Card>
     </div>
   );
 }

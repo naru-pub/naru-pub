@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { tabLinkClass } from "@/components/ui/tab-link";
 import {
   Table,
   TableBody,
@@ -64,7 +66,7 @@ export default async function UsagePage({
         </p>
       </div>
 
-      <div className="overflow-x-auto border-2 border-line bg-card">
+      <Card>
         <Table>
           <TableHeader>
             <TableRow>
@@ -89,23 +91,23 @@ export default async function UsagePage({
                     {metric.label}
                   </Link>
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right tabular-nums">
                   {stat(`${metric.key}__used`)}
                 </TableCell>
                 {(["p50", "p90", "p99", "max"] as const).map((suffix) => (
                   <TableCell
                     key={suffix}
-                    className="whitespace-nowrap text-right"
+                    className="whitespace-nowrap text-right tabular-nums"
                   >
                     {formatValue(stat(`${metric.key}__${suffix}`), metric.unit)}
                   </TableCell>
                 ))}
-                <TableCell className="whitespace-nowrap text-right">
+                <TableCell className="whitespace-nowrap text-right tabular-nums">
                   {metric.limit === null
                     ? "-"
                     : formatValue(metric.limit, metric.unit)}
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right tabular-nums">
                   {metric.limit === null ? (
                     "-"
                   ) : stat(`${metric.key}__near`) > 0 ? (
@@ -120,23 +122,27 @@ export default async function UsagePage({
             ))}
           </TableBody>
         </Table>
-      </div>
+      </Card>
 
-      <div className="flex flex-wrap gap-2 text-sm">
+      <nav
+        aria-label="정렬"
+        className="flex min-w-0 overflow-x-auto border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         {METRICS.map((metric) => (
           <Link
             key={metric.key}
             href={`/admin/usage?sort=${metric.key}`}
-            className={`border-2 px-3 py-1 ${sort === metric.key ? "border-primary font-bold" : "border-border text-muted-foreground"}`}
+            aria-current={sort === metric.key ? "page" : undefined}
+            className={tabLinkClass(sort === metric.key)}
           >
             {metric.label}
           </Link>
         ))}
-      </div>
+      </nav>
 
       <div className="space-y-2">
         <h3 className="font-bold">{sortMetric.label} 상위 100개 계정</h3>
-        <div className="overflow-x-auto border-2 border-line bg-card">
+        <Card>
           <Table>
             <TableHeader>
               <TableRow>
@@ -180,7 +186,7 @@ export default async function UsagePage({
                     return (
                       <TableCell
                         key={metric.key}
-                        className={`whitespace-nowrap text-right ${near ? "font-bold text-destructive" : ""}`}
+                        className={`whitespace-nowrap text-right tabular-nums ${near ? "font-bold text-destructive" : ""}`}
                       >
                         {formatValue(value, metric.unit)}
                         {metric.limit !== null && value > 0 ? (
@@ -205,7 +211,7 @@ export default async function UsagePage({
               ) : null}
             </TableBody>
           </Table>
-        </div>
+        </Card>
       </div>
     </div>
   );

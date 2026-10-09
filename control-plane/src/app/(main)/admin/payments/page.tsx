@@ -13,6 +13,8 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { db } from "@/lib/database";
 import { RefundPaymentButton } from "@/components/RefundPaymentButton";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { tabLinkClass } from "@/components/ui/tab-link";
 import {
   Table,
   TableBody,
@@ -126,103 +128,126 @@ export default async function PaymentOperatorPage({
         {repairs.length === 0 ? (
           <p className="text-sm">복구가 필요한 계정이 없습니다.</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>계정</TableHead>
-                <TableHead>현재 기한</TableHead>
-                <TableHead>복구 후 기한</TableHead>
-                <TableHead>결제 기록</TableHead>
-                <TableHead>복구</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {repairs.map((repair) => (
-                <TableRow key={repair.userId}>
-                  <TableCell>{repair.loginName}</TableCell>
-                  <TableCell>{formatDate(repair.beforeUntil)}</TableCell>
-                  <TableCell>{formatDate(repair.expectedUntil)}</TableCell>
-                  <TableCell>
-                    <details>
-                      <summary>{repair.payments.length}건</summary>
-                      <ul className="space-y-2 text-xs">
-                        {repair.payments.map((payment) => (
-                          <li key={payment.id}>
-                            <div>
-                              {payment.orderId} · {formatKrw(payment.amount)}
-                              {payment.refunded_amount > 0
-                                ? ` · 환불 ${formatKrw(payment.refunded_amount)}`
-                                : ""}
-                            </div>
-                            <div>{payment.id}</div>
-                            <div>
-                              {formatDate(payment.period_start)} ~{" "}
-                              {formatDate(payment.period_end)}
-                            </div>
-                            {(payment.period_start?.getTime() !==
-                              payment.afterStart?.getTime() ||
-                              payment.period_end?.getTime() !==
-                                payment.afterEnd?.getTime()) && (
-                              <div>
-                                복구 후: {formatDate(payment.afterStart)} ~{" "}
-                                {formatDate(payment.afterEnd)}
-                              </div>
-                            )}
-                            {payment.needsRevocation && (
-                              <div>환불에 따른 이용 기한 회수 기록 누락</div>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  </TableCell>
-                  <TableCell>
-                    <RepairEntitlementButton userId={repair.userId} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-        {repairHistory.length > 0 && (
-          <details>
-            <summary>최근 복구 요청 {repairHistory.length}건</summary>
+          <Card>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>계정 · 상태</TableHead>
-                  <TableHead>처리 전 → 후</TableHead>
-                  <TableHead>운영자 · 사유</TableHead>
-                  <TableHead>요청 시간</TableHead>
+                  <TableHead>계정</TableHead>
+                  <TableHead>현재 기한</TableHead>
+                  <TableHead>복구 후 기한</TableHead>
+                  <TableHead>결제 기록</TableHead>
+                  <TableHead>복구</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {repairHistory.map((repair) => (
-                  <TableRow key={repair.id}>
-                    <TableCell>
-                      {repair.login_name} ·{" "}
-                      {
-                        {
-                          pending: "대기",
-                          completed: "완료",
-                          skipped: "건너뜀",
-                        }[repair.status]
-                      }
-                      {repair.result_note && <div>{repair.result_note}</div>}
+                {repairs.map((repair) => (
+                  <TableRow key={repair.userId}>
+                    <TableCell>{repair.loginName}</TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">
+                      {formatDate(repair.beforeUntil)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">
+                      {formatDate(repair.expectedUntil)}
                     </TableCell>
                     <TableCell>
-                      {repair.completed_at
-                        ? `${formatDate(repair.before_until)} → ${formatDate(repair.after_until)}`
-                        : "처리 대기"}
+                      <details>
+                        <summary className="cursor-pointer">
+                          {repair.payments.length}건
+                        </summary>
+                        <ul className="mt-1 space-y-2 text-xs tabular-nums">
+                          {repair.payments.map((payment) => (
+                            <li key={payment.id}>
+                              <div>
+                                <span className="font-mono">
+                                  {payment.orderId}
+                                </span>{" "}
+                                · {formatKrw(payment.amount)}
+                                {payment.refunded_amount > 0
+                                  ? ` · 환불 ${formatKrw(payment.refunded_amount)}`
+                                  : ""}
+                              </div>
+                              <div className="font-mono text-muted-foreground">
+                                {payment.id}
+                              </div>
+                              <div>
+                                {formatDate(payment.period_start)} ~{" "}
+                                {formatDate(payment.period_end)}
+                              </div>
+                              {(payment.period_start?.getTime() !==
+                                payment.afterStart?.getTime() ||
+                                payment.period_end?.getTime() !==
+                                  payment.afterEnd?.getTime()) && (
+                                <div>
+                                  복구 후: {formatDate(payment.afterStart)} ~{" "}
+                                  {formatDate(payment.afterEnd)}
+                                </div>
+                              )}
+                              {payment.needsRevocation && (
+                                <div>환불에 따른 이용 기한 회수 기록 누락</div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
                     </TableCell>
                     <TableCell>
-                      {repair.operator_login_name} · {repair.reason}
+                      <RepairEntitlementButton userId={repair.userId} />
                     </TableCell>
-                    <TableCell>{formatDate(repair.created_at)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+          </Card>
+        )}
+        {repairHistory.length > 0 && (
+          <details className="space-y-2">
+            <summary className="cursor-pointer text-sm">
+              최근 복구 요청 {repairHistory.length}건
+            </summary>
+            <Card>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>계정 · 상태</TableHead>
+                    <TableHead>처리 전 → 후</TableHead>
+                    <TableHead>운영자 · 사유</TableHead>
+                    <TableHead>요청 시간</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {repairHistory.map((repair) => (
+                    <TableRow key={repair.id}>
+                      <TableCell>
+                        {repair.login_name} ·{" "}
+                        {
+                          {
+                            pending: "대기",
+                            completed: "완료",
+                            skipped: "건너뜀",
+                          }[repair.status]
+                        }
+                        {repair.result_note && (
+                          <div className="text-xs text-muted-foreground">
+                            {repair.result_note}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {repair.completed_at
+                          ? `${formatDate(repair.before_until)} → ${formatDate(repair.after_until)}`
+                          : "처리 대기"}
+                      </TableCell>
+                      <TableCell>
+                        {repair.operator_login_name} · {repair.reason}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">
+                        {formatDate(repair.created_at)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
           </details>
         )}
       </section>
@@ -235,79 +260,90 @@ export default async function PaymentOperatorPage({
         {tasks.length === 0 ? (
           <p className="text-sm">대기하거나 실패한 작업이 없습니다.</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>작업</TableHead>
-                <TableHead>상태 · 시도</TableHead>
-                <TableHead>최근 오류</TableHead>
-                <TableHead>다음 실행</TableHead>
-                <TableHead>복구</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {tasks.map((task) => {
-                const job = (task.params as { job: PaymentJob }).job;
-                const label =
-                  (
-                    {
-                      pending: "대기",
-                      running: "처리 중",
-                      sleeping: "재시도 대기",
-                      failed: "실패",
-                    } as Record<string, string>
-                  )[task.state] ?? task.state;
-                const error = task.last_error as
-                  | { message?: string }
-                  | string
-                  | null;
-                return (
-                  <TableRow key={task.task_id}>
-                    <TableCell>
-                      <div>{taskLabels[job.kind]}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {task.task_id}
-                      </div>
-                      {"paymentId" in job && (
-                        <div className="text-xs">결제 {job.paymentId}</div>
-                      )}
-                      {job.kind === "repair_entitlement" && (
-                        <div className="text-xs">
-                          계정 {job.userId} · 복구 {job.repairId}
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>작업</TableHead>
+                  <TableHead>상태 · 시도</TableHead>
+                  <TableHead>최근 오류</TableHead>
+                  <TableHead>다음 실행</TableHead>
+                  <TableHead>복구</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tasks.map((task) => {
+                  const job = (task.params as { job: PaymentJob }).job;
+                  const label =
+                    (
+                      {
+                        pending: "대기",
+                        running: "처리 중",
+                        sleeping: "재시도 대기",
+                        failed: "실패",
+                      } as Record<string, string>
+                    )[task.state] ?? task.state;
+                  const error = task.last_error as
+                    | { message?: string }
+                    | string
+                    | null;
+                  return (
+                    <TableRow key={task.task_id}>
+                      <TableCell>
+                        <div>{taskLabels[job.kind]}</div>
+                        <div className="font-mono text-xs text-muted-foreground">
+                          {task.task_id}
                         </div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {label} · {task.attempts}/{task.max_attempts ?? "∞"}
-                    </TableCell>
-                    <TableCell className="max-w-sm break-words">
-                      {typeof error === "string"
-                        ? error
-                        : (error?.message ??
-                          (error ? JSON.stringify(error) : "—"))}
-                    </TableCell>
-                    <TableCell>
-                      {task.available_at && task.state !== "failed"
-                        ? formatDate(task.available_at)
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {task.state === "failed" && (
-                        <RetryPaymentTaskButton taskId={task.task_id} />
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                        {"paymentId" in job && (
+                          <div className="text-xs">
+                            결제{" "}
+                            <span className="font-mono">{job.paymentId}</span>
+                          </div>
+                        )}
+                        {job.kind === "repair_entitlement" && (
+                          <div className="text-xs">
+                            계정 <span className="font-mono">{job.userId}</span>{" "}
+                            · 복구{" "}
+                            <span className="font-mono">{job.repairId}</span>
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">
+                        {label} · {task.attempts}/{task.max_attempts ?? "∞"}
+                      </TableCell>
+                      <TableCell className="max-w-sm break-words">
+                        {typeof error === "string"
+                          ? error
+                          : (error?.message ??
+                            (error ? JSON.stringify(error) : "—"))}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">
+                        {task.available_at && task.state !== "failed"
+                          ? formatDate(task.available_at)
+                          : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {task.state === "failed" && (
+                          <RetryPaymentTaskButton taskId={task.task_id} />
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </Card>
         )}
       </section>
 
-      <div className="flex flex-wrap gap-2 text-sm">
+      <nav
+        aria-label="결제 필터"
+        className="flex min-w-0 overflow-x-auto border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         <Link
           href="/admin/payments"
-          className={`border-2 px-3 py-1 ${filter === null ? "border-primary font-bold" : "border-border text-muted-foreground"}`}
+          aria-current={filter === null ? "page" : undefined}
+          className={tabLinkClass(filter === null)}
         >
           전체
         </Link>
@@ -315,12 +351,14 @@ export default async function PaymentOperatorPage({
           <Link
             key={key}
             href={`/admin/payments?filter=${key}`}
-            className={`border-2 px-3 py-1 ${filter === key ? "border-primary font-bold" : "border-border text-muted-foreground"}`}
+            aria-current={filter === key ? "page" : undefined}
+            className={tabLinkClass(filter === key)}
           >
-            {PAYMENT_FILTERS[key].label} {counts[key]}
+            {PAYMENT_FILTERS[key].label}
+            <span className="ml-1.5 tabular-nums">{counts[key]}</span>
           </Link>
         ))}
-      </div>
+      </nav>
 
       <div className="space-y-1">
         <h2 className="text-xl font-bold">
@@ -338,7 +376,7 @@ export default async function PaymentOperatorPage({
         </p>
       </div>
 
-      <div className="overflow-x-auto border-2 border-line bg-card">
+      <Card>
         <Table>
           <TableHeader>
             <TableRow>
@@ -359,22 +397,22 @@ export default async function PaymentOperatorPage({
                 <TableCell className="font-medium">
                   {payment.login_name}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(payment.created_at)}
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline">{payment.status}</Badge>
                 </TableCell>
                 <TableCell>{payment.subscription_status ?? "-"}</TableCell>
-                <TableCell className="text-right whitespace-nowrap">
+                <TableCell className="whitespace-nowrap text-right tabular-nums">
                   {formatKrw(payment.amount)}
                 </TableCell>
-                <TableCell className="text-right whitespace-nowrap">
+                <TableCell className="whitespace-nowrap text-right tabular-nums">
                   {payment.refunded_amount
                     ? formatKrw(payment.refunded_amount)
                     : "-"}
                 </TableCell>
-                <TableCell className="whitespace-nowrap">
+                <TableCell className="whitespace-nowrap tabular-nums">
                   {formatDate(payment.last_reconciled_at)}
                 </TableCell>
                 <TableCell className="max-w-72">
@@ -420,7 +458,7 @@ export default async function PaymentOperatorPage({
             ) : null}
           </TableBody>
         </Table>
-      </div>
+      </Card>
 
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <RefreshCw size={14} />

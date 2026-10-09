@@ -2,6 +2,10 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useConfirm } from "@/components/ui/confirm";
 import WebsiteAccess from "./WebsiteAccess";
 
 type Collection = { name: string; read_access: string; write_access: string };
@@ -39,6 +43,7 @@ export default function DatabaseManager({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [origin, setOrigin] = useState("");
+  const confirm = useConfirm();
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -84,327 +89,345 @@ export default function DatabaseManager({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <a href="/media" className="border px-4 py-2 text-sm hover:bg-muted">
-            미디어 라이브러리 →
-          </a>
-          <a
-            href="/docs/database"
-            className="border px-4 py-2 text-sm hover:bg-muted"
-          >
-            사용 안내 및 예제 블로그 →
-          </a>
+          <Button asChild variant="outline">
+            <a href="/media">미디어 라이브러리 →</a>
+          </Button>
+          <Button asChild variant="outline">
+            <a href="/docs/database">사용 안내 및 예제 블로그 →</a>
+          </Button>
         </div>
       </header>
-      <nav aria-label="데이터베이스 메뉴" className="flex flex-wrap gap-2">
-        {[
-          ["collections", "컬렉션과 문서"],
-          ["access", "웹사이트 관리자 로그인"],
-          ["sdk", "웹 SDK"],
-        ].map(([value, label]) => (
-          <Button
-            key={value}
-            variant={view === value ? "default" : "outline"}
-            aria-pressed={view === value}
-            onClick={() => setView(value)}
-          >
-            {label}
-          </Button>
-        ))}
-      </nav>
-      {error && (
-        <p role="alert" className="text-destructive">
-          {error}
-        </p>
-      )}
-      <div hidden={view !== "collections"}>
-        <fieldset
-          disabled={busy}
-          aria-busy={busy}
-          className="grid min-w-0 gap-6 disabled:opacity-60 lg:grid-cols-[240px_minmax(0,1fr)]"
+      <Tabs value={view} onValueChange={setView} className="space-y-6">
+        <TabsList aria-label="데이터베이스 메뉴">
+          <TabsTrigger value="collections">컬렉션과 문서</TabsTrigger>
+          <TabsTrigger value="access">웹사이트 관리자 로그인</TabsTrigger>
+          <TabsTrigger value="sdk">웹 SDK</TabsTrigger>
+        </TabsList>
+        {error && (
+          <p role="alert" className="text-destructive">
+            {error}
+          </p>
+        )}
+        {/* Panels stay mounted so each keeps its state across tab switches. */}
+        <TabsContent
+          value="collections"
+          forceMount
+          className="data-[state=inactive]:hidden"
         >
-          <aside className="min-w-0 space-y-4 border bg-muted/20 p-4 self-start">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">컬렉션</h2>
-              <span className="text-sm text-muted-foreground">
-                {collections.length} / 100
-              </span>
-            </div>
-            <form
-              className="flex flex-col gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void run(async () => {
-                  const created = newName;
-                  await api("", "POST", { name: created });
-                  setSelected(created);
-                  setRead("admin");
-                  setWrite("admin");
-                  setId("");
-                  setDocuments([]);
-                  setTotal(null);
-                  setCursor(null);
-                  setNewName("");
-                  await refresh();
-                  await load(created);
-                });
-              }}
-            >
-              <label
-                htmlFor="new-collection-name"
-                className="text-sm font-medium"
+          <fieldset
+            disabled={busy}
+            aria-busy={busy}
+            className="grid min-w-0 gap-6 disabled:opacity-60 lg:grid-cols-[240px_minmax(0,1fr)]"
+          >
+            <aside className="min-w-0 space-y-4 border bg-muted/20 p-4 self-start">
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold">컬렉션</h2>
+                <span className="text-sm text-muted-foreground">
+                  {collections.length} / 100
+                </span>
+              </div>
+              <form
+                className="flex flex-col gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void run(async () => {
+                    const created = newName;
+                    await api("", "POST", { name: created });
+                    setSelected(created);
+                    setRead("admin");
+                    setWrite("admin");
+                    setId("");
+                    setDocuments([]);
+                    setTotal(null);
+                    setCursor(null);
+                    setNewName("");
+                    await refresh();
+                    await load(created);
+                  });
+                }}
               >
-                새 컬렉션 이름
-              </label>
-              <Input
-                id="new-collection-name"
-                aria-label="새 컬렉션 이름"
-                placeholder="예: guestbook"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                required
-                pattern="[a-zA-Z0-9_-]{1,64}"
-              />
-              <Button type="submit">컬렉션 만들기</Button>
-            </form>
-            <div className="flex flex-col gap-2" aria-label="컬렉션 목록">
-              {collections.map((c) => (
-                <Button
-                  key={c.name}
-                  className="h-auto justify-start whitespace-normal break-all text-left"
-                  aria-pressed={selected === c.name}
-                  variant={selected === c.name ? "default" : "outline"}
-                  onClick={() =>
-                    void run(async () => {
-                      setSelected(c.name);
-                      setRead(c.read_access);
-                      setWrite(c.write_access);
-                      setId("");
-                      setDocuments([]);
-                      setTotal(null);
-                      setCursor(null);
-                      await load(c.name);
-                    })
-                  }
+                <label
+                  htmlFor="new-collection-name"
+                  className="text-sm font-medium"
                 >
-                  {c.name}
-                </Button>
-              ))}
-            </div>
-            {!collections.length && (
-              <p className="text-sm text-muted-foreground">
-                첫 컬렉션을 만들어 문서를 저장하세요.
-              </p>
-            )}
-          </aside>
-          <div className="min-w-0 space-y-5">
-            {!selected && (
-              <section className="border border-dashed p-10 text-center space-y-2">
-                <h2 className="font-semibold">컬렉션을 선택하세요</h2>
+                  새 컬렉션 이름
+                </label>
+                <Input
+                  id="new-collection-name"
+                  aria-label="새 컬렉션 이름"
+                  placeholder="예: guestbook"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  required
+                  pattern="[a-zA-Z0-9_\-]{1,64}"
+                />
+                <Button type="submit">컬렉션 만들기</Button>
+              </form>
+              <div className="flex flex-col gap-2" aria-label="컬렉션 목록">
+                {collections.map((c) => (
+                  <Button
+                    key={c.name}
+                    className="h-auto justify-start whitespace-normal break-all text-left"
+                    aria-pressed={selected === c.name}
+                    variant={selected === c.name ? "default" : "outline"}
+                    onClick={() =>
+                      void run(async () => {
+                        setSelected(c.name);
+                        setRead(c.read_access);
+                        setWrite(c.write_access);
+                        setId("");
+                        setDocuments([]);
+                        setTotal(null);
+                        setCursor(null);
+                        await load(c.name);
+                      })
+                    }
+                  >
+                    {c.name}
+                  </Button>
+                ))}
+              </div>
+              {!collections.length && (
                 <p className="text-sm text-muted-foreground">
-                  컬렉션을 선택하면 문서를 조회하고 편집할 수 있습니다.
+                  첫 컬렉션을 만들어 문서를 저장하세요.
                 </p>
-              </section>
-            )}
-            {selected && (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-xl font-semibold break-all">
-                    {selected}
-                  </h2>
-                  <span className="text-sm text-muted-foreground">
-                    {total === null
-                      ? `불러온 문서 ${documents.length}개`
-                      : `문서 ${total}개 중 ${documents.length}개 불러옴`}
-                  </span>
-                </div>
-                <details className="border p-4 space-y-4">
-                  <summary className="cursor-pointer font-medium">
-                    접근 권한 및 컬렉션 설정
-                  </summary>
+              )}
+            </aside>
+            <div className="min-w-0 space-y-5">
+              {!selected && (
+                <section className="border border-dashed p-10 text-center space-y-2">
+                  <h2 className="font-semibold">컬렉션을 선택하세요</h2>
                   <p className="text-sm text-muted-foreground">
-                    공개 읽기는 누구나 조회할 수 있습니다. 공개 생성은 추가만,
-                    전체 공개 쓰기는 덮어쓰기와 삭제까지 허용합니다.
+                    컬렉션을 선택하면 문서를 조회하고 편집할 수 있습니다.
                   </p>
-                  <h2 className="font-bold">{selected} · 접근 권한</h2>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <label>
-                      읽기{" "}
-                      <select
-                        className="bg-background border p-2"
-                        value={read}
-                        onChange={(e) => setRead(e.target.value)}
-                      >
-                        <option value="admin">관리자만</option>
-                        <option value="world">누구나</option>
-                      </select>
-                    </label>
-                    <label>
-                      쓰기{" "}
-                      <select
-                        className="bg-background border p-2"
-                        value={write}
-                        onChange={(e) => setWrite(e.target.value)}
-                      >
-                        <option value="admin">관리자만</option>
-                        <option value="create">누구나 생성만</option>
-                        <option value="world">누구나 생성·덮어쓰기·삭제</option>
-                      </select>
-                    </label>
-                    <Button
-                      onClick={() => {
-                        if (
-                          write === "world" &&
-                          !window.confirm(
-                            "누구나 이 컬렉션의 문서를 덮어쓰거나 삭제할 수 있습니다. 허용할까요?",
+                </section>
+              )}
+              {selected && (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h2 className="text-xl font-semibold break-all">
+                      {selected}
+                    </h2>
+                    <span className="text-sm text-muted-foreground">
+                      {total === null
+                        ? `불러온 문서 ${documents.length}개`
+                        : `문서 ${total}개 중 ${documents.length}개 불러옴`}
+                    </span>
+                  </div>
+                  <details className="border p-4 space-y-4">
+                    <summary className="cursor-pointer font-medium">
+                      접근 권한 및 컬렉션 설정
+                    </summary>
+                    <p className="text-sm text-muted-foreground">
+                      공개 읽기는 누구나 조회할 수 있습니다. 공개 생성은 추가만,
+                      전체 공개 쓰기는 덮어쓰기와 삭제까지 허용합니다.
+                    </p>
+                    <h2 className="font-bold">{selected} · 접근 권한</h2>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <label className="flex items-center gap-2 text-sm font-medium">
+                        읽기
+                        <Select
+                          value={read}
+                          onChange={(e) => setRead(e.target.value)}
+                        >
+                          <option value="admin">관리자만</option>
+                          <option value="world">누구나</option>
+                        </Select>
+                      </label>
+                      <label className="flex items-center gap-2 text-sm font-medium">
+                        쓰기
+                        <Select
+                          value={write}
+                          onChange={(e) => setWrite(e.target.value)}
+                        >
+                          <option value="admin">관리자만</option>
+                          <option value="create">누구나 생성만</option>
+                          <option value="world">
+                            누구나 생성·덮어쓰기·삭제
+                          </option>
+                        </Select>
+                      </label>
+                      <Button
+                        onClick={async () => {
+                          if (
+                            write === "world" &&
+                            !(await confirm({
+                              title:
+                                "누구나 이 컬렉션의 문서를 덮어쓰거나 삭제할 수 있습니다. 허용할까요?",
+                              confirmText: "허용",
+                              destructive: true,
+                            }))
                           )
-                        )
-                          return;
+                            return;
+                          void run(async () => {
+                            await api(`/${selected}`, "PATCH", { read, write });
+                            await refresh();
+                          });
+                        }}
+                      >
+                        권한 저장
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: `컬렉션 ${selected} 및 모든 문서를 영구 삭제할까요?`,
+                              confirmText: "삭제",
+                              destructive: true,
+                            })
+                          )
+                            void run(async () => {
+                              await api(`/${selected}`, "DELETE");
+                              setSelected("");
+                              setDocuments([]);
+                              setTotal(null);
+                              await refresh();
+                            });
+                        }}
+                      >
+                        컬렉션 삭제
+                      </Button>
+                    </div>
+                  </details>
+                  <div className="grid xl:grid-cols-2 gap-5 min-w-0">
+                    <section className="min-w-0 border p-4 space-y-3">
+                      <h2 className="font-bold">문서</h2>
+                      <Button
+                        variant="outline"
+                        onClick={() => void run(() => load(selected))}
+                      >
+                        새로고침
+                      </Button>
+                      {!documents.length && (
+                        <p className="text-muted-foreground">
+                          문서가 없습니다.
+                        </p>
+                      )}
+                      {documents.map((d) => (
+                        <div className="border p-3 space-y-2" key={d.id}>
+                          <Button
+                            variant="link"
+                            className="block h-auto whitespace-normal break-all p-0 text-left underline"
+                            onClick={() => {
+                              setId(d.id);
+                              setJson(JSON.stringify(d.data, null, 2));
+                            }}
+                          >
+                            {d.id}
+                          </Button>
+                          <pre className="text-xs overflow-auto max-h-32">
+                            {JSON.stringify(d.data, null, 2)}
+                          </pre>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={async () => {
+                              if (
+                                await confirm({
+                                  title: `문서 ${d.id}를 삭제할까요?`,
+                                  confirmText: "삭제",
+                                  destructive: true,
+                                })
+                              )
+                                void run(async () => {
+                                  await api(`/${selected}/${d.id}`, "DELETE");
+                                  await load(selected);
+                                });
+                            }}
+                          >
+                            삭제
+                          </Button>
+                        </div>
+                      ))}
+                      {cursor && (
+                        <Button
+                          variant="outline"
+                          onClick={() => void run(() => load(selected, cursor))}
+                        >
+                          더 보기
+                        </Button>
+                      )}
+                    </section>
+                    <form
+                      className="min-w-0 self-start border p-4 space-y-3"
+                      onSubmit={(e) => {
+                        e.preventDefault();
                         void run(async () => {
-                          await api(`/${selected}`, "PATCH", { read, write });
-                          await refresh();
+                          const data = JSON.parse(json);
+                          await api(
+                            `/${selected}${id ? `/${id}` : ""}`,
+                            id ? "PUT" : "POST",
+                            { data },
+                          );
+                          await load(selected);
                         });
                       }}
                     >
-                      권한 저장
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `컬렉션 ${selected} 및 모든 문서를 영구 삭제할까요?`,
-                          )
-                        )
-                          void run(async () => {
-                            await api(`/${selected}`, "DELETE");
-                            setSelected("");
-                            setDocuments([]);
-                            setTotal(null);
-                            await refresh();
-                          });
-                      }}
-                    >
-                      컬렉션 삭제
-                    </Button>
-                  </div>
-                </details>
-                <div className="grid xl:grid-cols-2 gap-5 min-w-0">
-                  <section className="min-w-0 border p-4 space-y-3">
-                    <h2 className="font-bold">문서</h2>
-                    <Button
-                      variant="outline"
-                      onClick={() => void run(() => load(selected))}
-                    >
-                      새로고침
-                    </Button>
-                    {!documents.length && (
-                      <p className="text-muted-foreground">문서가 없습니다.</p>
-                    )}
-                    {documents.map((d) => (
-                      <div className="border p-3 space-y-2" key={d.id}>
-                        <button
-                          className="underline break-all text-left"
-                          onClick={() => {
-                            setId(d.id);
-                            setJson(JSON.stringify(d.data, null, 2));
-                          }}
-                        >
-                          {d.id}
-                        </button>
-                        <pre className="text-xs overflow-auto max-h-32">
-                          {JSON.stringify(d.data, null, 2)}
-                        </pre>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h2 className="font-bold">
+                          {id ? "문서 편집" : "새 문서"}
+                        </h2>
                         <Button
+                          type="button"
                           size="sm"
-                          variant="destructive"
+                          variant="outline"
                           onClick={() => {
-                            if (window.confirm(`문서 ${d.id}를 삭제할까요?`))
-                              void run(async () => {
-                                await api(`/${selected}/${d.id}`, "DELETE");
-                                await load(selected);
-                              });
+                            setId("");
+                            setJson("{\n\n}");
                           }}
                         >
-                          삭제
+                          새 문서
                         </Button>
                       </div>
-                    ))}
-                    {cursor && (
-                      <Button
-                        variant="outline"
-                        onClick={() => void run(() => load(selected, cursor))}
-                      >
-                        더 보기
-                      </Button>
-                    )}
-                  </section>
-                  <form
-                    className="min-w-0 self-start border p-4 space-y-3"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void run(async () => {
-                        const data = JSON.parse(json);
-                        await api(
-                          `/${selected}${id ? `/${id}` : ""}`,
-                          id ? "PUT" : "POST",
-                          { data },
-                        );
-                        await load(selected);
-                      });
-                    }}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h2 className="font-bold">
-                        {id ? "문서 편집" : "새 문서"}
-                      </h2>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setId("");
-                          setJson("{\n\n}");
-                        }}
-                      >
-                        새 문서
-                      </Button>
-                    </div>
-                    <Input
-                      aria-label="문서 ID"
-                      placeholder="문서 ID (비워두면 자동 생성)"
-                      value={id}
-                      pattern="[a-zA-Z0-9_-]{1,64}"
-                      onChange={(e) => setId(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      기존 ID를 사용하면 문서 전체를 덮어씁니다. 요청 본문은
-                      최대 64 KiB입니다.
-                    </p>
-                    <textarea
-                      aria-label="JSON 데이터"
-                      className="w-full h-80 border bg-background p-3 font-mono text-sm"
-                      value={json}
-                      onChange={(e) => setJson(e.target.value)}
-                      spellCheck={false}
-                    />
-                    <Button type="submit">문서 저장</Button>
-                  </form>
-                </div>
-              </>
-            )}
-          </div>
-        </fieldset>
-      </div>
-      <div hidden={view !== "access"}>
-        <WebsiteAccess collections={collections} websiteUrl={websiteUrl} />
-      </div>
-      <section hidden={view !== "sdk"} className="min-w-0 border p-5 space-y-4">
-        <h2 className="font-bold">웹 SDK</h2>
-        <p className="text-sm">
-          사이트의 &lt;script type=&quot;module&quot;&gt;에서 사용하세요.
-        </p>
-        <pre className="p-4 bg-muted overflow-auto text-sm">{snippet}</pre>
-      </section>
+                      <Input
+                        aria-label="문서 ID"
+                        placeholder="문서 ID (비워두면 자동 생성)"
+                        value={id}
+                        pattern="[a-zA-Z0-9_\-]{1,64}"
+                        onChange={(e) => setId(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        기존 ID를 사용하면 문서 전체를 덮어씁니다. 요청 본문은
+                        최대 64 KiB입니다.
+                      </p>
+                      <Textarea
+                        aria-label="JSON 데이터"
+                        className="h-80 p-3 font-mono text-sm"
+                        value={json}
+                        onChange={(e) => setJson(e.target.value)}
+                        spellCheck={false}
+                      />
+                      <Button type="submit">문서 저장</Button>
+                    </form>
+                  </div>
+                </>
+              )}
+            </div>
+          </fieldset>
+        </TabsContent>
+        <TabsContent
+          value="access"
+          forceMount
+          className="data-[state=inactive]:hidden"
+        >
+          <WebsiteAccess collections={collections} websiteUrl={websiteUrl} />
+        </TabsContent>
+        <TabsContent
+          value="sdk"
+          forceMount
+          asChild
+          className="data-[state=inactive]:hidden"
+        >
+          <section className="min-w-0 border p-5 space-y-4">
+            <h2 className="font-bold">웹 SDK</h2>
+            <p className="text-sm">
+              사이트의 &lt;script type=&quot;module&quot;&gt;에서 사용하세요.
+            </p>
+            <pre className="p-4 bg-muted overflow-auto text-sm">{snippet}</pre>
+          </section>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

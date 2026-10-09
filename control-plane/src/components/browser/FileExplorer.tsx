@@ -9,6 +9,8 @@ import { FileNode } from "@/lib/fileUtils";
 import { EDITABLE_FILE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, AUDIO_FILE_EXTENSIONS } from "@/lib/const";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useConfirm } from "@/components/ui/confirm";
 import {
   Folder,
   FolderOpen,
@@ -22,6 +24,8 @@ import {
   File as FileIcon,
   Upload,
   ArrowUpToLine,
+  Check,
+  X,
 } from "lucide-react";
 import { loadingFetch } from "@/lib/loading-bar";
 
@@ -68,6 +72,7 @@ function getFileIcon(fileName: string, isDirectory: boolean): React.ReactNode {
 }
 
 export default function FileExplorer({ initialFiles, userLoginName }: FileExplorerProps) {
+  const confirm = useConfirm();
   const [files, setFiles] = useState<FileNode[]>(initialFiles);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set([""]));
@@ -281,9 +286,12 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
       };
 
       if (checkExisting(files, newPath)) {
-        const confirmOverwrite = confirm(
-          `"${finalFilename}" 파일이 이미 존재합니다.\n기존 파일을 덮어쓰시겠습니까?`
-        );
+        const confirmOverwrite = await confirm({
+          title: `"${finalFilename}" 파일이 이미 존재합니다.`,
+          description: "기존 파일을 덮어쓰시겠습니까?",
+          confirmText: "덮어쓰기",
+          destructive: true,
+        });
         if (!confirmOverwrite) {
           return; // Don't proceed with rename
         }
@@ -367,12 +375,12 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
                 <div className="flex items-center space-x-2 flex-1">
                   <span>{getFileIcon(selectedFile.split('/').pop() || "", false)}</span>
                   <div className="flex items-center">
-                    <input
+                    <Input
                       type="text"
                       value={newFileName}
                       onChange={(e) => setNewFileName(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      className="px-2 py-1 text-sm border border-primary rounded-l focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="h-9 w-48"
                       autoFocus
                     />
                     {(() => {
@@ -380,25 +388,33 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
                       const lastDotIndex = originalFilename.lastIndexOf('.');
                       const extension = lastDotIndex > 0 ? originalFilename.substring(lastDotIndex) : "";
                       return extension ? (
-                        <span className="px-2 py-1 text-sm bg-secondary border border-l-0 border-r-0 border-primary text-muted-foreground">
+                        <span className="flex h-9 items-center border-2 border-l-0 border-input bg-secondary px-2 text-sm text-muted-foreground">
                           {extension}
                         </span>
                       ) : null;
                     })()}
-                    <button
-                      onClick={handleConfirmRename}
-                      className="px-2 py-1 text-xs bg-success/10 text-success border border-success hover:bg-success/20 focus:outline-none focus:ring-2 focus:ring-success/50 transition-colors"
-                      title="저장 (Enter)"
-                    >
-                      ✓
-                    </button>
-                    <button
-                      onClick={handleCancelRename}
-                      className="px-2 py-1 text-xs bg-destructive/10 text-destructive border border-destructive hover:bg-destructive/20 focus:outline-none focus:ring-2 focus:ring-destructive/50 transition-colors"
-                      title="취소 (Esc)"
-                    >
-                      ✕
-                    </button>
+                    <div className="ml-2 flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleConfirmRename}
+                        className="px-2 text-success hover:text-success"
+                        title="저장 (Enter)"
+                        aria-label="저장"
+                      >
+                        <Check />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleCancelRename}
+                        className="px-2 text-destructive hover:text-destructive"
+                        title="취소 (Esc)"
+                        aria-label="취소"
+                      >
+                        <X />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -519,7 +535,7 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
       {/* Drag and Drop Overlay */}
       {isDragOver && (
         <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-card p-6 rounded-lg border-2 border-line text-center border-4 border-dashed border-primary">
+          <div className="bg-card p-6 text-center border-4 border-dashed border-primary">
             <Upload size={60} className="mx-auto mb-4 text-primary" strokeWidth={1.25} />
             <p className="text-xl font-semibold text-primary">파일을 여기에 드롭하세요</p>
             <p className="text-sm mt-2 text-muted-foreground">
@@ -532,7 +548,7 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
       {/* Upload Progress Overlay */}
       {uploading && (
         <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-card p-6 rounded-lg border-2 border-line text-center">
+          <div className="bg-card p-6 border-2 border-line text-center">
             <ArrowUpToLine size={28} className="mx-auto mb-2" />
             {uploadProgress && <UploadStatus progress={uploadProgress} />}
           </div>

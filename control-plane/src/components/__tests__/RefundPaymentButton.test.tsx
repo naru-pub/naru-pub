@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 
 const router = { refresh: jest.fn() };
@@ -15,6 +16,10 @@ jest.mock("sonner", () => ({
 }));
 const { RefundPaymentButton } =
   require("@/components/RefundPaymentButton") as typeof import("@/components/RefundPaymentButton");
+const { ConfirmProvider } =
+  require("@/components/ui/confirm") as typeof import("@/components/ui/confirm");
+const renderButton = (ui: React.ReactElement) =>
+  render(<ConfirmProvider>{ui}</ConfirmProvider>);
 const fetchMock = global.fetch as jest.Mock<typeof fetch>;
 function response(state: string): Response {
   return {
@@ -26,7 +31,6 @@ beforeEach(() => {
   jest.useFakeTimers();
   fetchMock.mockReset();
   router.refresh.mockReset();
-  window.confirm = jest.fn(() => true);
 });
 afterEach(() => {
   jest.useRealTimers();
@@ -36,8 +40,13 @@ test("acceptance shows pending until a later status confirms completion", async 
     .mockResolvedValueOnce(response("pending"))
     .mockResolvedValueOnce(response("pending"))
     .mockResolvedValueOnce(response("completed"));
-  render(<RefundPaymentButton paymentId="payment" confirmMessage="refund?" />);
-  fireEvent.click(screen.getByRole("button"));
+  renderButton(
+    <RefundPaymentButton paymentId="payment" confirmMessage="refund?" />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "환불" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(dialog).toHaveTextContent("refund?");
+  fireEvent.click(within(dialog).getByRole("button", { name: "환불" }));
   await waitFor(() =>
     expect(screen.getByRole("button")).toHaveTextContent("환불 처리 중"),
   );
@@ -50,7 +59,7 @@ test("acceptance shows pending until a later status confirms completion", async 
 });
 test("reopening a pending request recovers status and displays stopped work", async () => {
   fetchMock.mockResolvedValue(response("failed"));
-  render(
+  renderButton(
     <RefundPaymentButton
       paymentId="payment"
       confirmMessage="refund?"
@@ -68,7 +77,7 @@ test("a temporary status lookup failure leaves the request pending and retries",
   fetchMock
     .mockRejectedValueOnce(new Error("offline"))
     .mockResolvedValueOnce(response("completed"));
-  render(
+  renderButton(
     <RefundPaymentButton
       paymentId="payment"
       confirmMessage="refund?"
@@ -80,4 +89,16 @@ test("a temporary status lookup failure leaves the request pending and retries",
     await jest.advanceTimersByTimeAsync(5000);
   });
   expect(await screen.findByText("환불 완료")).toBeInTheDocument();
+});
+test("dismissing the confirmation sends nothing", async () => {
+  renderButton(
+    <RefundPaymentButton paymentId="payment" confirmMessage="refund?" />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "환불" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "취소" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  expect(fetchMock).not.toHaveBeenCalled();
 });

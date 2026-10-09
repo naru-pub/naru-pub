@@ -5,6 +5,17 @@ import { FlaskConical } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 // Mirrors lib/payments/billing-lab.ts, which pulls in server code and so is not
 // imported here.
@@ -94,19 +105,19 @@ function RecordDiff({
   return (
     <div>
       <div className="mb-1 text-sm font-semibold">{title}</div>
-      <table className="w-full text-xs">
-        <tbody>
+      <Table className="text-xs">
+        <TableBody>
           {keys.map((key) => {
             const changed = before?.[key] !== after?.[key];
             return (
-              <tr
+              <TableRow
                 key={key}
                 className={changed ? "bg-warning/10 font-medium" : ""}
               >
-                <td className="py-0.5 pr-3 align-top text-muted-foreground">
+                <TableCell className="py-0.5 pl-0 pr-3 align-top font-mono text-muted-foreground">
                   {key}
-                </td>
-                <td className="py-0.5 pr-3 align-top">
+                </TableCell>
+                <TableCell className="py-0.5 pl-0 pr-3 align-top tabular-nums">
                   {changed ? (
                     <span className="line-through opacity-60">
                       {show(before?.[key])}
@@ -114,15 +125,15 @@ function RecordDiff({
                   ) : (
                     show(after?.[key])
                   )}
-                </td>
-                <td className="py-0.5 align-top">
+                </TableCell>
+                <TableCell className="px-0 py-0.5 align-top tabular-nums">
                   {changed ? show(after?.[key]) : ""}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             );
           })}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -146,47 +157,47 @@ function PaymentsDiff({
     return <div className="text-sm text-muted-foreground">{empty}</div>;
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-left text-muted-foreground">
-            {columns.map((column) => (
-              <th key={column} className="py-1 pr-3 font-normal">
-                {column}
-              </th>
-            ))}
-            {actions ? <th /> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {after.map((row) => {
-            const old = beforeById.get(row.id);
-            return (
-              <tr
-                key={String(row.id)}
-                className={old ? "" : "bg-success/10 font-medium"}
-              >
-                {columns.map((column) => {
-                  const changed = old && old[column] !== row[column];
-                  return (
-                    <td
-                      key={column}
-                      className={`py-1 pr-3 align-top ${changed ? "bg-warning/10 font-medium" : ""}`}
-                      title={changed ? `이전: ${show(old[column])}` : undefined}
-                    >
-                      {show(row[column])}
-                    </td>
-                  );
-                })}
-                {actions ? (
-                  <td className="py-1 whitespace-nowrap">{actions(row)}</td>
-                ) : null}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <Table className="text-xs">
+      <TableHeader>
+        <TableRow>
+          {columns.map((column) => (
+            <TableHead key={column} className="h-8 pl-0 pr-3 font-normal">
+              {column}
+            </TableHead>
+          ))}
+          {actions ? <TableHead className="h-8 px-0" /> : null}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {after.map((row) => {
+          const old = beforeById.get(row.id);
+          return (
+            <TableRow
+              key={String(row.id)}
+              className={old ? "" : "bg-success/10 font-medium"}
+            >
+              {columns.map((column) => {
+                const changed = old && old[column] !== row[column];
+                return (
+                  <TableCell
+                    key={column}
+                    className={`py-1 pl-0 pr-3 align-top tabular-nums ${changed ? "bg-warning/10 font-medium" : ""}`}
+                    title={changed ? `이전: ${show(old[column])}` : undefined}
+                  >
+                    {show(row[column])}
+                  </TableCell>
+                );
+              })}
+              {actions ? (
+                <TableCell className="whitespace-nowrap px-0 py-1">
+                  {actions(row)}
+                </TableCell>
+              ) : null}
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -303,7 +314,7 @@ export function BillingLab({
     testCode ? `${label} (${codeLabel})` : label;
 
   return (
-    <div className="space-y-4 border-2 border-dashed border-warning bg-card p-4">
+    <Card className="space-y-4 border-dashed border-warning p-4">
       <div>
         <h2 className="flex items-center gap-2 text-lg font-bold">
           <FlaskConical size={18} />
@@ -312,16 +323,23 @@ export function BillingLab({
         </h2>
         <p className="text-sm text-muted-foreground">
           청구·환불 요청을 접수하고 대사·웹훅을 실행합니다. 접수한 요청의 결과는
-          결제 내역에서 확인해 주세요. 모든 Toss 키가 테스트 키(test_…)일
-          때만 나타납니다. 구독은 /supporter에서 Toss 테스트 카드로 먼저 만드세요.
+          결제 내역에서 확인해 주세요. 모든 Toss 키가 테스트 키(test_…)일 때만
+          나타납니다. 구독은 /supporter에서 Toss 테스트 카드로 먼저 만드세요.
         </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <label className="text-sm">
-          <div className="mb-1 text-muted-foreground">계정</div>
-          <select
-            className="border-2 border-line bg-background px-2 py-1"
+        <div className="space-y-1.5">
+          <Label
+            htmlFor="lab-account"
+            className="font-normal text-muted-foreground"
+          >
+            계정
+          </Label>
+          <Select
+            id="lab-account"
+            wrapperClassName="flex"
+            className="h-9"
             value={userId ?? ""}
             onChange={(event) => selectAccount(event.target.value)}
           >
@@ -334,14 +352,19 @@ export function BillingLab({
                   : ""}
               </option>
             ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          <div className="mb-1 text-muted-foreground">
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label
+            htmlFor="lab-test-code"
+            className="font-normal text-muted-foreground"
+          >
             Toss 응답 (TossPayments-Test-Code)
-          </div>
-          <select
-            className="border-2 border-line bg-background px-2 py-1"
+          </Label>
+          <Select
+            id="lab-test-code"
+            wrapperClassName="flex"
+            className="h-9"
             value={testCode}
             onChange={(event) => setTestCode(event.target.value)}
           >
@@ -350,8 +373,8 @@ export function BillingLab({
                 {code.code ? `${code.code} — ${code.label}` : code.label}
               </option>
             ))}
-          </select>
-        </label>
+          </Select>
+        </div>
         <Button
           variant="outline"
           size="sm"
@@ -498,13 +521,13 @@ export function BillingLab({
       ) : null}
 
       {runs.map((entry) => (
-        <div key={entry.id} className="space-y-3 border-2 border-line p-3">
+        <Card key={entry.id} className="space-y-3 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={entry.result.ok ? "secondary" : "destructive"}>
               {entry.result.ok ? "완료" : "오류"}
             </Badge>
             <span className="font-semibold">{entry.label}</span>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs tabular-nums text-muted-foreground">
               {show(entry.at)}
             </span>
           </div>
@@ -549,8 +572,8 @@ export function BillingLab({
               </div>
             </Fragment>
           ) : null}
-        </div>
+        </Card>
       ))}
-    </div>
+    </Card>
   );
 }

@@ -17,8 +17,11 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { KindBadge } from "../board/_components/KindBadge";
 import { PostTitle } from "../board/_components/PostTitle";
+import { ContextMenuDemo, DialogDemo, RadioDemo, TabsDemo } from "./Demos";
 import { TokenValue } from "./TokenValue";
 
 export const metadata: Metadata = {
@@ -53,28 +56,117 @@ const PRINCIPLES = [
 // Every color is an HSL triple on :root and .dark in globals.css, used as
 // hsl(var(--name)) through Tailwind. Values shown are read from the page.
 const COLORS = [
-  { token: "background", name: "ground", utility: "bg-background", use: "페이지 바탕" },
-  { token: "card", name: "surface", utility: "bg-card", use: "카드, 내비게이션, 바닥글" },
-  { token: "foreground", name: "ink", utility: "text-foreground", use: "본문 글자" },
-  { token: "muted-foreground", name: "ink-2", utility: "text-muted-foreground", use: "설명, 메타 정보" },
-  { token: "line", name: "line", utility: "border-line", use: "2px 테두리, 단단한 구분선" },
-  { token: "border", name: "hairline", utility: "border-border", use: "1px 목록 구분선" },
-  { token: "primary", name: "flag", utility: "bg-primary", use: "주 버튼, 선택 표시, 그래프" },
-  { token: "link", name: "flag text", utility: "text-link", use: "바탕 위 링크 글자" },
-  { token: "accent", name: "wash", utility: "bg-accent", use: "가리킨 항목, 옅은 강조 면" },
-  { token: "sun", name: "sun", utility: "bg-sun", use: "형광펜: 템플릿, 제목 밑줄" },
-  { token: "destructive", name: "danger", utility: "text-destructive", use: "삭제, 오류" },
-  { token: "success", name: "success", utility: "text-success", use: "완료, 해결됨" },
-  { token: "warning", name: "warning", utility: "text-warning", use: "주의, 만료 예정" },
+  {
+    token: "background",
+    name: "ground",
+    utility: "bg-background",
+    use: "페이지 바탕",
+  },
+  {
+    token: "card",
+    name: "surface",
+    utility: "bg-card",
+    use: "카드, 내비게이션, 바닥글",
+  },
+  {
+    token: "foreground",
+    name: "ink",
+    utility: "text-foreground",
+    use: "본문 글자",
+  },
+  {
+    token: "muted-foreground",
+    name: "ink-2",
+    utility: "text-muted-foreground",
+    use: "설명, 메타 정보",
+  },
+  {
+    token: "line",
+    name: "line",
+    utility: "border-line",
+    use: "2px 테두리, 단단한 구분선",
+  },
+  {
+    token: "border",
+    name: "hairline",
+    utility: "border-border",
+    use: "1px 목록 구분선",
+  },
+  {
+    token: "primary",
+    name: "flag",
+    utility: "bg-primary",
+    use: "주 버튼, 선택 표시, 그래프",
+  },
+  {
+    token: "link",
+    name: "flag text",
+    utility: "text-link",
+    use: "바탕 위 링크 글자",
+  },
+  {
+    token: "accent",
+    name: "wash",
+    utility: "bg-accent",
+    use: "가리킨 항목, 옅은 강조 면",
+  },
+  {
+    token: "sun",
+    name: "sun",
+    utility: "bg-sun",
+    use: "형광펜: 템플릿, 제목 밑줄",
+  },
+  {
+    token: "destructive",
+    name: "danger",
+    utility: "text-destructive",
+    use: "삭제, 오류",
+  },
+  {
+    token: "success",
+    name: "success",
+    utility: "text-success",
+    use: "완료, 해결됨",
+  },
+  {
+    token: "warning",
+    name: "warning",
+    utility: "text-warning",
+    use: "주의, 만료 예정",
+  },
 ];
 
 const TYPE_SCALE = [
-  { sample: "당신의 공간이 되는", spec: "Display · 44–68 / 700 / -0.035em", className: "text-5xl font-bold tracking-[-0.035em]" },
-  { sample: "방금 고쳐진 사이트들", spec: "H2 · text-3xl / 700", className: "text-3xl font-bold tracking-tight" },
-  { sample: "게시판 안내", spec: "H3 · text-xl / 700", className: "text-xl font-bold" },
-  { sample: "HTML 파일 몇 개면 충분해요.", spec: "Body · text-base / 400 / 1.7", className: "text-base leading-relaxed" },
-  { sample: "설명과 메타 정보는 한 단계 작게.", spec: "Small · text-sm / ink-2", className: "text-sm text-muted-foreground" },
-  { sample: "seaunion.naru.pub · 12,251", spec: "Mono · font-mono / 500", className: "font-mono font-medium" },
+  {
+    sample: "당신의 공간이 되는",
+    spec: "Display · 44–68 / 700 / -0.035em",
+    className: "text-5xl font-bold tracking-[-0.035em]",
+  },
+  {
+    sample: "방금 고쳐진 사이트들",
+    spec: "H2 · text-3xl / 700",
+    className: "text-3xl font-bold tracking-tight",
+  },
+  {
+    sample: "게시판 안내",
+    spec: "H3 · text-xl / 700",
+    className: "text-xl font-bold",
+  },
+  {
+    sample: "HTML 파일 몇 개면 충분해요.",
+    spec: "Body · text-base / 400 / 1.7",
+    className: "text-base leading-relaxed",
+  },
+  {
+    sample: "설명과 메타 정보는 한 단계 작게.",
+    spec: "Small · text-sm / ink-2",
+    className: "text-sm text-muted-foreground",
+  },
+  {
+    sample: "seaunion.naru.pub · 12,251",
+    spec: "Mono · font-mono / 500",
+    className: "font-mono font-medium",
+  },
 ];
 
 export default function DesignPage() {
@@ -97,13 +189,20 @@ export default function DesignPage() {
             종이배
           </h1>
           <p className="max-w-2xl text-lg leading-relaxed text-muted-foreground">
-            나루의 디자인 언어예요. 로고의 픽셀 종이배에서 출발했어요. 먹색
-            선, 종이 바탕, 깃발 파랑. 각진 모서리에 흐림 없는 그림자, 그리고
+            나루의 디자인 언어예요. 로고의 픽셀 종이배에서 출발했어요. 먹색 선,
+            종이 바탕, 깃발 파랑. 각진 모서리에 흐림 없는 그림자, 그리고
             주소·숫자·아이디처럼 기계가 읽는 글자는 고정폭 글꼴로 써요.
           </p>
-          <nav aria-label="이 페이지" className="flex flex-wrap gap-x-5 gap-y-1 text-sm font-medium">
+          <nav
+            aria-label="이 페이지"
+            className="flex flex-wrap gap-x-5 gap-y-1 text-sm font-medium"
+          >
             {SECTIONS.map(([id, label]) => (
-              <a key={id} href={`#${id}`} className="text-link underline-offset-4 hover:underline">
+              <a
+                key={id}
+                href={`#${id}`}
+                className="text-link underline-offset-4 hover:underline"
+              >
                 {label}
               </a>
             ))}
@@ -116,7 +215,10 @@ export default function DesignPage() {
         <Section id="principles" title="원칙">
           <ol className="grid gap-8 sm:grid-cols-3">
             {PRINCIPLES.map((principle, index) => (
-              <li key={principle.title} className="flex flex-col gap-2 border-t-2 border-line pt-4">
+              <li
+                key={principle.title}
+                className="flex flex-col gap-2 border-t-2 border-line pt-4"
+              >
                 <span className="font-mono text-sm font-semibold text-link">
                   {String(index + 1).padStart(2, "0")}
                 </span>
@@ -146,7 +248,10 @@ export default function DesignPage() {
               </thead>
               <tbody>
                 {COLORS.map((color) => (
-                  <tr key={color.token} className="border-b border-border last:border-b-0">
+                  <tr
+                    key={color.token}
+                    className="border-b border-border last:border-b-0"
+                  >
                     <td className="px-4 py-3">
                       <div className="font-bold">{color.name}</div>
                       <code className="font-mono text-xs text-muted-foreground">
@@ -155,7 +260,9 @@ export default function DesignPage() {
                     </td>
                     {(["light", "dark"] as const).map((theme) => (
                       <td key={theme} className="px-4 py-3">
-                        <div className={`${theme} flex items-center gap-3 bg-background p-2 text-foreground`}>
+                        <div
+                          className={`${theme} flex items-center gap-3 bg-background p-2 text-foreground`}
+                        >
                           <span
                             className="size-9 shrink-0 border-2 border-line"
                             style={{ background: `hsl(var(--${color.token}))` }}
@@ -166,7 +273,9 @@ export default function DesignPage() {
                         </div>
                       </td>
                     ))}
-                    <td className="px-4 py-3 text-muted-foreground">{color.use}</td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {color.use}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -176,8 +285,10 @@ export default function DesignPage() {
             상태 색은 글자로 쓰거나{" "}
             <code className="font-mono text-foreground">bg-success/10</code>{" "}
             처럼 옅게 깔아 써요. 깃발 위 글자는{" "}
-            <code className="font-mono text-foreground">text-primary-foreground</code>,
-            바탕 위 링크는 대비가 더 높은{" "}
+            <code className="font-mono text-foreground">
+              text-primary-foreground
+            </code>
+            , 바탕 위 링크는 대비가 더 높은{" "}
             <code className="font-mono text-foreground">text-link</code>예요.
           </p>
         </Section>
@@ -189,14 +300,22 @@ export default function DesignPage() {
         >
           <div className="divide-y divide-border border-2 border-line bg-card">
             {TYPE_SCALE.map((row) => (
-              <div key={row.spec} className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-6 py-4">
+              <div
+                key={row.spec}
+                className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-6 py-4"
+              >
                 <span className={row.className}>{row.sample}</span>
-                <span className="font-mono text-xs text-muted-foreground">{row.spec}</span>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {row.spec}
+                </span>
               </div>
             ))}
           </div>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            본문은 <code className="font-mono text-foreground">word-break: keep-all</code>
+            본문은{" "}
+            <code className="font-mono text-foreground">
+              word-break: keep-all
+            </code>
             로 낱말 사이에서만 줄을 바꿔요. 숫자는{" "}
             <code className="font-mono text-foreground">tabular-nums</code>로
             자릿수를 맞춰요.
@@ -224,7 +343,11 @@ export default function DesignPage() {
               body="링크인 카드는 가리킬 때만 그림자가 생겨요."
               utility=".lift"
             >
-              <a href="#shape" className="lift block h-14 w-28 border-2 border-line bg-card" aria-label="떠오르는 카드 예시" />
+              <a
+                href="#shape"
+                className="lift block h-14 w-28 border-2 border-line bg-card"
+                aria-label="떠오르는 카드 예시"
+              />
             </Motif>
             <Motif
               title="픽셀 물결"
@@ -240,9 +363,14 @@ export default function DesignPage() {
               <p className="text-sm leading-relaxed text-muted-foreground">
                 사용자 사이트는 늘 주소줄과 함께 보여 줘요. 스크린샷이 아직
                 없으면 muted 면이 자리를 지켜요.{" "}
-                <code className="font-mono text-foreground">&lt;BrowserFrame /&gt;</code>
+                <code className="font-mono text-foreground">
+                  &lt;BrowserFrame /&gt;
+                </code>
               </p>
-              <BrowserFrame address={<SiteAddress loginName="example" />} className="max-w-xs">
+              <BrowserFrame
+                address={<SiteAddress loginName="example" />}
+                className="max-w-xs"
+              >
                 <div className="aspect-[4/3] bg-muted" />
               </BrowserFrame>
             </div>
@@ -252,10 +380,7 @@ export default function DesignPage() {
                 화면에서 가장 중요한 낱말 하나에만 sun 밑줄을 그어요.
               </p>
               <p className="text-4xl font-bold tracking-tight">
-                당신의{" "}
-                <span className="highlight">
-                  공간
-                </span>
+                당신의 <span className="highlight">공간</span>
               </p>
             </div>
           </div>
@@ -283,7 +408,10 @@ export default function DesignPage() {
             </div>
           </ComponentRow>
 
-          <ComponentRow title="태그" source="ui/badge.tsx · board/KindBadge.tsx">
+          <ComponentRow
+            title="태그"
+            source="ui/badge.tsx · board/KindBadge.tsx"
+          >
             <div className="flex flex-wrap items-center gap-2">
               <Badge>default</Badge>
               <Badge variant="outline">광고</Badge>
@@ -302,22 +430,42 @@ export default function DesignPage() {
             </div>
           </ComponentRow>
 
-          <ComponentRow title="입력" source="ui/input.tsx · ui/checkbox.tsx">
+          <ComponentRow
+            title="입력"
+            source="ui/input · textarea · select · checkbox · radio-group"
+          >
             <div className="grid w-full max-w-xs gap-2">
               <Label>아이디</Label>
               <Input placeholder="example" />
             </div>
+            <Textarea
+              className="max-w-xs"
+              placeholder="답글을 남겨 보세요"
+              aria-label="예시 글상자"
+            />
+            <Select
+              aria-label="정렬"
+              defaultValue="new"
+              wrapperClassName="w-40"
+            >
+              <option value="new">최신순</option>
+              <option value="name">이름순</option>
+              <option value="size">크기순</option>
+            </Select>
             <div className="flex items-center gap-2">
               <Checkbox defaultChecked aria-label="예시 체크박스" />
               <span className="text-sm">연합우주에 알리기</span>
             </div>
+            <RadioDemo />
           </ComponentRow>
 
           <ComponentRow title="카드" source="ui/card.tsx">
             <Card className="w-full max-w-sm">
               <CardHeader>
                 <CardTitle>템플릿으로 시작하기</CardTitle>
-                <CardDescription>누군가 나눈 폴더를 한 번에 적용해요.</CardDescription>
+                <CardDescription>
+                  누군가 나눈 폴더를 한 번에 적용해요.
+                </CardDescription>
               </CardHeader>
               <CardContent className="flex items-center justify-between gap-3">
                 <span className="min-w-0">
@@ -334,21 +482,28 @@ export default function DesignPage() {
             </Card>
           </ComponentRow>
 
-          <ComponentRow title="탭" source="board/HomeBoard.tsx">
-            <div className="flex w-full border-b border-border">
-              {["전체", "사이트 자랑", "템플릿", "질문"].map((label, index) => (
-                <span
-                  key={label}
-                  className={`-mb-px border-b-[3px] px-3 py-3 text-[15px] ${
-                    index === 0
-                      ? "border-primary font-bold"
-                      : "border-transparent text-muted-foreground"
-                  }`}
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
+          <ComponentRow
+            title="탭"
+            source="ui/tabs.tsx · 페이지 이동 탭은 tabLinkClass()"
+          >
+            <TabsDemo />
+          </ComponentRow>
+
+          <ComponentRow
+            title="대화상자와 확인"
+            source="ui/dialog.tsx · ui/confirm.tsx (useConfirm)"
+          >
+            <DialogDemo />
+            <p className="text-sm text-muted-foreground">
+              window.confirm() 대신{" "}
+              <code className="font-mono text-foreground">
+                await confirm(&#123; title, destructive &#125;)
+              </code>
+            </p>
+          </ComponentRow>
+
+          <ComponentRow title="오른쪽 클릭 메뉴" source="ui/context-menu.tsx">
+            <ContextMenuDemo />
           </ComponentRow>
         </Section>
 
@@ -363,6 +518,8 @@ export default function DesignPage() {
                 "링크인 카드는 .lift, 제목 링크에 after:absolute after:inset-0",
                 "주소·숫자·아이디·코드는 font-mono, 한글은 늘 Sans",
                 "빈 목록에는 안내 문장과 첫 행동 링크",
+                "버튼·입력·선택·탭·대화상자는 늘 components/ui에서",
+                "지우기 전 확인은 useConfirm(), destructive: true",
                 "새 색이 필요하면 globals.css에 토큰부터, 그다음 이 페이지에",
               ]}
             />
@@ -375,13 +532,17 @@ export default function DesignPage() {
                 "text-gray-600, bg-green-100 같은 날색",
                 "한글을 고정폭 글꼴로 (띄어쓰기가 벌어져요)",
                 "아이콘 대신 이모지",
+                "<button>, <select>, window.confirm()을 직접 쓰기",
                 "한 화면에 sun 강조 여러 개",
               ]}
             />
           </div>
           <p className="text-sm text-muted-foreground">
             고칠 곳을 찾았다면{" "}
-            <Link href="/board" className="text-link underline-offset-4 hover:underline">
+            <Link
+              href="/board"
+              className="text-link underline-offset-4 hover:underline"
+            >
               게시판
             </Link>
             에 알려 주세요.
@@ -404,13 +565,19 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section id={id} aria-labelledby={`${id}-title`} className="flex scroll-mt-8 flex-col gap-6">
+    <section
+      id={id}
+      aria-labelledby={`${id}-title`}
+      className="flex scroll-mt-8 flex-col gap-6"
+    >
       <div className="space-y-2">
         <h2 id={`${id}-title`} className="text-3xl font-bold tracking-tight">
           {title}
         </h2>
         {description && (
-          <p className="max-w-3xl leading-relaxed text-muted-foreground">{description}</p>
+          <p className="max-w-3xl leading-relaxed text-muted-foreground">
+            {description}
+          </p>
         )}
       </div>
       {children}
@@ -455,7 +622,9 @@ function ComponentRow({
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-xl font-bold">{title}</h3>
-        <code className="font-mono text-xs text-muted-foreground">{source}</code>
+        <code className="font-mono text-xs text-muted-foreground">
+          {source}
+        </code>
       </div>
       <div className="grid border-2 border-line lg:grid-cols-2">
         {(["light", "dark"] as const).map((theme) => (
@@ -486,7 +655,10 @@ function UsageList({
       <ul className="space-y-2 text-sm leading-relaxed">
         {items.map((item) => (
           <li key={item} className="flex gap-2">
-            <span aria-hidden="true" className="mt-2 size-1.5 shrink-0 bg-foreground" />
+            <span
+              aria-hidden="true"
+              className="mt-2 size-1.5 shrink-0 bg-foreground"
+            />
             {item}
           </li>
         ))}

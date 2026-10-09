@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { tabLinkClass } from "@/components/ui/tab-link";
 
 export type AdminSection = { href: string; label: string };
 
 export function AdminNav({ sections }: { sections: AdminSection[] }) {
   const pathname = usePathname();
   return (
-    <nav className="-mx-1 flex flex-wrap gap-1 border-b-2 border-line">
+    <nav className="flex min-w-0 overflow-x-auto border-b border-border [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {sections.map((section) => {
         const active =
           section.href === "/admin"
@@ -18,11 +19,8 @@ export function AdminNav({ sections }: { sections: AdminSection[] }) {
           <Link
             key={section.href}
             href={section.href}
-            className={
-              active
-                ? "-mb-0.5 border-b-2 border-primary px-3 py-2 font-bold text-foreground"
-                : "px-3 py-2 text-muted-foreground hover:text-foreground"
-            }
+            aria-current={active ? "page" : undefined}
+            className={tabLinkClass(active)}
           >
             {section.label}
           </Link>

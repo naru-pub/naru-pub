@@ -245,6 +245,7 @@ export default async function Home() {
                 >
                   .{process.env.NEXT_PUBLIC_DOMAIN}
                 </span>
+                {/* eslint-disable-next-line react/forbid-elements -- joined to the address box; its edges are the box's */}
                 <button
                   type="submit"
                   className="shrink-0 border-l-2 border-line bg-primary px-4 font-sans font-semibold text-primary-foreground hover:brightness-110 sm:px-5"
