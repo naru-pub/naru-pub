@@ -7,6 +7,8 @@ export const RESERVED_LOGIN_NAMES = new Set([
   // shadow it.
   "db",
   "media",
+  // The site-data Worker's custom domain (site-data-worker/wrangler.jsonc).
+  "site-data",
   // The payment operator's login (lib/payments/support.ts PAYMENT_OPERATOR_USERS): the
   // role is the name, so the name must never go to anyone else — in a fresh
   // environment, or after that account is deleted.
