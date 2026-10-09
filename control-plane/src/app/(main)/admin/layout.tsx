@@ -24,6 +24,7 @@ export default async function AdminLayout({
     { href: "/admin/payments", label: "결제" },
     { href: "/admin/subscriptions", label: "정기 결제" },
     { href: "/admin/supporters", label: "유료 이용자" },
+    { href: "/admin/usage", label: "사용량" },
     { href: "/admin/events", label: "결제 이벤트" },
     { href: "/admin/webhooks", label: "웹훅" },
     { href: "/admin/toss-calls", label: "Toss 호출" },
