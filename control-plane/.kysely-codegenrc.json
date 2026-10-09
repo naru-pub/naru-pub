@@ -21,7 +21,8 @@
       "subscriptions.billing_key_required_status": "ColumnType<\"active\", never, never>",
       "entitlement_repairs.status": "ColumnType<\"pending\" | \"completed\" | \"skipped\", \"pending\" | \"completed\" | \"skipped\" | undefined>",
       "users.site_data_bytes_used": "ColumnType<string, never, never>",
-      "users.site_data_document_count": "ColumnType<string, never, never>"
+      "users.site_data_document_count": "ColumnType<string, never, never>",
+      "users.site_data_backend": "Generated<\"postgres\" | \"moving_to_durable_object\" | \"durable_object\" | \"moving_to_postgres\">"
     }
   }
 }

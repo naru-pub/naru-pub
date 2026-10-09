@@ -1,0 +1,16 @@
+// The Durable Objects store for Naru site databases. One object per site,
+// named by the site; the control plane is its only caller (see
+// docs/database.md, "Durable Objects backend").
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "naru-site-data",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // Buffer and node:crypto, for the control plane's cursor and filter code.
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "SITES", "class_name": "SiteData" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteData"] }],
+  "observability": { "enabled": true },
+}

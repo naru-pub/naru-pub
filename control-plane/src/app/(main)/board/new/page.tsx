@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { validateRequest } from "@/lib/auth";
 import { isPostKind } from "@/lib/board/constants";
-import { db } from "@/lib/database";
+import { siteDataBackend } from "@/lib/site-data/backend";
 import { NewPostForm } from "./NewPostForm";
 
 export const metadata: Metadata = { title: "새 글 쓰기 · 나루 게시판" };
@@ -34,12 +34,9 @@ export default async function NewPostPage({
     );
   }
 
-  const collections = await db
-    .selectFrom("site_data_collections")
-    .select("name")
-    .where("user_id", "=", user.id)
-    .orderBy("name")
-    .execute();
+  const collections = await (
+    await siteDataBackend(user.loginName)
+  ).collections(user);
 
   return (
     <div className="bg-background min-h-screen p-4 sm:p-6">

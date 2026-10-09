@@ -15,7 +15,7 @@ import {
   getUserHomeDirectory,
   getUserObjectKey,
 } from "@/lib/site-urls";
-import { MAX_COLLECTIONS } from "@/lib/site-data/validation";
+import { siteDataBackend } from "@/lib/site-data/backend";
 import {
   APPLICATIONS_PER_HOUR,
   MAX_CHANGELOG_LENGTH,
@@ -181,7 +181,7 @@ function validateSelection(value: unknown): string[] {
 // The author's own collections, by name, to be created empty for whoever
 // applies the template. Only their permissions travel, never documents.
 async function resolveCollections(
-  userId: string,
+  user: User,
   value: unknown,
 ): Promise<BoardTemplateCollection[]> {
   if (value === undefined || value === null) return [];
@@ -190,16 +190,18 @@ async function resolveCollections(
   }
   const names = [...new Set(value as string[])];
   if (names.length === 0) return [];
-  const rows = await db
-    .selectFrom("site_data_collections")
-    .select(["name", "read_access", "write_access"])
-    .where("user_id", "=", userId)
-    .where("name", "in", names)
-    .execute();
+  const rows = await (
+    await siteDataBackend(user.loginName)
+  ).collections(user, names);
   if (rows.length !== names.length) {
     throw new BoardError(400, "내 데이터베이스에 없는 컬렉션이 있어요.");
   }
-  return rows;
+  // Only the permissions travel with the template, never the author's ids.
+  return rows.map(({ name, read_access, write_access }) => ({
+    name,
+    read_access,
+    write_access,
+  }));
 }
 
 function validateSlug(value: unknown): string {
@@ -285,7 +287,7 @@ export async function publishTemplatePost(
     throw new BoardError(409, `이미 「${slug}」라는 템플릿이 있어요.`);
   }
 
-  const collections = await resolveCollections(user.id, input.collections);
+  const collections = await resolveCollections(user, input.collections);
   const { folder: root, files } = await collectSourceFiles(
     user.loginName,
     selection,
@@ -371,7 +373,7 @@ export async function publishTemplateVersion(
   }
   const selection = validateSelection(input.files);
   const changelog = validateChangelog(input.changelog);
-  const collections = await resolveCollections(user.id, input.collections);
+  const collections = await resolveCollections(user, input.collections);
   const { folder: root, files } = await collectSourceFiles(
     user.loginName,
     selection,
@@ -593,16 +595,11 @@ export async function planApplication(
   const hasDatabase = (await getUserFeatures(user.id)).has("database");
   const collectionNames = version.data_collections.map((c) => c.name);
   const existingCollections = new Set(
-    collectionNames.length
-      ? (
-          await db
-            .selectFrom("site_data_collections")
-            .select("name")
-            .where("user_id", "=", user.id)
-            .where("name", "in", collectionNames)
-            .execute()
-        ).map((row) => row.name)
-      : [],
+    (
+      await (
+        await siteDataBackend(user.loginName)
+      ).collections(user, collectionNames)
+    ).map((row) => row.name),
   );
 
   const planned = files.map((file) => {
@@ -728,32 +725,6 @@ export async function applyTemplate(
   });
 
   const application = await db.transaction().execute(async (tx) => {
-    if (toCreate.length > 0) {
-      const { count } = await tx
-        .selectFrom("site_data_collections")
-        .select(sql<number>`count(*)::int`.as("count"))
-        .where("user_id", "=", user.id)
-        .executeTakeFirstOrThrow();
-      if (count + toCreate.length > MAX_COLLECTIONS) {
-        skippedCollections.push(...toCreate.map((c) => c.name));
-      } else {
-        const inserted = await tx
-          .insertInto("site_data_collections")
-          .values(
-            toCreate.map((collection) => ({
-              user_id: user.id,
-              name: collection.name,
-              read_access: collection.read_access,
-              write_access: collection.write_access,
-            })),
-          )
-          .onConflict((oc) => oc.columns(["user_id", "name"]).doNothing())
-          .returning("name")
-          .execute();
-        createdCollections.push(...inserted.map((row) => row.name));
-      }
-    }
-
     const firstTime = !(await tx
       .selectFrom("board_template_applications as a")
       .innerJoin("board_template_versions as v", "v.id", "a.version_id")
@@ -780,6 +751,25 @@ export async function applyTemplate(
     }
     return row;
   });
+
+  // After the application is recorded, in a store that may not be this
+  // database. The collections are empty, so one that fails is only reported
+  // as skipped; the files are already in place either way.
+  if (toCreate.length > 0) {
+    let created: string[] | null = null;
+    try {
+      created = await (
+        await siteDataBackend(user.loginName)
+      ).createCollections(user, toCreate);
+    } catch (error) {
+      console.error("Template collections were not created", error);
+    }
+    if (created === null) {
+      skippedCollections.push(...toCreate.map((c) => c.name));
+    } else {
+      createdCollections.push(...created);
+    }
+  }
 
   await recordSiteEdit(user.id);
   await storage.purgeUrls(publicUrls(user.loginName, written));

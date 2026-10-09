@@ -3,6 +3,10 @@ import {
   down as usageDown,
 } from "@/migrations/1791377967407_site_data_usage_counters";
 import {
+  up as backendUp,
+  down as backendDown,
+} from "@/migrations/1791514826830_site_data_backend";
+import {
   up as uuidUp,
   down as uuidDown,
 } from "@/migrations/1791346354414_site_data_uuid_columns";
@@ -108,8 +112,10 @@ export async function setupTestDatabase() {
   await orderingUp(db);
   await uuidUp(db);
   await db.transaction().execute((tx) => usageUp(tx));
+  await backendUp(db);
 }
 export async function teardownTestDatabase() {
+  await backendDown(db);
   await usageDown(db);
   await uuidDown(db);
   await orderingDown(db);

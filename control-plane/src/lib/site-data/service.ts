@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql, type RawBuilder } from "kysely";
 import { db, requestDeadline } from "@/lib/database";
+import type { Executor } from "@/lib/entitlements";
 import {
   authorize,
   DataError,
@@ -96,8 +97,15 @@ const outsideScope = (name: string) =>
     `Collection ${name} was not approved for this sign-in. Add it to signIn({ collections }) and sign in again.`,
     "ACCESS_DENIED",
   );
-const noSite = (site: string) =>
+export const noSite = (site: string) =>
   new DataError(404, `No Naru site is named ${site}.`);
+/** A site between stores takes reads from where it came from, never writes. */
+export const siteMoving = () =>
+  new DataError(
+    503,
+    "This site's database is moving. Try again in a minute.",
+    "UNAVAILABLE",
+  );
 /** Naru ordering: null/missing/non-scalars, strings, numbers, booleans.
  * Explicit keys keep the contract independent of JSONB ordering and locale.
  * Every component is non-null so cursor comparisons form a total order. */
@@ -169,12 +177,19 @@ async function executeAdmittedData(command: DataCommand) {
     // connection the rest of the control plane also needs.
     const ownerQuery = tx
       .selectFrom("users")
-      .select(["id", "site_data_document_count", "site_data_bytes_used"])
+      .select([
+        "id",
+        "site_data_document_count",
+        "site_data_bytes_used",
+        "site_data_backend",
+      ])
       .where("login_name", "=", site);
     const owner = await (
       reading ? ownerQuery : ownerQuery.forUpdate()
     ).executeTakeFirst();
     if (!owner) throw noSite(command.site);
+    // Read under the lock a move takes, so no write lands after its copy.
+    if (!reading && owner.site_data_backend !== "postgres") throw siteMoving();
     // `tx`, never the pool: this runs inside the transaction, and taking a
     // second connection while holding the first is how the pool deadlocks.
     if (!(await userHasFeature(owner.id, "database", tx)))
@@ -553,6 +568,75 @@ async function executeAdmittedData(command: DataCommand) {
   });
 }
 
+export type CollectionSettings = {
+  name: string;
+  read_access: string;
+  write_access: string;
+};
+export type Collection = CollectionSettings & { id: string };
+
+/** A site's collections by name, or all of them, ordered by name. */
+export async function listCollections(
+  userId: string,
+  names?: string[],
+  executor: Executor = db,
+): Promise<Collection[]> {
+  if (names?.length === 0) return [];
+  let query = executor
+    .selectFrom("site_data_collections")
+    .select(["id", "name", "read_access", "write_access"])
+    .where("user_id", "=", userId);
+  if (names) query = query.where("name", "in", names);
+  return query.orderBy("name").execute();
+}
+
+/**
+ * Creates the collections a site lacks, empty, all or none: when they would
+ * take the site past MAX_COLLECTIONS nothing is created and this returns null.
+ * Otherwise the names actually created; one that already exists is left as is.
+ * Joins `executor` when it is a transaction, and otherwise opens one.
+ */
+export async function createCollections(
+  userId: string,
+  collections: CollectionSettings[],
+  executor: Executor = db,
+): Promise<string[] | null> {
+  if (collections.length === 0) return [];
+  const create = async (tx: Executor) => {
+    // The lock a move takes: a collection made after its copy would be lost.
+    const owner = await tx
+      .selectFrom("users")
+      .select("site_data_backend")
+      .where("id", "=", userId)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    if (owner.site_data_backend !== "postgres") throw siteMoving();
+    const { count } = await tx
+      .selectFrom("site_data_collections")
+      .select(sql<number>`count(*)::int`.as("count"))
+      .where("user_id", "=", userId)
+      .executeTakeFirstOrThrow();
+    if (count + collections.length > MAX_COLLECTIONS) return null;
+    const inserted = await tx
+      .insertInto("site_data_collections")
+      .values(
+        collections.map((collection) => ({
+          user_id: userId,
+          name: collection.name,
+          read_access: collection.read_access,
+          write_access: collection.write_access,
+        })),
+      )
+      .onConflict((oc) => oc.columns(["user_id", "name"]).doNothing())
+      .returning("name")
+      .execute();
+    return inserted.map((row) => row.name);
+  };
+  return executor.isTransaction
+    ? create(executor)
+    : executor.transaction().execute(create);
+}
+
 export async function executeBatch(command: DataCommand) {
   if (command.method !== "POST")
     throw new DataError(405, "Method not allowed.");
@@ -577,11 +661,12 @@ async function executeAdmittedBatch(
     // A batch is always a write, so it always takes the owner lock.
     const owner = await tx
       .selectFrom("users")
-      .select("id")
+      .select(["id", "site_data_backend"])
       .where("login_name", "=", command.site)
       .forUpdate()
       .executeTakeFirst();
     if (!owner) throw noSite(command.site);
+    if (owner.site_data_backend !== "postgres") throw siteMoving();
     // `tx`, never the pool: a second connection taken while this one is held
     // is what empties the pool under concurrency.
     if (!(await userHasFeature(owner.id, "database", tx)))

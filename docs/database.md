@@ -316,6 +316,86 @@ NARU_DATA_TEST=1 DATABASE_URL=postgresql://localhost/naru_data_test \
 
 Integration tests require an empty database named exactly `naru_data_test`. They cover all permission combinations, create-only restrictions, rate/quota races, PKCE, single-use codes, token scope, expiry, renewal and its bounds, revocation, domain validation and session/registration deletion. HTTP tests cover cookie isolation, same-origin admin protection, authentication and preflight; SDK tests cover CRUD transport and errors. The dedicated Jest config avoids obsolete global Lucia and Request mocks in the existing test setup.
 
+The Durable Objects backend has its own suite, which also runs the reads of
+`site-data-compare` against both stores on deliberately awkward data. It needs
+`pnpm install` in `site-data-worker/` first; it starts a scratch PostgreSQL
+cluster and the Worker under `wrangler dev`:
+
+```sh
+cd control-plane
+pnpm test:data:do
+```
+
+## Durable Objects backend
+
+A site's collections and documents can live in PostgreSQL or in a Cloudflare
+Durable Object, one object per site, named by the site. Which one is
+`users.site_data_backend`, and everything outside `lib/site-data` reaches the
+data through `siteDataBackend(site)` (`lib/site-data/backend.ts`), so the API,
+the SDK and the control panel are the same either way. This is stage 1 of
+moving sites off the host's PostgreSQL: the control plane still receives every
+request and forwards those of moved sites.
+
+What stays in PostgreSQL for every site: accounts and paid status, page
+registrations, authorization codes and tokens, and media metadata (the bytes
+are in R2 already). For a moved site the control plane admits each request
+there (the site exists, has the database feature, and the sign-in's scope,
+renewing its token) and then calls the site-data Worker with the outcome over
+HTTPS with a shared secret (`SITE_DATA_WORKER_URL`, `SITE_DATA_WORKER_SECRET`).
+The object (`site-data-worker/src/site.ts`) is a SQLite port of `service.ts`:
+the same checks in the same order, the same messages, and the control plane's
+own validation, filter and cursor modules, which it imports. A Durable Object
+handles one request at a time, which replaces the owner-row lock and the write
+queue; public-write rate limits are counted in the object.
+
+The object answers like PostgreSQL does, with these differences:
+
+- Times are kept to the millisecond, not the microsecond. Documents created in
+  the same millisecond sort by id, as ties already do.
+- The control panel lists collections in byte order of their names, where
+  PostgreSQL uses the database's collation.
+- Object keys in `data` come back in the order they were written. JSONB
+  reorders them; the contract gives key order no meaning.
+- Usage counters on `users` (the `/admin` usage page) are not updated for a
+  moved site; they show its usage when it moved.
+
+### Moving a site
+
+```sh
+cd control-plane
+pnpm site-data-compare <site>                 # before a site's first move
+pnpm site-data-move <site> durable_object
+pnpm site-data-move <site> postgres           # and back
+```
+
+In production, run them in the jobs image like the other CLIs
+(`docker compose exec worker node dist/cli/site-data-move.mjs <site> durable_object`).
+
+`site-data-compare` copies a site still on PostgreSQL into a scratch object,
+`compare:<site>`, and runs the same reads against both: every field the site's
+documents use, sorted both ways and with a time tie-breaker, filtered by
+equality, null and ranges, in pages of seven so the cursors are walked. It
+lists any query whose results differ and erases the scratch object.
+
+A move copies collections and documents with their ids, revisions and
+timestamps, so registrations, outstanding sign-ins and conditional writes
+carry across. While a site is `moving_to_durable_object` or
+`moving_to_postgres`, reads come from where it came from and writes fail with
+503 `UNAVAILABLE`, which the SDK already reports: PostgreSQL checks the state
+under the owner row lock the move takes, and the object is frozen before it is
+copied. The copy is checked against the source before the state changes, and
+a move that fails anywhere puts the site back as it was. Writes are refused
+for the seconds the copy takes, so tell a site's owner before moving it.
+
+The source keeps its copy: PostgreSQL's rows stay as they were when the site
+moved, and an object a site moved back from stays frozen. A later move
+replaces them; deleting the account erases the object.
+
+A collection the control plane creates outside a request (page registration,
+applying a board template) commits in the object on its own. Applying a
+template now records the application first and creates its collections after;
+one that fails is reported as skipped.
+
 ## Public guide and example
 
 The Korean guides are served publicly at `/docs` (index), `/docs/database` and `/docs/media`. The control panel links to it without adding a global header link. The static blog example lives in `control-plane/public/examples/database-blog/`; `/docs/database/blog.zip` packages these same source files at build time. See its README for installation and permission setup.

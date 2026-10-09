@@ -1,6 +1,15 @@
 /** @jest-environment node */
 import { beforeEach, expect, jest, test } from "@jest/globals";
 jest.mock("../service", () => ({ executeData: jest.fn() }));
+// Every site on PostgreSQL, without asking a database which store it is on.
+jest.mock("../backend", () => ({
+  siteDataBackend: async () => ({
+    execute: (command: unknown) =>
+      (require("../service") as typeof import("../service")).executeData(
+        command as never,
+      ),
+  }),
+}));
 jest.mock("@/lib/auth", () => ({ validateRequest: jest.fn() }));
 const { dataRequest } = require("../http") as typeof import("../http");
 const execute = jest.mocked(

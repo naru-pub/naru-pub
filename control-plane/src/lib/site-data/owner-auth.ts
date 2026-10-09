@@ -3,13 +3,8 @@ import { uuidv7 } from "@/lib/uuid";
 import { Kysely, sql } from "kysely";
 import type { DB } from "@/lib/db";
 import { db } from "@/lib/database";
-import {
-  DataError,
-  MAX_COLLECTIONS,
-  name,
-  unreservedName,
-  uuidId,
-} from "./validation";
+import { DataError, name, unreservedName, uuidId } from "./validation";
+import { siteDataBackend } from "./backend";
 
 export const TOKEN_SECONDS = 24 * 60 * 60;
 export function tokenLifetime(value: unknown): number {
@@ -157,13 +152,25 @@ async function lockOwner(tx: Kysely<DB>, userId: string) {
     .forUpdate()
     .executeTakeFirstOrThrow();
 }
+/** The site's collections by name, from whichever store holds them. */
+async function siteCollections(
+  tx: Kysely<DB>,
+  userId: string,
+  names: string[],
+) {
+  const owner = await tx
+    .selectFrom("users")
+    .select(["id", "login_name as loginName"])
+    .where("id", "=", userId)
+    .executeTakeFirstOrThrow();
+  return (await siteDataBackend(owner.loginName, tx)).collections(
+    owner,
+    names,
+    tx,
+  );
+}
 async function scope(tx: Kysely<DB>, userId: string, names: string[]) {
-  const rows = await tx
-    .selectFrom("site_data_collections")
-    .select(["id", "name"])
-    .where("user_id", "=", userId)
-    .where("name", "in", names)
-    .execute();
+  const rows = await siteCollections(tx, userId, names);
   if (rows.length !== names.length)
     throw new DataError(
       400,
@@ -407,12 +414,7 @@ async function setupNeeded(
   } catch {
     return null;
   }
-  const rows = await tx
-    .selectFrom("site_data_collections")
-    .select(["id", "name"])
-    .where("user_id", "=", userId)
-    .where("name", "in", input.collections)
-    .execute();
+  const rows = await siteCollections(tx, userId, input.collections);
   const create = input.collections.filter(
     (wanted) => !rows.some((row) => row.name === wanted),
   );
@@ -450,25 +452,26 @@ export async function prepareAuthorization(
     const setup = await setupNeeded(tx, userId, input);
     if (!setup) return;
     if (setup.create.length) {
-      const names = setup.create.map(unreservedName);
-      const { count } = await tx
-        .selectFrom("site_data_collections")
-        .select(tx.fn.countAll<number>().as("count"))
-        .where("user_id", "=", userId)
+      const owner = await tx
+        .selectFrom("users")
+        .select(["id", "login_name as loginName"])
+        .where("id", "=", userId)
         .executeTakeFirstOrThrow();
-      if (Number(count) + names.length > MAX_COLLECTIONS)
+      // In PostgreSQL this joins the transaction; another store commits now,
+      // and a registration that then fails leaves only empty collections.
+      const created = await (
+        await siteDataBackend(owner.loginName, tx)
+      ).createCollections(
+        owner,
+        setup.create.map((collection) => ({
+          name: unreservedName(collection),
+          read_access: "admin",
+          write_access: "admin",
+        })),
+        tx,
+      );
+      if (created === null)
         throw new DataError(409, "Collection limit reached.", "QUOTA_EXCEEDED");
-      await tx
-        .insertInto("site_data_collections")
-        .values(
-          names.map((collection) => ({
-            user_id: userId,
-            name: collection,
-            read_access: "admin",
-            write_access: "admin",
-          })),
-        )
-        .execute();
     }
     const ids = (await scope(tx, userId, input.collections)).map((c) => c.id);
     const clients = await tx

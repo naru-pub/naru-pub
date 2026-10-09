@@ -141,6 +141,34 @@ Runtime state is stored under `.deploy-state/` and must not be committed. If the
 active-slot file is lost, inspect the nginx configuration and restore
 `.deploy-state/active-slot` to `blue` or `green` before deploying again.
 
+## Site-data Worker (Durable Objects)
+
+Sites moved off PostgreSQL keep their databases in the `naru-site-data` Worker
+([`site-data-worker/`](../site-data-worker), see
+[database.md](database.md#durable-objects-backend)). It is not part of the
+images and deploys on its own, from the development machine, with an account
+on the Workers Paid plan:
+
+```bash
+cd site-data-worker
+pnpm install
+pnpm exec wrangler login
+pnpm run deploy
+openssl rand -base64 32 | tr -d '\n' | pnpm exec wrangler secret put SITE_DATA_WORKER_SECRET
+```
+
+Then set `SITE_DATA_WORKER_URL` (the Worker's `workers.dev` address, or a
+route of your own) and the same `SITE_DATA_WORKER_SECRET` in the server's
+`.env`, and deploy the control plane so it reads them. Until then every site
+stays on PostgreSQL and `site-data-move` refuses to run. The Worker only
+answers requests carrying the secret, and the control plane is its only
+caller; change the secret in both places together.
+
+Redeploy the Worker whenever `site-data-worker/` or the control-plane modules
+it imports (`lib/site-data/validation.ts`, `filters.ts`, `pagination.ts`,
+`lib/uuid.ts`) change. A change to the object's tables must create them
+compatibly with what existing objects already hold.
+
 ## Cloudflare cache rule for hosted sites
 
 Hosted pages (HTML, JS and JSON served by the site proxy) carry
