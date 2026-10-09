@@ -234,6 +234,8 @@ describe("serving", () => {
     const { response } = await visit("/nowhere/", navigation);
     expect(response.status).toBe(404);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    // As the proxy: no type on its plain answers.
+    expect(response.headers.get("content-type")).toBeNull();
   });
 
   test("answers a bucket failure 502, never 404", async () => {

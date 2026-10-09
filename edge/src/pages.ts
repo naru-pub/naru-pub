@@ -136,8 +136,12 @@ export function pageviewPath(decoded: string) {
   return `/${path}`;
 }
 
+// Bytes, not strings: a string body would gain a text/plain type the proxy
+// never sent.
+const text = (body: string) => new TextEncoder().encode(body);
+
 function notFound() {
-  return new Response("Not Found", {
+  return new Response(text("Not Found"), {
     status: 404,
     headers: { "Cache-Control": "no-store" },
   });
@@ -145,7 +149,7 @@ function notFound() {
 
 // A 5xx, never a 404, for failures on our side, as the proxy answers.
 function unavailable() {
-  return new Response("Service Unavailable", {
+  return new Response(text("Service Unavailable"), {
     status: 502,
     headers: { "Cache-Control": "no-store", "Retry-After": "30" },
   });
@@ -165,7 +169,7 @@ export async function servePage(
   const path = resolvePath(decoded);
   const extension = path.split(".").at(-1) ?? "";
   if (!SERVED.includes(extension))
-    return new Response("Redirecting...", {
+    return new Response(text("Redirecting..."), {
       status: 302,
       headers: {
         Location: `https://${env.R2_PUBLIC_DOMAIN}/${login}/${path}`,
