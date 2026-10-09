@@ -1,7 +1,4 @@
-import {
-  LOGIN_NAME_REGEX,
-  RESERVED_LOGIN_NAMES,
-} from "../../control-plane/src/lib/const";
+import { LOGIN_NAME_REGEX } from "../../control-plane/src/lib/const";
 import type { PageviewEvent } from "./pageview-log";
 
 // Hosted sites, <login>.naru.pub or a custom domain (domains.ts), answered at
@@ -37,15 +34,18 @@ const REDIRECT_CACHE_CONTROL = "public, max-age=3600, stale-if-error=86400";
 const SERVED = ["html", "htm", "js", "json"];
 const MAX_METADATA_BYTES = 2048;
 
-/** The site a subdomain names, or null when it names none. */
+/**
+ * The site a subdomain names, or null when it cannot name one. Reserved login
+ * names count: the list only keeps them from being registered, and one of
+ * them is the operator's own site. A name nobody holds has no files, so it is
+ * not found like any missing page.
+ */
 export function siteOf(host: string, env: PagesEnv) {
   const name = host.replace(/\.$/, "").toLowerCase();
   const suffix = `.${env.PLATFORM_DOMAIN}`;
   if (!name.endsWith(suffix) || name === env.R2_PUBLIC_DOMAIN) return null;
   const login = name.slice(0, -suffix.length);
-  if (!LOGIN_NAME_REGEX.test(login) || RESERVED_LOGIN_NAMES.has(login))
-    return null;
-  return login;
+  return LOGIN_NAME_REGEX.test(login) ? login : null;
 }
 
 /**

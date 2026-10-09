@@ -32,18 +32,17 @@ const env = (files: Record<string, string> = {}): PagesEnv => ({
 });
 
 describe("hosts", () => {
-  test("names a site by its login", () => {
+  test("names a site by its login, reserved logins too", () => {
     expect(siteOf("alice.naru.pub", env())).toBe("alice");
     expect(siteOf("Alice.Naru.Pub.", env())).toBe("alice");
+    // Reserved for the payment operator, whose own site it is.
+    expect(siteOf("yang.naru.pub", env())).toBe("yang");
   });
 
   test("names no site for the platform's own hosts and other names", () => {
     for (const host of [
       "naru.pub",
       "r2.naru.pub",
-      "edge.naru.pub",
-      "site-data.naru.pub",
-      "custom-domains.naru.pub",
       "a.b.naru.pub",
       "_mta-sts.naru.pub",
       "bad--name.naru.pub",
