@@ -8,7 +8,7 @@ import type { LoggedPageview } from "@/lib/analytics/edge-pageviews";
 // ack forgets them, and `loseAcks` makes acknowledgements vanish on the way.
 let log: LoggedPageview[] = [];
 let loseAcks = false;
-jest.mock("@/lib/site-data/worker", () => ({
+jest.mock("@/lib/edge/client", () => ({
   callPageviewLog: async (operation: string, input: any) => {
     if (operation === "drain") return log.slice(0, input.limit);
     if (!loseAcks) log = log.filter((event) => event.id > input.through);

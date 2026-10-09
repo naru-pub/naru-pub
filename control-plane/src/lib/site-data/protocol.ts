@@ -1,7 +1,7 @@
 import { DataError } from "./validation";
 
 // The v1 wire format's own pieces, shared by the control plane's routes
-// (http.ts) and the site-data Worker, which answers anonymous requests for
+// (http.ts) and the edge Worker, which answers anonymous requests for
 // sites on Durable Objects at the edge. Both must answer byte for byte alike,
 // so neither keeps a copy. No Node- or Next-only imports here.
 

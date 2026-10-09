@@ -154,11 +154,11 @@ cd edge
 pnpm install
 pnpm exec wrangler login
 pnpm run deploy
-openssl rand -base64 32 | tr -d '\n' | pnpm exec wrangler secret put SITE_DATA_WORKER_SECRET
+openssl rand -base64 32 | tr -d '\n' | pnpm exec wrangler secret put EDGE_WORKER_SECRET
 ```
 
-Set `SITE_DATA_WORKER_URL=https://edge.naru.pub` and the same
-`SITE_DATA_WORKER_SECRET` in the server's `.env`, then deploy the control
+Set `EDGE_WORKER_URL=https://edge.naru.pub` and the same
+`EDGE_WORKER_SECRET` in the server's `.env`, then deploy the control
 plane so application and background processes read them. Without these
 settings, site database operations are unavailable. Change the secret in
 both places together; private `/v1/sites/*` operations require it.

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "@jest/globals";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { executeData, listCollections } from "../service";
-import { eraseSiteData } from "../worker";
+import { eraseSiteData } from "@/lib/edge/client";
 import {
   approveAuthorization,
   authorizationInput,

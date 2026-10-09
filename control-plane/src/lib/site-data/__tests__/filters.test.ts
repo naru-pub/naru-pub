@@ -11,7 +11,7 @@ import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { executeData } from "../service";
 import { filters, parseFilterQuery } from "../filters";
-import { eraseSiteData } from "../worker";
+import { eraseSiteData } from "@/lib/edge/client";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
 
 describe("filter validation", () => {

@@ -326,8 +326,8 @@ All site collections and documents live in the `naru-edge` Worker, in one
 SQLite-backed Durable Object per site, named by the site. The control plane's
 `lib/site-data/service.ts` checks account existence, paid status, and owner
 sign-in scope before calling private Worker operations over HTTPS with a
-shared secret. Configure `SITE_DATA_WORKER_URL=https://edge.naru.pub`
-and `SITE_DATA_WORKER_SECRET`; there is no PostgreSQL document fallback.
+shared secret. Configure `EDGE_WORKER_URL=https://edge.naru.pub`
+and `EDGE_WORKER_SECRET`; there is no PostgreSQL document fallback.
 
 PostgreSQL retains accounts, entitlements, website registrations,
 authorization codes and tokens, and media metadata. Media bytes remain in R2.
@@ -350,11 +350,14 @@ its confirmation is current. Otherwise it sends the request to the control
 plane, which checks PostgreSQL: the edge never refuses on paid status, so a
 lapsed site is refused on time and a renewed one is served at once, without
 waiting for the next sync. The `site-data-edge-sync` job runs every five
-minutes, sends the entitlement end date and a one-hour confirmation, and copies
-document count and bytes used to `users` for admin reporting. It includes
-active complimentary accounts and subscriptions that expired within the last
-60 days. Expired confirmations defer to the control plane's entitlement check.
-The job does not create routes or copy documents.
+minutes, sends the entitlement end date and a three-day confirmation, and
+copies document count and bytes used to `users` for admin reporting. It
+includes active complimentary accounts, subscriptions that expired within the
+last 60 days, and every site holding documents, so a refund or a removed
+complimentary plan reaches the edge within minutes. Expired confirmations
+defer to the control plane's entitlement check, so sites keep answering
+visitors through a control-plane outage of up to three days. The job does not
+create routes or copy documents.
 
 Public reads may be cached at the edge for ten seconds. `fresh=1` reads are
 never cached. The zone's cache rule does not apply to Worker responses.

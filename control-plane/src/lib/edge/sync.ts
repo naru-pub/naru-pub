@@ -1,18 +1,21 @@
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { getUserEntitlement, PLAN_FEATURES } from "@/lib/entitlements";
-import { callSiteDataWorker } from "./worker";
+import { CONFIRMATION_MS, callSiteObject } from "./client";
+import { pushEdgeDomains } from "./domains";
 
-// The site-data Worker answers visitors at Cloudflare's edge, where the one
-// check PostgreSQL makes for the control plane, that the site has the database
+// The edge Worker answers visitors at Cloudflare's edge, where the one check
+// PostgreSQL makes for the control plane, that the site has the database
 // feature, cannot be made. So the control plane tells each site's object when
-// the feature ends and confirms it for an hour at a time; syncEdge renews that
-// every few minutes for every site that has the feature. Past its confirmation
-// an object answers no visitor and the control plane decides, so a revoked
-// feature, or a sync that stopped, is never served from a stale date.
+// the feature ends, and syncEdge repeats it every few minutes for every site
+// that has the feature or has data. Each sync confirms the date for three
+// days: past that an object answers no visitor and the control plane decides,
+// so a sync that stopped is never served from a stale date forever, while an
+// outage of the control plane shorter than that leaves sites answering.
+//
+// A change takes effect at the next sync: a lapse at its exact time (the date
+// is sent ahead), a refund or a removed complimentary plan within minutes.
 
-/** How long the edge may rely on one confirmation. */
-const CONFIRMATION_MS = 60 * 60 * 1000;
 /** Lapsed sites stay in the sync this long, so their usage keeps current. */
 const LAPSED_DAYS = 60;
 
@@ -29,7 +32,7 @@ export async function databaseEntitledUntil(userId: string) {
 
 /** Confirms the site's paid status to its object; returns its usage. */
 export async function configureEdge(site: string, ownerId: string) {
-  return callSiteDataWorker<{ documents: number; bytes: number }>(
+  return callSiteObject<{ documents: number; bytes: number }>(
     site,
     "configure",
     {
@@ -41,14 +44,15 @@ export async function configureEdge(site: string, ownerId: string) {
 }
 
 /**
- * Renews the confirmation of every site with the database feature, and of
- * sites that lost it recently, and copies each one's usage to `users` for the
- * /admin usage page. Run by the site-data-edge-sync job.
+ * Renews the confirmation of every site with the database feature, of sites
+ * that lost it recently and of sites holding data, and copies each one's
+ * usage to `users` for the /admin usage page; and sends the custom domain
+ * table (domains.ts). Run by the site-data-edge-sync job.
  *
  * A site that fails is tried once more after the others: an object that
  * stalls for a moment should not fail the job, and a missed sync costs
- * nothing until its confirmation runs out an hour later. Only a site that
- * fails both times is reported.
+ * nothing until its confirmation runs out days later. The domain table is
+ * retried the same way. Only what fails both times is reported.
  */
 export async function syncEdge() {
   const sites = await db
@@ -58,6 +62,9 @@ export async function syncEdge() {
     .where((eb) =>
       eb.or([
         eb("supporter_comp", "=", true),
+        // A site that lost the feature some other way, such as a removed
+        // complimentary plan, keeps being told so while it holds data.
+        eb("site_data_document_count", ">", "0"),
         eb(
           "supporter_until",
           ">",
@@ -77,6 +84,15 @@ export async function syncEdge() {
       .where("id", "=", site.id)
       .execute();
   };
+  let domains: number | null = null;
+  try {
+    domains = await pushEdgeDomains();
+  } catch (error) {
+    console.warn(
+      "Sending custom domains to the edge failed; trying again after the sites",
+      error,
+    );
+  }
   const retry: typeof sites = [];
   for (const site of sites) {
     try {
@@ -98,5 +114,13 @@ export async function syncEdge() {
       console.error(`Edge sync failed for ${site.login_name}`, error);
     }
   }
-  return { sites: sites.length, retried: retry.length, failures };
+  if (domains === null) {
+    try {
+      domains = await pushEdgeDomains();
+    } catch (error) {
+      failures.push("custom domains");
+      console.error("Sending custom domains to the edge failed", error);
+    }
+  }
+  return { sites: sites.length, retried: retry.length, failures, domains };
 }

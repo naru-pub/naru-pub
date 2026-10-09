@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "@jest/globals";
 import { createServer, type Server } from "node:http";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
-import { configureEdge } from "../edge";
+import { configureEdge } from "@/lib/edge/sync";
 import {
   approveAuthorization,
   authorizationInput,
@@ -19,12 +19,12 @@ import {
   type Collection,
   type DataCommand,
 } from "../service";
-import { callSiteDataWorker, eraseSiteData } from "../worker";
+import { callSiteObject, eraseSiteData } from "@/lib/edge/client";
 import { MAX_DOCUMENT_BYTES } from "../validation";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
 
 // The Durable Objects backend, end to end: PostgreSQL admits each request,
-// the site-data Worker (wrangler dev) stores it. scripts/test-data-durable-
+// the edge Worker (wrangler dev) stores it. scripts/test-data-durable-
 // objects.sh starts both. The behaviour expected here is database.test.ts's;
 // what PostgreSQL alone decides (paid status, sign-in) is checked through it.
 const integration =
@@ -85,7 +85,7 @@ integration("Durable Objects site database", () => {
     collections: Snapshot["collections"],
     documents: Snapshot["documents"],
   ) =>
-    callSiteDataWorker("alice", "import", {
+    callSiteObject("alice", "import", {
       ownerId: String(owner),
       collections,
       documents,
@@ -577,13 +577,13 @@ integration("Durable Objects site database", () => {
   test("account deletion erases the object", async () => {
     await call("POST", [], { name: "doomed" }, true);
     await eraseSiteData("alice");
-    expect(
-      await callSiteDataWorker<Snapshot>("alice", "export", {}),
-    ).toMatchObject({
-      ownerId: null,
-      collections: [],
-      documents: [],
-    });
+    expect(await callSiteObject<Snapshot>("alice", "export", {})).toMatchObject(
+      {
+        ownerId: null,
+        collections: [],
+        documents: [],
+      },
+    );
   });
 });
 
@@ -593,7 +593,7 @@ integration("answering visitors at the edge", () => {
   let origin: Server;
   /** What reached the stand-in control plane. */
   const passed: { method: string; url: string; body: string }[] = [];
-  const worker = process.env.SITE_DATA_WORKER_URL!;
+  const worker = process.env.EDGE_WORKER_URL!;
   const visit = (path: string, init: RequestInit = {}) =>
     fetch(`${worker}/api/data/v1/erin/${path}`, {
       ...init,
@@ -755,7 +755,7 @@ integration("answering visitors at the edge", () => {
   test("without a current paid-status confirmation, the edge hands every request back", async () => {
     passed.length = 0;
     // As when the sync job has stopped, or the feature was revoked.
-    await callSiteDataWorker("erin", "configure", {
+    await callSiteObject("erin", "configure", {
       ownerId: String(owner),
       entitledUntil: null,
       confirmedUntil: Date.now() - 1,
@@ -793,19 +793,19 @@ integration("answering visitors at the edge", () => {
   });
 
   test("a site's visitors stop at its monthly budget; its owner does not", async () => {
-    await callSiteDataWorker("erin", "configure", {
+    await callSiteObject("erin", "configure", {
       ownerId: String(owner),
       entitledUntil: null,
       confirmedUntil: Date.now() + 60_000,
       monthlyRequests: 3,
     });
     // The object's count survives from the tests above, so start a new one.
-    await callSiteDataWorker(
+    await callSiteObject(
       "erin",
       "import",
-      await callSiteDataWorker("erin", "export", {}),
+      await callSiteObject("erin", "export", {}),
     );
-    await callSiteDataWorker("erin", "configure", {
+    await callSiteObject("erin", "configure", {
       ownerId: String(owner),
       entitledUntil: null,
       confirmedUntil: Date.now() + 60_000,

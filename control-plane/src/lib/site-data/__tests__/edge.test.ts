@@ -9,10 +9,20 @@ import {
 } from "@jest/globals";
 import { sql } from "kysely";
 
-// The Worker stands in: one object stalls once, another keeps failing.
+// The Worker stands in: one object stalls once, another keeps failing, and
+// the custom domain tables it is sent are kept.
 const mockCalls: string[] = [];
-jest.mock("../worker", () => ({
-  callSiteDataWorker: jest.fn(async (site: string) => {
+const domainTables: {
+  confirmedUntil: number;
+  domains: Record<string, { login: string; entitledUntil: number | null }>;
+}[] = [];
+jest.mock("@/lib/edge/client", () => ({
+  CONFIRMATION_MS: 60_000,
+  replaceEdgeDomains: jest.fn(async (table: (typeof domainTables)[number]) => {
+    domainTables.push(table);
+    return null;
+  }),
+  callSiteObject: jest.fn(async (site: string) => {
     mockCalls.push(site);
     if (
       site === "broken" ||
@@ -23,7 +33,8 @@ jest.mock("../worker", () => ({
   }),
 }));
 const { db } = require("@/lib/database") as typeof import("@/lib/database");
-const { syncEdge } = require("../edge") as typeof import("../edge");
+const { syncEdge } =
+  require("@/lib/edge/sync") as typeof import("@/lib/edge/sync");
 const { setupTestDatabase, teardownTestDatabase } =
   require("./test-database") as typeof import("./test-database");
 
@@ -51,7 +62,12 @@ integration("site-data edge sync", () => {
     const error = jest.spyOn(console, "error").mockImplementation(() => {});
     try {
       const result = await syncEdge();
-      expect(result).toEqual({ sites: 3, retried: 2, failures: ["broken"] });
+      expect(result).toEqual({
+        sites: 3,
+        retried: 2,
+        failures: ["broken"],
+        domains: 0,
+      });
       // The retries come after every other site has had its turn.
       expect(mockCalls.slice(-2).sort()).toEqual(["broken", "flaky"]);
       expect(mockCalls).not.toContain("lapsed");

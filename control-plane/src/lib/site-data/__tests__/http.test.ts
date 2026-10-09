@@ -347,7 +347,7 @@ test("SDK freshness reads stay uncached independently of the shared cache lifeti
   }
 });
 
-test("requests forward cancellation to the site-data Worker call", async () => {
+test("requests forward cancellation to the edge Worker call", async () => {
   const controller = new AbortController();
   const request = new Request("https://naru.pub/api/data/v1/alice/posts", {
     method: "POST",

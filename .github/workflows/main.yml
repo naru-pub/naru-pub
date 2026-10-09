@@ -88,7 +88,7 @@ jobs:
 
   # Everything else in the control plane: the unit suites, then the board and
   # site-data database tests, each against a throwaway PostgreSQL cluster and
-  # a local site-data Worker its script starts. Like test-payments, part of
+  # a local edge Worker its script starts. Like test-payments, part of
   # the run deploy.sh checks.
   test-control-plane:
     defaults:
@@ -110,7 +110,7 @@ jobs:
       - run: pnpm test:node
       - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-16
       # Site databases are Durable Objects: the database suites start the
-      # site-data Worker under `wrangler dev` (scripts/with-site-data-worker.sh).
+      # edge Worker under `wrangler dev` (scripts/with-edge-worker.sh).
       - run: pnpm install --frozen-lockfile
         working-directory: edge
       # The object's list query against SQLite, without a Worker.

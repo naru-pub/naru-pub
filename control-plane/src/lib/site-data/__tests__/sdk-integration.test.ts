@@ -20,9 +20,9 @@ const mockObjects = new Map<
 import { db } from "@/lib/database";
 import { GET as dataRoute } from "@/app/(main)/api/data/v1/[site]/[[...path]]/route";
 import { POST as authRoute } from "@/app/(main)/api/data-auth/v1/[action]/route";
-import { configureEdge } from "../edge";
+import { configureEdge } from "@/lib/edge/sync";
 import { executeData } from "../service";
-import { eraseSiteData } from "../worker";
+import { eraseSiteData } from "@/lib/edge/client";
 import { mediaStorage } from "../media";
 import {
   approveAuthorization,
@@ -41,7 +41,7 @@ const integration =
   process.env.NARU_DATA_TEST === "1" ? describe : describe.skip;
 
 // Real SDK -> native fetch -> HTTP -> actual route -> service -> the site's
-// Durable Object, in a local site-data Worker (scripts/with-site-data-worker.sh).
+// Durable Object, in a local edge Worker (scripts/with-edge-worker.sh).
 // The adapter replaces Next's HTTP listener, not the route or its responses.
 // With NARU_DATA_TEST_EDGE=1, the SDK's data requests go to the Worker,
 // which answers visitors itself and sends the rest on to this suite's server.
@@ -119,7 +119,7 @@ integration("SDK and data API contract", () => {
     });
     await new Promise<void>((resolve, reject) => {
       server!.once("error", reject);
-      // A fixed port when the site-data Worker sends requests on to it.
+      // A fixed port when the edge Worker sends requests on to it.
       server!.listen(
         Number(process.env.SITE_DATA_TEST_ORIGIN_PORT ?? 0),
         "127.0.0.1",
@@ -149,10 +149,10 @@ integration("SDK and data API contract", () => {
     // server. Node fetch does not add a browser Origin header. Everything else,
     // including HTTP errors, JSON serialization and response bodies, crosses
     // the socket.
-    const worker = process.env.SITE_DATA_WORKER_URL;
+    const worker = process.env.EDGE_WORKER_URL;
     globalThis.fetch = (input, init) => {
       const url = new URL(String(input));
-      // The control plane's own calls to a local site-data Worker.
+      // The control plane's own calls to a local edge Worker.
       if (worker && url.origin === new URL(worker).origin)
         return nativeFetch(input, init);
       if (

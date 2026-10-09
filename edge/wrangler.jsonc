@@ -30,6 +30,10 @@
   },
   // The site bucket the proxy serves from: each site's files under <login>/.
   "r2_buckets": [{ "binding": "SITE_FILES", "bucket_name": "naru-pub" }],
+  // The custom domain table the control plane sends (src/domains.ts).
+  "kv_namespaces": [
+    { "binding": "DOMAINS", "id": "11c38b8a51984f708edd9ebf619e3ab3" },
+  ],
   // The public data API. Every site's database is a Durable Object, so the
   // Worker sees all of it; what it does not answer itself it sends on to the
   // control plane, the zone's origin.
@@ -37,10 +41,15 @@
     { "pattern": "naru.pub/api/data/v1/*", "zone_name": "naru.pub" },
     // The control plane calls /v1/sites/* and /v1/pageviews/* here.
     { "pattern": "edge.naru.pub", "custom_domain": true },
-    // Hosted sites. r2.naru.pub, the bucket's public domain, is kept off this
-    // by a more specific route without a Worker, set up once outside this
-    // file (docs/deployment.md).
+    // Hosted sites. r2.naru.pub and media.naru.pub, the bucket's public
+    // domains, are kept off this by more specific routes without a Worker,
+    // set up once outside this file (docs/deployment.md).
     { "pattern": "*.naru.pub/*", "zone_name": "naru.pub" },
+    // Custom domains reach the zone under their own hostnames through
+    // Cloudflare for SaaS, so only a route on every host catches them.
+    // naru.pub itself, the control plane, is kept off it by a route without
+    // a Worker, like r2.naru.pub.
+    { "pattern": "*/*", "zone_name": "naru.pub" },
   ],
   // Anonymous requests a site may make each calendar month (UTC), unless the
   // control plane sets its own. See docs/database.md, "Monthly request budget".

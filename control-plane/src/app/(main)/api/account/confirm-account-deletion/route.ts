@@ -17,7 +17,7 @@ import { dispatchActorDelete } from "@/lib/federation";
 import { deleteCustomDomainsForUser } from "@/lib/customDomains";
 import { verify } from "@node-rs/argon2";
 import { deleteUserMedia } from "@/lib/site-data/media";
-import { eraseSiteData } from "@/lib/site-data/worker";
+import { eraseSiteData } from "@/lib/edge/client";
 import { deleteUserTemplateObjects } from "@/lib/board/templates";
 import {
   CHARGE_IN_FLIGHT_MESSAGE,

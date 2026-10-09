@@ -10,7 +10,7 @@ import {
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { executeData } from "../service";
-import { callSiteDataWorker, eraseSiteData } from "../worker";
+import { callSiteObject, eraseSiteData } from "@/lib/edge/client";
 import { setupTestDatabase, teardownTestDatabase } from "./test-database";
 
 // The wire form of one sort key.
@@ -51,15 +51,11 @@ integration("sorted database pagination", () => {
     type Snapshot = {
       documents: { id: string; created_at: number; updated_at: number }[];
     };
-    const snapshot = await callSiteDataWorker<Snapshot>(
-      "sorting",
-      "export",
-      {},
-    );
+    const snapshot = await callSiteObject<Snapshot>("sorting", "export", {});
     for (const document of snapshot.documents)
       if (document.id in times)
         document.created_at = document.updated_at = times[document.id];
-    await callSiteDataWorker("sorting", "import", snapshot);
+    await callSiteObject("sorting", "import", snapshot);
   };
   beforeAll(async () => {
     await setupTestDatabase();

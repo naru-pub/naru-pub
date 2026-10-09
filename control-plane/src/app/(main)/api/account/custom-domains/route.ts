@@ -4,6 +4,7 @@ import { db } from "@/lib/database";
 import { assertJsonContentType } from "@/lib/utils";
 import { userHasFeature } from "@/lib/entitlements";
 import { parseUuid } from "@/lib/uuid";
+import { pushEdgeDomainsSoon } from "@/lib/edge/domains";
 import {
   createCloudflareCustomHostname,
   deleteCloudflareCustomHostnameIfExists,
@@ -199,6 +200,8 @@ export async function PATCH(request: NextRequest) {
       .where("id", "=", domain.id)
       .where("user_id", "=", user.id)
       .execute();
+    // An activated domain is served at the edge at once.
+    await pushEdgeDomainsSoon();
 
     return NextResponse.json({
       success: true,
@@ -276,6 +279,7 @@ export async function DELETE(request: NextRequest) {
       .where("id", "=", domain.id)
       .where("user_id", "=", user.id)
       .execute();
+    await pushEdgeDomainsSoon();
 
     return NextResponse.json({
       success: true,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# A fresh local cluster and a local site-data Worker (with-site-data-worker.sh):
-# overrides the application's DATABASE_URL and SITE_DATA_WORKER_*. With no
+# A fresh local cluster and a local edge Worker (with-edge-worker.sh):
+# overrides the application's DATABASE_URL and EDGE_WORKER_*. With no
 # arguments, the SDK contract suite; with the whole directory, it also runs the
 # SDK suite again with its data requests sent to the Worker, as Cloudflare
 # routes them in production.
@@ -32,10 +32,10 @@ if [[ "$#" == 0 ]]; then
 fi
 export NARU_DATA_TEST=1
 export DATABASE_URL="postgresql://sdk_test@localhost/naru_data_test?host=$sdk_pg_dir"
-scripts/with-site-data-worker.sh \
+scripts/with-edge-worker.sh \
   ./node_modules/.bin/jest --config jest.data.config.cjs --runInBand "$@"
 if [[ "$*" == "src/lib/site-data/__tests__/" ]]; then
-  NARU_DATA_TEST_EDGE=1 scripts/with-site-data-worker.sh \
+  NARU_DATA_TEST_EDGE=1 scripts/with-edge-worker.sh \
     ./node_modules/.bin/jest --config jest.data.config.cjs --runInBand \
     src/lib/site-data/__tests__/sdk-integration.test.ts
 fi

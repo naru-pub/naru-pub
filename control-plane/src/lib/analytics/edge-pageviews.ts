@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 import { sql, type Kysely } from "kysely";
 import type { DB } from "@/lib/db";
-import { callPageviewLog } from "@/lib/site-data/worker";
+import { callPageviewLog } from "@/lib/edge/client";
 
 // Pageviews of the hosted sites the edge serves (site-data-worker/src/pages.ts)
 // wait in the Worker's pageview log until this takes them into the same tables

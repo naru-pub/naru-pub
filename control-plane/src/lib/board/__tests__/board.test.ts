@@ -87,7 +87,7 @@ const {
 const { createCollections, listCollections } =
   require("@/lib/site-data/service") as typeof import("@/lib/site-data/service");
 const { eraseSiteData } =
-  require("@/lib/site-data/worker") as typeof import("@/lib/site-data/worker");
+  require("@/lib/edge/client") as typeof import("@/lib/edge/client");
 
 // Runs against a disposable, migrated database (scripts/test-board.sh), never
 // the developer's own.

@@ -1,6 +1,6 @@
 import { db, requestDeadline } from "@/lib/database";
 import { userHasFeature } from "@/lib/entitlements";
-import { callSiteDataWorker } from "./worker";
+import { callSiteObject } from "@/lib/edge/client";
 import { tokenScope } from "./owner-auth";
 import { DataError, name } from "./validation";
 
@@ -100,7 +100,7 @@ export async function executeData(command: DataCommand) {
   const admin = adminUserId === owner.id || allowedIds !== undefined;
   if (adminUserId !== undefined && !admin)
     throw new DataError(403, "Permission denied.");
-  const { result, publicRead } = await callSiteDataWorker<{
+  const { result, publicRead } = await callSiteObject<{
     result: unknown;
     publicRead: boolean;
   }>(
@@ -144,7 +144,7 @@ export async function executeBatch(command: DataCommand) {
   if (allowedIds === undefined && command.adminUserId !== owner.id)
     throw new DataError(403, "A batch needs an owner sign-in.");
   return withDates(
-    await callSiteDataWorker(
+    await callSiteObject(
       command.site,
       "batch",
       {
@@ -163,7 +163,7 @@ export async function listCollections(
   names?: string[],
 ): Promise<Collection[]> {
   if (names?.length === 0) return [];
-  return callSiteDataWorker<Collection[]>(owner.loginName, "collections", {
+  return callSiteObject<Collection[]>(owner.loginName, "collections", {
     names,
   });
 }
@@ -179,9 +179,8 @@ export async function createCollections(
   collections: CollectionSettings[],
 ): Promise<string[] | null> {
   if (!collections.length) return [];
-  return callSiteDataWorker<string[] | null>(
-    owner.loginName,
-    "createCollections",
-    { ownerId: String(owner.id), collections },
-  );
+  return callSiteObject<string[] | null>(owner.loginName, "createCollections", {
+    ownerId: String(owner.id),
+    collections,
+  });
 }

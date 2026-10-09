@@ -1,8 +1,8 @@
-import { DataError, type ErrorCode } from "./validation";
+import { DataError, type ErrorCode } from "@/lib/site-data/validation";
 
-// The control plane's client for the site-data Worker (edge/ at
-// the repository root), reached over HTTPS with a shared secret. Each call is
-// one operation on one site's Durable Object.
+// The control plane's client for the edge Worker (edge/ at the repository
+// root), reached over HTTPS with a shared secret: operations on a site's
+// Durable Object, the pageview log, and the custom domain table.
 
 const WORKER_TIMEOUT_MS = 10_000;
 
@@ -18,7 +18,7 @@ const unavailable = () =>
  * as the DataError it threw; anything else the Worker answers is logged and
  * reported as unavailable.
  */
-export function callSiteDataWorker<T>(
+export function callSiteObject<T>(
   site: string,
   operation: string,
   input: unknown,
@@ -30,6 +30,20 @@ export function callSiteDataWorker<T>(
     input,
     signal,
   );
+}
+
+/**
+ * How long the edge may rely on what a sync last told it: a site's paid
+ * status, and the custom domain table. Each sync renews it.
+ */
+export const CONFIRMATION_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Replaces the edge's custom domain table (edge/src/domains.ts). */
+export function replaceEdgeDomains(table: {
+  confirmedUntil: number;
+  domains: Record<string, { login: string; entitledUntil: number | null }>;
+}) {
+  return callWorker<null>("/v1/domains/replace", "domain table", table);
 }
 
 /** Calls one operation on the edge's pageview log (pageview-log.ts). */
@@ -47,10 +61,10 @@ async function callWorker<T>(
   input: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
-  const base = process.env.SITE_DATA_WORKER_URL;
-  const secret = process.env.SITE_DATA_WORKER_SECRET;
+  const base = process.env.EDGE_WORKER_URL;
+  const secret = process.env.EDGE_WORKER_SECRET;
   if (!base || !secret) {
-    console.error("SITE_DATA_WORKER_URL or SITE_DATA_WORKER_SECRET is unset");
+    console.error("EDGE_WORKER_URL or EDGE_WORKER_SECRET is unset");
     throw unavailable();
   }
   const timeout = AbortSignal.timeout(WORKER_TIMEOUT_MS);
@@ -68,7 +82,7 @@ async function callWorker<T>(
   } catch (error) {
     // The caller canceled: http.ts reports that itself.
     if (signal?.aborted) throw error;
-    console.error(`Site database Worker unreachable for ${what}`, error);
+    console.error(`Edge Worker unreachable for ${what}`, error);
     throw unavailable();
   }
   const body = (await response.json().catch(() => null)) as {
@@ -78,11 +92,11 @@ async function callWorker<T>(
   if (response.ok && body && "value" in body) return body.value as T;
   if (body?.error && body.error.status === response.status)
     throw new DataError(body.error.status, body.error.message, body.error.code);
-  console.error(`Site database Worker answered ${response.status} to ${what}`);
+  console.error(`Edge Worker answered ${response.status} to ${what}`);
   throw unavailable();
 }
 
 /** Erases a deleted account's site database. */
 export async function eraseSiteData(site: string) {
-  await callSiteDataWorker(site, "erase", {});
+  await callSiteObject(site, "erase", {});
 }

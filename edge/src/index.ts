@@ -1,3 +1,10 @@
+import {
+  domainSite,
+  invalidTable,
+  storeDomains,
+  type DomainsEnv,
+  type DomainTable,
+} from "./domains";
 import { servePage, siteOf, type PagesEnv } from "./pages";
 import type { PageviewLog } from "./pageview-log";
 import type { SiteData } from "./site";
@@ -7,24 +14,25 @@ import { website, type WebsiteEnv } from "./website";
 export { PageviewLog } from "./pageview-log";
 export { SiteData } from "./site";
 
-interface Env extends WebsiteEnv, PagesEnv {
+interface Env extends WebsiteEnv, PagesEnv, DomainsEnv {
   PAGEVIEWS: DurableObjectNamespace<PageviewLog>;
   SITES: DurableObjectNamespace<SiteData>;
   /** Shared with the control plane, the only caller of /v1/sites. */
-  SITE_DATA_WORKER_SECRET: string;
+  EDGE_WORKER_SECRET: string;
   /** The default monthly budget of anonymous requests per site. */
   SITE_MONTHLY_REQUESTS?: string;
   /**
    * "1" opens TEST_OPERATIONS. Only the test harness sets it
-   * (control-plane/scripts/with-site-data-worker.sh); production never does.
+   * (control-plane/scripts/with-edge-worker.sh); production never does.
    */
   TEST_OPERATIONS?: string;
 }
 
-// Three surfaces. <login>.naru.pub is a hosted site (pages.ts). Under the
-// platform domain, /api/data/v1/<site>/... is the public data API
-// (website.ts). /v1/sites/<site>/<operation> and /v1/pageviews/<operation> are
-// the control plane's own: POST with a JSON body, answered with `{ value }` or
+// Three surfaces. <login>.naru.pub, or a custom domain, is a hosted site
+// (pages.ts, domains.ts). Under the platform domain, /api/data/v1/<site>/...
+// is the public data API (website.ts). /v1/sites/<site>/<operation>,
+// /v1/pageviews/<operation> and /v1/domains/replace are the control plane's
+// own: POST with a JSON body, answered with `{ value }` or
 // `{ error: { status, message, code } }` at that status. A site's object is
 // named by the site, so every request for a site meets the same one.
 const OPERATIONS = [
@@ -90,12 +98,16 @@ const pageviews = (env: Env) =>
   env.PAGEVIEWS.get(env.PAGEVIEWS.idFromName("pageviews"));
 
 /**
- * A request under *.naru.pub. The edge answers the sites EDGE_SITES names;
- * everything else, and a request asking for the origin (scripts/compare-pages.mjs),
- * goes on to the proxy as before.
+ * A request for a subdomain or a custom domain. The edge answers the sites
+ * EDGE_SITES names and the custom domains the control plane has listed;
+ * everything else, and a request asking for the origin
+ * (scripts/compare-pages.mjs), goes on to the proxy as before.
  */
-function hostedSite(request: Request, env: Env, ctx: ExecutionContext) {
-  const login = siteOf(new URL(request.url).hostname, env);
+async function hostedSite(request: Request, env: Env, ctx: ExecutionContext) {
+  const host = new URL(request.url).hostname;
+  const login = host.endsWith(`.${env.PLATFORM_DOMAIN}`)
+    ? siteOf(host, env)
+    : await domainSite(host, env);
   if (!login || request.headers.get("x-naru-origin") === "1")
     return fetch(request);
   return servePage(request, env, login, (event) =>
@@ -132,17 +144,41 @@ async function pageviewOperation(
   return failure(404, "Not found.");
 }
 
+async function replaceDomains(request: Request, env: Env) {
+  if (request.method !== "POST") return failure(405, "Method not allowed.");
+  let input: unknown;
+  try {
+    input = await request.json();
+  } catch {
+    return failure(400, "Expected a JSON body.");
+  }
+  const invalid = invalidTable(input);
+  if (invalid) return failure(400, invalid);
+  await storeDomains(env, input as DomainTable);
+  return Response.json({ value: null });
+}
+
+/**
+ * Hosts that are not a hosted site: the platform domain (its data API route),
+ * this Worker's custom domain, and the address `wrangler dev` answers on.
+ */
+function platformHost(hostname: string, env: Env) {
+  return (
+    hostname === env.PLATFORM_DOMAIN ||
+    hostname === `edge.${env.PLATFORM_DOMAIN}` ||
+    hostname === "localhost" ||
+    /^[\d.]+$|^\[/.test(hostname)
+  );
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx): Promise<Response> {
     const { hostname, pathname } = new URL(request.url);
-    // The *.naru.pub route also covers this Worker's own custom domain, which
-    // a custom domain's precedence keeps here, and the bucket's public domain,
-    // which a route without a Worker keeps on R2 (docs/deployment.md).
-    if (
-      hostname.endsWith(`.${env.PLATFORM_DOMAIN}`) &&
-      hostname !== `edge.${env.PLATFORM_DOMAIN}`
-    )
-      return hostedSite(request, env, ctx);
+    // The zone's routes send every hosted site here: *.naru.pub, and */* for
+    // custom domains. Routes without a Worker keep the platform domain on the
+    // control plane and the bucket's public domains on R2; this Worker's own
+    // custom domain takes precedence over all of them (docs/deployment.md).
+    if (!platformHost(hostname, env)) return hostedSite(request, env, ctx);
     const route = /^\/api\/data\/v1\/([^/]+)(?:\/(.*))?$/.exec(pathname);
     if (route)
       return website(
@@ -155,8 +191,9 @@ export default {
           .filter(Boolean)
           .map((part) => decodeURIComponent(part)),
       );
-    if (!(await authorized(request, env.SITE_DATA_WORKER_SECRET)))
+    if (!(await authorized(request, env.EDGE_WORKER_SECRET)))
       return failure(401, "Unauthorized.");
+    if (pathname === "/v1/domains/replace") return replaceDomains(request, env);
     const pageview = /^\/v1\/pageviews\/([a-z]+)$/.exec(pathname);
     if (pageview) return pageviewOperation(request, env, pageview[1]);
     const match = /^\/v1\/sites\/([^/]+)\/([A-Za-z]+)$/.exec(pathname);

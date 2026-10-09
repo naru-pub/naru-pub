@@ -1,3 +1,4 @@
+import { pushEdgeDomainsSoon } from "@/lib/edge/domains";
 import { db } from "@/lib/database";
 import {
   getCloudflareCustomHostname,
@@ -30,6 +31,7 @@ async function main() {
     .execute();
 
   console.log(`[refresh-custom-domains] ${pending.length} pending domain(s)`);
+  let activated = false;
 
   for (const domain of pending) {
     try {
@@ -43,6 +45,7 @@ async function main() {
         .set(row)
         .where("id", "=", domain.id)
         .execute();
+      if (row.verified_at) activated = true;
 
       console.log(
         `[refresh-custom-domains] ${domain.hostname}: host=${row.cloudflare_status} ssl=${row.ssl_status ?? "-"}${row.verified_at ? " (active)" : ""}`
@@ -53,6 +56,8 @@ async function main() {
       );
     }
   }
+  // A domain that became active is served at the edge at once.
+  if (activated) await pushEdgeDomainsSoon();
 }
 
 main()
