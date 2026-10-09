@@ -8,9 +8,8 @@
   // this Worker, and a route only reaches a Worker in its zone's account.
   "account_id": "5d508a37b0c6ea183620094959bbc8d1",
   "main": "src/index.ts",
-  // Keep the existing control-plane endpoint available during the cutover
-  // to site-data.naru.pub. Disable after all callers use the custom domain.
-  "workers_dev": true,
+  // Production callers use site-data.naru.pub; expose no workers.dev URLs.
+  "workers_dev": false,
   "preview_urls": false,
   "compatibility_date": "2026-10-01",
   // Buffer and node:crypto, for the control plane's cursor and filter code.
