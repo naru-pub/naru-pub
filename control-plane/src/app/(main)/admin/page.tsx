@@ -311,7 +311,7 @@ export default async function AdminOverviewPage() {
               전체 보기
             </Link>
           </div>
-          <ul className="divide-y-2 divide-border border-2 border-border bg-card text-sm">
+          <ul className="divide-y-2 divide-border border-2 border-line bg-card text-sm">
             {recentEvents.map((event) => (
               <li key={event.id} className="space-y-0.5 p-3">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -340,7 +340,7 @@ export default async function AdminOverviewPage() {
               전체 보기
             </Link>
           </div>
-          <ul className="divide-y-2 divide-border border-2 border-border bg-card text-sm">
+          <ul className="divide-y-2 divide-border border-2 border-line bg-card text-sm">
             {recentDeliveries.map((delivery) => (
               <li key={delivery.id} className="space-y-0.5 p-3">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

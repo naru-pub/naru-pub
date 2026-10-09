@@ -81,7 +81,7 @@ export default function LoginPage() {
 
   return (
     <div className="max-w-md mx-auto p-6">
-      <div className="bg-card border-2 border-border shadow-lg rounded-lg p-6">
+      <div className="bg-card border-2 border-line rounded-lg p-6">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-foreground mb-2">로그인</h1>
           <p className="text-muted-foreground">나루 계정으로 로그인하세요</p>

@@ -333,7 +333,7 @@ export default function MediaLibrary() {
                   <LoaderCircle className="size-4 animate-spin" />
                 )}
                 {item.status === "done" && (
-                  <Check className="size-4 text-emerald-600" />
+                  <Check className="size-4 text-success" />
                 )}
                 {item.status === "error" && (
                   <span className="text-xs text-destructive">실패</span>

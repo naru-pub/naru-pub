@@ -54,7 +54,7 @@ export default async function EditPostPage({
         </div>
         <EditPostForm postId={post.id} title={post.title} body={post.body} />
         {template && latest && (
-          <section className="space-y-4 border-2 border-border p-4">
+          <section className="space-y-4 border-2 border-line p-4">
             <div className="space-y-1">
               <h2 className="text-lg font-bold">새 버전 올리기</h2>
               <p className="text-sm text-muted-foreground">

@@ -20,6 +20,7 @@ import { ReplyComposer } from "../_components/ReplyComposer";
 import { ReplyThread, type ThreadReply } from "../_components/ReplyThread";
 import { Thumbnail } from "../_components/Thumbnail";
 import { formatDate, formatRelative } from "../_components/format";
+import { PostTitle } from "../_components/PostTitle";
 
 function parsePostId(value: string): string | null {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
@@ -119,12 +120,12 @@ export default async function PostPage({
             </Link>
           </nav>
 
-          <article className="border-2 border-border bg-card">
+          <article className="border-2 border-line bg-card">
             <header className="space-y-3 border-b border-border p-5">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <KindBadge kind={post.kind} />
                 {post.solvedReplyId && (
-                  <span className="bg-green-100 px-2 py-0.5 text-green-800 dark:bg-green-950 dark:text-green-300">
+                  <span className="bg-success/10 px-2 py-0.5 text-success">
                     해결됨
                   </span>
                 )}
@@ -132,7 +133,7 @@ export default async function PostPage({
                 {post.editedAt && <span>(고침)</span>}
               </div>
               <h1 className="break-words text-2xl font-bold sm:text-3xl">
-                {post.title}
+                <PostTitle title={post.title} />
               </h1>
               <div className="flex items-center gap-3 text-sm">
                 <span className="font-bold">{post.authorLoginName}</span>
@@ -176,8 +177,8 @@ export default async function PostPage({
 
         {showHero && (
           <aside className="min-w-0 space-y-5 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start">
-            <figure className="border-2 border-border bg-card">
-              <figcaption className="flex items-center justify-between gap-2 border-b-2 border-border bg-secondary px-3 py-2 text-xs text-muted-foreground">
+            <figure className="border-2 border-line bg-card">
+              <figcaption className="flex items-center justify-between gap-2 border-b-2 border-line bg-secondary px-3 py-2 text-xs text-muted-foreground">
                 <span className="truncate">
                   {latest
                     ? `미리보기 · v${latest.version}`
@@ -227,8 +228,8 @@ export default async function PostPage({
                   </div>
                 </section>
 
-                <section className="border-2 border-border bg-card">
-                  <h2 className="border-b-2 border-border bg-secondary px-4 py-3 font-bold">
+                <section className="border-2 border-line bg-card">
+                  <h2 className="border-b-2 border-line bg-secondary px-4 py-3 font-bold">
                     정보
                   </h2>
                   <dl className="grid grid-cols-[5.5rem_1fr] gap-y-2 p-4 text-xs">
@@ -250,8 +251,8 @@ export default async function PostPage({
                   </dl>
                 </section>
 
-                <section className="border-2 border-border bg-card">
-                  <h2 className="border-b-2 border-border bg-secondary px-4 py-3 font-bold">
+                <section className="border-2 border-line bg-card">
+                  <h2 className="border-b-2 border-line bg-secondary px-4 py-3 font-bold">
                     포함된 파일
                   </h2>
                   <ul className="max-h-80 overflow-y-auto p-4 text-xs leading-6">
@@ -270,7 +271,7 @@ export default async function PostPage({
                 </section>
 
                 {latest.collections.length > 0 && (
-                  <section className="space-y-2 border-2 border-border bg-card p-4 text-xs leading-relaxed">
+                  <section className="space-y-2 border-2 border-line bg-card p-4 text-xs leading-relaxed">
                     <h2 className="text-sm font-bold">필요한 기능</h2>
                     <p className="text-muted-foreground">
                       데이터베이스 — 적용할 때 빈 컬렉션{" "}
@@ -288,8 +289,8 @@ export default async function PostPage({
                 )}
 
                 {template.versions.length > 1 && (
-                  <section className="border-2 border-border bg-card">
-                    <h2 className="border-b-2 border-border bg-secondary px-4 py-3 font-bold">
+                  <section className="border-2 border-line bg-card">
+                    <h2 className="border-b-2 border-line bg-secondary px-4 py-3 font-bold">
                       버전 기록
                     </h2>
                     <ol className="space-y-3 p-4 text-xs">

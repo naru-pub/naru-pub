@@ -92,8 +92,8 @@ export default function HomeDirectorySizeDistributionChart({
   const histogramData = createHistogramData(data);
 
   return (
-    <Card className="bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground">홈 디렉토리 크기 분포</CardTitle>
         <CardDescription className="text-muted-foreground">
           사용자별 홈 디렉토리 크기 분포 히스토그램
@@ -125,7 +125,7 @@ export default function HomeDirectorySizeDistributionChart({
                 if (active && payload && payload.length) {
                   const data = payload[0].payload as HistogramData;
                   return (
-                    <div className="rounded-lg border bg-background p-2 shadow-sm">
+                    <div className="rounded-lg border bg-background p-2">
                       <div className="grid grid-cols-2 gap-2">
                         <div className="flex flex-col">
                           <span className="text-[0.70rem] uppercase text-muted-foreground">

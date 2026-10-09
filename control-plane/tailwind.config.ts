@@ -18,7 +18,25 @@ const config = {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        // Hangul in mono text falls through to Plex Sans KR, its sibling.
+        mono: ["var(--font-mono)", "var(--font-sans)", "ui-monospace", "monospace"],
+      },
+      boxShadow: {
+        hard: "4px 4px 0 hsl(var(--shadow))",
+        "hard-sm": "3px 3px 0 hsl(var(--shadow))",
+        "hard-lg": "6px 6px 0 hsl(var(--shadow))",
+      },
       colors: {
+        line: "hsl(var(--line))",
+        link: "hsl(var(--link))",
+        sun: {
+          DEFAULT: "hsl(var(--sun))",
+          foreground: "hsl(var(--sun-foreground))",
+        },
+        success: "hsl(var(--success))",
+        warning: "hsl(var(--warning))",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -53,10 +71,13 @@ const config = {
           foreground: "hsl(var(--card-foreground))",
         },
       },
+      // Square everywhere; only rounded-full (dots, avatars) keeps a curve.
       borderRadius: {
+        DEFAULT: "var(--radius)",
+        xl: "var(--radius)",
         lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        md: "var(--radius)",
+        sm: "var(--radius)",
       },
       keyframes: {
         "accordion-down": {

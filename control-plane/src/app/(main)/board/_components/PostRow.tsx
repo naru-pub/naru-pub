@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { Download, MessageSquare } from "lucide-react";
 import type { PostSummary } from "@/lib/board/posts";
+import { Badge } from "@/components/ui/badge";
 import { KindBadge } from "./KindBadge";
+import { PostTitle } from "./PostTitle";
 import { Thumbnail, postThumbnailUrl } from "./Thumbnail";
 import { formatRelative } from "./format";
 
@@ -23,15 +25,13 @@ export function PostRow({ post }: { post: PostSummary }) {
         <div className="flex flex-wrap items-center gap-2">
           <KindBadge kind={post.kind} />
           {post.solved && (
-            <span className="bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-950 dark:text-green-300">
-              해결됨
-            </span>
+            <Badge variant="success">해결됨</Badge>
           )}
           <Link
             href={`/board/${post.id}`}
-            className="min-w-0 break-words font-bold text-foreground hover:text-primary"
+            className="min-w-0 break-words font-bold text-foreground underline-offset-4 hover:underline"
           >
-            {post.title}
+            <PostTitle title={post.title} />
           </Link>
         </div>
         {post.excerpt && (
@@ -40,7 +40,7 @@ export function PostRow({ post }: { post: PostSummary }) {
           </p>
         )}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span className="text-foreground">{post.authorLoginName}</span>
+          <span className="font-mono font-medium text-foreground">{post.authorLoginName}</span>
           <span>{formatRelative(post.createdAt)}</span>
           <span className="flex items-center gap-1">
             <MessageSquare size={13} aria-hidden="true" />
@@ -48,7 +48,7 @@ export function PostRow({ post }: { post: PostSummary }) {
             {post.replyCount}
           </span>
           {post.template && (
-            <span className="flex items-center gap-1 text-primary">
+            <span className="flex items-center gap-1 font-semibold text-link">
               <Download size={13} aria-hidden="true" />
               {post.template.applyCount}회 적용
             </span>

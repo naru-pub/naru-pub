@@ -2,6 +2,7 @@
 
 import { safeNextPath } from "@/lib/next-path";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -62,6 +63,16 @@ export default function SignUpPage() {
     },
   });
 
+  // The front page's address box sends the name it was given here.
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get(
+      "username",
+    );
+    if (requested) {
+      form.setValue("username", requested.trim().toLowerCase());
+    }
+  }, [form]);
+
   // react-hook-form's watch() is opaque to the React Compiler, which reports a
   // skipped compilation rather than a defect. The live domain preview needs it.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -105,7 +116,7 @@ export default function SignUpPage() {
 
   return (
     <div className="max-w-md mx-auto p-6">
-      <div className="bg-card border-2 border-border shadow-lg rounded-lg p-6">
+      <div className="bg-card border-2 border-line rounded-lg p-6">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-foreground mb-2">회원가입</h1>
           <p className="text-muted-foreground">

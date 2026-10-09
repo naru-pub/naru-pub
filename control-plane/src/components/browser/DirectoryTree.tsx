@@ -237,7 +237,7 @@ function TreeNode({
 
   return (
     <div
-      className={isInDragTargetSubtree && node.isDirectory ? "bg-blue-100/80 dark:bg-blue-900/40" : ""}
+      className={isInDragTargetSubtree && node.isDirectory ? "bg-accent" : ""}
       onDragOver={node.isDirectory ? handleDragOver : undefined}
       onDragEnter={node.isDirectory ? handleDragEnter : undefined}
       onDragLeave={node.isDirectory ? handleDragLeave : undefined}
@@ -246,7 +246,7 @@ function TreeNode({
       <div
         className={`flex items-center py-1 px-2 cursor-pointer hover:bg-accent text-sm transition-all duration-300 border-2 border-dashed ${
           isSelected ? "bg-primary/10 font-medium text-primary" : ""
-        } ${isFlashing ? "bg-green-100 animate-pulse" : ""} ${
+        } ${isFlashing ? "bg-success/10 animate-pulse" : ""} ${
           isDragging ? "opacity-50" : ""
         } ${isDragOver && node.isDirectory ? "bg-primary/20 border-primary" : isInDragTargetSubtree && node.isDirectory ? "border-primary/50" : "border-transparent"}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
@@ -273,7 +273,7 @@ function TreeNode({
             onClick={() => setShowContextMenu(false)}
           />
           <div 
-            className="fixed z-20 bg-card border-2 border-border rounded shadow-lg py-1"
+            className="fixed z-20 bg-card border-2 border-line rounded py-1"
             style={{ left: contextMenuPosition.x, top: contextMenuPosition.y }}
           >
             <button
@@ -613,7 +613,7 @@ export default function DirectoryTree({
                 value={newDirectoryName}
                 onChange={(e) => setNewDirectoryName(e.target.value)}
                 placeholder="폴더 이름"
-                className="flex-1 px-2 py-1 text-xs border border-border rounded"
+                className="min-w-0 flex-1 border-2 border-input bg-card px-2 py-1 text-xs"
                 onKeyDown={(e) => e.key === "Enter" && handleCreateDirectory()}
               />
               <Button size="sm" onClick={handleCreateDirectory} className="text-xs">
@@ -629,7 +629,7 @@ export default function DirectoryTree({
                 value={newFileName}
                 onChange={(e) => setNewFileName(e.target.value)}
                 placeholder="파일 이름 (예: test.html)"
-                className="flex-1 px-2 py-1 text-xs border border-border rounded"
+                className="min-w-0 flex-1 border-2 border-input bg-card px-2 py-1 text-xs"
                 onKeyDown={(e) => e.key === "Enter" && handleCreateFile()}
               />
               <Button size="sm" onClick={handleCreateFile} className="text-xs">

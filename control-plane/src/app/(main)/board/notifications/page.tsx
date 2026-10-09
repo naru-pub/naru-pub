@@ -30,11 +30,11 @@ export default async function NotificationsPage() {
           {unread > 0 && <MarkAllReadButton />}
         </div>
         {notifications.length === 0 ? (
-          <p className="border-2 border-border p-8 text-center text-sm text-muted-foreground">
+          <p className="border-2 border-line p-8 text-center text-sm text-muted-foreground">
             아직 알림이 없어요.
           </p>
         ) : (
-          <ul className="border-2 border-border bg-card">
+          <ul className="border-2 border-line bg-card">
             {notifications.map((n) => (
               <li
                 key={n.id}

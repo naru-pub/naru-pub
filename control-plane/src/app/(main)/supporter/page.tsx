@@ -22,8 +22,8 @@ const krw = (amount: number) => `${amount.toLocaleString("ko-KR")}원`;
 // 숨어 있으면 심사가 반려된다.
 function SignedOutSupportCard() {
   return (
-    <Card className="rounded-none bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="rounded-none bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <Heart size={20} />
           나루 유료 서비스
@@ -38,13 +38,13 @@ function SignedOutSupportCard() {
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">정기 결제</p>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <div className="flex-1 border-2 border-border bg-background p-3 text-sm">
+            <div className="flex-1 border-2 border-line bg-background p-3 text-sm">
               <strong className="text-foreground">
                 월 {krw(PLAN_AMOUNTS.month)}
               </strong>
               <p className="text-muted-foreground">매월 자동 결제</p>
             </div>
-            <div className="flex-1 border-2 border-border bg-background p-3 text-sm">
+            <div className="flex-1 border-2 border-line bg-background p-3 text-sm">
               <strong className="text-foreground">
                 연 {krw(PLAN_AMOUNTS.year)}
               </strong>
@@ -54,7 +54,7 @@ function SignedOutSupportCard() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground pt-1">한 번만 결제</p>
-          <div className="border-2 border-border bg-background p-3 text-sm">
+          <div className="border-2 border-line bg-background p-3 text-sm">
             <strong className="text-foreground">
               {krw(ONE_TIME_YEAR_AMOUNT)}
             </strong>

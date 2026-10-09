@@ -79,7 +79,7 @@ export function PaymentProcessingModal({ paymentId }: { paymentId: string }) {
         event.preventDefault();
         close();
       }}
-      className="w-[calc(100%_-_2rem)] max-w-md border-2 border-border bg-card p-6 text-foreground shadow-lg backdrop:bg-black/50"
+      className="w-[calc(100%_-_2rem)] max-w-md border-2 border-line bg-card p-6 text-foreground backdrop:bg-black/50"
     >
       <h2 id="payment-processing-title" className="text-lg font-bold">
         {state === "processing"

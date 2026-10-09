@@ -60,7 +60,7 @@ export default function ConfirmAccountDeletionPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="max-w-md w-full p-6">
-        <div className="bg-card border-2 border-border shadow-lg rounded-lg p-8">
+        <div className="bg-card border-2 border-line rounded-lg p-8">
           <div className="text-center mb-6">
             <h1 className="text-2xl font-bold text-foreground mb-2">
               계정 삭제 확인
@@ -72,16 +72,16 @@ export default function ConfirmAccountDeletionPage() {
                 <p className="text-muted-foreground">
                   계정을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
                 </p>
-                <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-md dark:bg-red-900/20 dark:border-red-800/30">
+                <div className="mt-4 p-4 bg-destructive/10 border border-destructive">
                   <div className="flex">
                     <div className="flex-shrink-0">
-                      <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                      <AlertTriangle className="h-5 w-5 text-destructive" />
                     </div>
                     <div className="ml-3">
-                      <h3 className="text-sm font-medium text-red-800 dark:text-red-300">
+                      <h3 className="text-sm font-medium text-destructive">
                         삭제될 데이터
                       </h3>
-                      <div className="mt-2 text-sm text-red-700 dark:text-red-400">
+                      <div className="mt-2 text-sm text-destructive">
                         <ul className="list-disc pl-5 space-y-1">
                           <li>모든 파일과 웹사이트 데이터</li>
                           <li>계정 정보 및 설정</li>
@@ -132,22 +132,22 @@ export default function ConfirmAccountDeletionPage() {
 
           {status === "success" && (
             <div className="text-center space-y-4">
-              <CheckCircle className="h-16 w-16 text-green-600 dark:text-green-400 mx-auto" />
-              <h2 className="text-xl font-semibold text-green-700 dark:text-green-400">
+              <CheckCircle className="h-16 w-16 text-success mx-auto" />
+              <h2 className="text-xl font-semibold text-success">
                 계정 삭제 완료
               </h2>
-              <p className="text-green-600 dark:text-green-500">{message}</p>
+              <p className="text-success">{message}</p>
               <p className="text-sm text-muted-foreground">3초 후 홈페이지로 이동합니다...</p>
             </div>
           )}
 
           {status === "error" && (
             <div className="text-center space-y-4">
-              <XCircle className="h-16 w-16 text-red-600 dark:text-red-400 mx-auto" />
-              <h2 className="text-xl font-semibold text-red-700 dark:text-red-400">
+              <XCircle className="h-16 w-16 text-destructive mx-auto" />
+              <h2 className="text-xl font-semibold text-destructive">
                 오류 발생
               </h2>
-              <p className="text-red-600 dark:text-red-500">{message}</p>
+              <p className="text-destructive">{message}</p>
               <Button
                 variant="outline"
                 onClick={() => window.location.href = "/account"}

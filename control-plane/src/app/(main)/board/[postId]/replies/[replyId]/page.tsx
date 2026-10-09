@@ -9,6 +9,7 @@ import {
   type ThreadReply,
 } from "../../../_components/ReplyThread";
 import { formatRelative } from "../../../_components/format";
+import { PostTitle } from "../../../_components/PostTitle";
 
 // Post and reply ids are both UUIDs.
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -59,7 +60,7 @@ export default async function ReplyPage({
             href={`/board/${post.id}`}
             className="text-primary hover:underline"
           >
-            {post.title}
+            <PostTitle title={post.title} />
           </Link>
         </nav>
         <div className="flex flex-wrap gap-4 text-sm">

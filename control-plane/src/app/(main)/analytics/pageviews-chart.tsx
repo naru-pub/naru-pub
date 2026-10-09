@@ -29,8 +29,8 @@ interface PageviewsChartProps {
 
 export default function PageviewsChart({ data }: PageviewsChartProps) {
   return (
-    <Card className="bg-card border-2 border-border shadow-lg col-span-2">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line col-span-2">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground">페이지뷰 추이</CardTitle>
         <CardDescription className="text-muted-foreground">
           최근 30일 일별 페이지뷰 및 순방문자 수
@@ -66,7 +66,7 @@ export default function PageviewsChart({ data }: PageviewsChartProps) {
               content={({ active, payload, label }) => {
                 if (active && payload && payload.length) {
                   return (
-                    <div className="rounded-lg border bg-background p-2 shadow-sm">
+                    <div className="rounded-lg border bg-background p-2">
                       <div className="grid gap-2">
                         <div className="flex flex-col">
                           <span className="text-[0.70rem] uppercase text-muted-foreground">

@@ -3,8 +3,8 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import { Download, MessageSquare } from "lucide-react";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { POST_KIND_LABELS, type PostKind } from "@/lib/board/constants";
+import { PostTitle } from "./PostTitle";
 import { Thumbnail } from "./Thumbnail";
 
 // What the front page shows of a post; times are formatted on the server.
@@ -43,90 +43,82 @@ export function HomeBoard({ posts }: { posts: Record<HomeBoardTab, HomePost[]> }
   const pictures = kind === "template";
 
   return (
-    <Card className="bg-card border-2 border-border shadow-lg min-w-0 flex-1 flex flex-col">
-      <CardHeader className="bg-secondary border-b-2 border-border">
-        <div className="flex items-center justify-between gap-3">
-          <div
-            role="tablist"
-            aria-label="게시판 글 종류"
-            className="-my-1 flex min-w-0 gap-2 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          >
-            {TABS.map((value) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                id={`${id}-tab-${value}`}
-                aria-selected={value === kind}
-                aria-controls={`${id}-panel`}
-                onClick={() => setKind(value)}
-                className={
-                  value === kind
-                    ? "shrink-0 whitespace-nowrap rounded-full bg-primary px-3 py-1.5 text-sm font-bold text-primary-foreground sm:px-4"
-                    : "shrink-0 whitespace-nowrap rounded-full border border-border bg-background px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground sm:px-4"
-                }
-              >
-                {value === "template"
-                  ? "템플릿 / 사이트 자랑"
-                  : POST_KIND_LABELS[value]}
-              </button>
-            ))}
-          </div>
-          <Link
-            href={kind === "template" ? "/board" : `/board?kind=${kind}`}
-            className="shrink-0 whitespace-nowrap text-primary text-sm font-medium hover:underline"
-          >
-            더 보기 →
-          </Link>
+    <section className="min-w-0 flex-1 flex flex-col border-2 border-line bg-card">
+      <div className="flex items-end justify-between gap-3 border-b border-border px-2 sm:px-4">
+        <div
+          role="tablist"
+          aria-label="게시판 글 종류"
+          className="flex min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {TABS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              id={`${id}-tab-${value}`}
+              aria-selected={value === kind}
+              aria-controls={`${id}-panel`}
+              onClick={() => setKind(value)}
+              className={`-mb-px min-h-12 shrink-0 whitespace-nowrap border-b-[3px] px-3 text-[15px] transition-colors ${
+                value === kind
+                  ? "border-primary font-bold text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {value === "template"
+                ? "템플릿 / 사이트 자랑"
+                : POST_KIND_LABELS[value]}
+            </button>
+          ))}
         </div>
-      </CardHeader>
-      <CardContent
+        <Link
+          href={kind === "template" ? "/board" : `/board?kind=${kind}`}
+          className="mb-3 shrink-0 whitespace-nowrap text-sm font-medium text-link underline-offset-4 hover:underline"
+        >
+          더 보기 →
+        </Link>
+      </div>
+      <div
         id={`${id}-panel`}
         role="tabpanel"
         aria-labelledby={`${id}-tab-${kind}`}
-        className="p-6 flex-1 flex flex-col"
+        className="p-4 sm:p-6 flex-1 flex flex-col"
       >
         {current.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
-            {EMPTY[kind].text}{" "}
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
+            <p className="text-muted-foreground">{EMPTY[kind].text}</p>
             <Link
               href={`/board/new?kind=${kind}`}
-              className="text-primary hover:underline"
+              className="text-sm font-medium text-link underline-offset-4 hover:underline"
             >
               {EMPTY[kind].action}
             </Link>
-          </p>
+          </div>
         ) : pictures ? (
           <div className="grid flex-1 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 lg:auto-rows-fr">
             {current.map((post) => (
               <article
                 key={post.id}
-                className="border border-border bg-card flex flex-col"
+                className="lift relative border-2 border-line bg-card flex flex-col"
               >
-                <Link
-                  href={`/board/${post.id}`}
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  className="block lg:flex-1"
-                >
-                  <Thumbnail
-                    url={post.thumbnailUrl}
-                    alt=""
-                    className="border-0 border-b"
-                    fill
-                  />
-                </Link>
+                <Thumbnail
+                  url={post.thumbnailUrl}
+                  alt=""
+                  className="border-0 border-b-2 border-b-line lg:flex-1"
+                  fill
+                />
                 <div className="p-3 space-y-1">
+                  {/* The title's link covers the whole card. */}
                   <Link
                     href={`/board/${post.id}`}
-                    className="block truncate font-bold text-foreground hover:text-primary"
+                    className="block truncate font-bold text-foreground after:absolute after:inset-0"
                   >
-                    {post.title}
+                    <PostTitle title={post.title} />
                   </Link>
                   <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span className="truncate">{post.authorLoginName}</span>
+                    <span className="truncate font-mono">{post.authorLoginName}</span>
                     {post.applyCount !== null ? (
-                      <span className="flex shrink-0 items-center gap-1 text-primary">
+                      <span className="flex shrink-0 items-center gap-1 font-semibold text-link">
                         <Download size={12} aria-hidden="true" />
                         {post.applyCount}회 적용
                       </span>
@@ -143,14 +135,14 @@ export function HomeBoard({ posts }: { posts: Record<HomeBoardTab, HomePost[]> }
             ))}
           </div>
         ) : (
-          <ul className="divide-y divide-border border border-border">
+          <ul className="divide-y divide-border border-2 border-line">
             {current.map((post) => (
-              <li key={post.id} className="space-y-1 p-3">
+              <li key={post.id} className="relative space-y-1 p-4 hover:bg-accent">
                 <Link
                   href={`/board/${post.id}`}
-                  className="block truncate font-bold text-foreground hover:text-primary"
+                  className="block truncate font-bold text-foreground after:absolute after:inset-0"
                 >
-                  {post.title}
+                  <PostTitle title={post.title} />
                 </Link>
                 {post.excerpt && (
                   <p className="truncate text-sm text-muted-foreground">
@@ -158,7 +150,7 @@ export function HomeBoard({ posts }: { posts: Record<HomeBoardTab, HomePost[]> }
                   </p>
                 )}
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <span className="text-foreground">
+                  <span className="font-mono font-medium text-foreground">
                     {post.authorLoginName}
                   </span>
                   <span>{post.time}</span>
@@ -172,7 +164,7 @@ export function HomeBoard({ posts }: { posts: Record<HomeBoardTab, HomePost[]> }
             ))}
           </ul>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }

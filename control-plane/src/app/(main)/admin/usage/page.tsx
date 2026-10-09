@@ -64,7 +64,7 @@ export default async function UsagePage({
         </p>
       </div>
 
-      <div className="overflow-x-auto border-2 border-border bg-card">
+      <div className="overflow-x-auto border-2 border-line bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -136,7 +136,7 @@ export default async function UsagePage({
 
       <div className="space-y-2">
         <h3 className="font-bold">{sortMetric.label} 상위 100개 계정</h3>
-        <div className="overflow-x-auto border-2 border-border bg-card">
+        <div className="overflow-x-auto border-2 border-line bg-card">
           <Table>
             <TableHeader>
               <TableRow>

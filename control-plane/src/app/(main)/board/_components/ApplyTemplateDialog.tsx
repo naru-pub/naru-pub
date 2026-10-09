@@ -131,9 +131,9 @@ export function ApplyTemplateDialog({
             aria-modal="true"
             aria-labelledby="apply-title"
             tabIndex={-1}
-            className="w-full max-w-2xl border-2 border-border bg-background text-foreground outline-none"
+            className="w-full max-w-2xl border-2 border-line bg-background text-foreground outline-none"
           >
-            <div className="flex items-start justify-between gap-4 border-b-2 border-border bg-secondary px-5 py-4">
+            <div className="flex items-start justify-between gap-4 border-b-2 border-line bg-secondary px-5 py-4">
               <div className="min-w-0 space-y-1">
                 <h2 id="apply-title" className="text-lg font-bold">
                   내 사이트에 적용
@@ -286,7 +286,7 @@ export function ApplyTemplateDialog({
                             className="border-t border-border"
                           >
                             <td
-                              className={`whitespace-nowrap px-3 py-2 font-bold ${file.action === "overwrite" ? "text-primary" : "text-green-700 dark:text-green-400"}`}
+                              className={`whitespace-nowrap px-3 py-2 font-bold ${file.action === "overwrite" ? "text-primary" : "text-success"}`}
                             >
                               {file.action === "overwrite"
                                 ? "~ 덮어씀"

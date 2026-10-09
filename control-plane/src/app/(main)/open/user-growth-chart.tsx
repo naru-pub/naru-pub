@@ -28,8 +28,8 @@ interface UserGrowthChartProps {
 
 export default function UserGrowthChart({ data }: UserGrowthChartProps) {
   return (
-    <Card className="bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground">사용자 성장 추이</CardTitle>
         <CardDescription className="text-muted-foreground">월별 누적 사용자 수 변화</CardDescription>
       </CardHeader>
@@ -55,7 +55,7 @@ export default function UserGrowthChart({ data }: UserGrowthChartProps) {
               content={({ active, payload, label }) => {
                 if (active && payload && payload.length) {
                   return (
-                    <div className="rounded-lg border bg-background p-2 shadow-sm">
+                    <div className="rounded-lg border bg-background p-2">
                       <div className="grid grid-cols-2 gap-2">
                         <div className="flex flex-col">
                           <span className="text-[0.70rem] uppercase text-muted-foreground">

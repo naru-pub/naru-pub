@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
 import Link from "next/link";
@@ -11,7 +12,23 @@ import { ModeToggle } from "@/components/ModeToggle";
 import { LoadingBar } from "@/components/LoadingBar";
 import { PAYMENT_OPERATOR_USERS } from "@/lib/payments/support";
 import { getUserEntitlement, PLAN_FEATURES, type Feature } from "@/lib/entitlements";
-import { AccountMenu, ExtensionsMenu } from "@/components/NavMenus";
+import { AccountMenu, ExtensionsMenu, NavLink } from "@/components/NavMenus";
+
+// Korean comes in ~100 unicode-range slices per weight; the browser fetches
+// only the ones a page uses, so nothing is preloaded.
+const sans = IBM_Plex_Sans_KR({
+  weight: ["400", "500", "700"],
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+  preload: false,
+});
+const mono = IBM_Plex_Mono({
+  weight: ["400", "500", "600"],
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "나루",
@@ -32,8 +49,12 @@ export default async function RootLayout({
   );
 
   return (
-    <html lang="ko" suppressHydrationWarning>
-      <body className="font-mono">
+    <html
+      lang="ko"
+      suppressHydrationWarning
+      className={`${sans.variable} ${mono.variable}`}
+    >
+      <body>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
@@ -41,82 +62,61 @@ export default async function RootLayout({
           disableTransitionOnChange
         >
           <div className="bg-background h-screen flex flex-col">
-            <nav className="relative bg-card border-b border-border">
+            <nav className="relative bg-card border-b-2 border-line">
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex items-center justify-between gap-2 h-16">
-                  <div className="flex shrink-0 items-center">
-                    <Link href="/" className="flex items-center gap-3 group">
-                      <h1 className="whitespace-nowrap text-2xl font-bold text-foreground group-hover:text-primary transition-colors duration-200">
-                        나루
-                      </h1>
-                      <Image
-                        src="/logo.png"
-                        alt="logo"
-                        width={28}
-                        height={28}
-                        className="group-hover:scale-110 transition-transform duration-200"
-                        style={{
-                          filter: "var(--logo-filter, none)",
-                        }}
-                      />
-                    </Link>
-                  </div>
+                {/* On a phone the links drop to a second row under the
+                    logo and account controls. */}
+                <div className="flex flex-wrap items-center justify-between gap-x-2 pt-2 md:h-16 md:flex-nowrap md:py-0">
+                  <Link href="/" className="flex h-12 shrink-0 items-center gap-2.5 group">
+                    <Image
+                      src="/logo.png"
+                      alt=""
+                      width={32}
+                      height={32}
+                      priority
+                      className="[image-rendering:pixelated] transition-transform duration-200 group-hover:-translate-y-0.5"
+                      style={{
+                        filter: "var(--logo-filter, none)",
+                      }}
+                    />
+                    <span className="whitespace-nowrap text-2xl font-bold tracking-tight text-foreground">
+                      나루
+                    </span>
+                  </Link>
 
-                  {/* Scrolls sideways on a phone rather than running into
-                      the logo once every menu is showing. */}
-                  <div className="flex min-w-0 items-center space-x-1 overflow-x-auto">
-                    <Link
-                      href="/board"
-                      className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                    >
-                      게시판
-                    </Link>
-                    {/* <Link
-                      href="/docs"
-                      className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                    >
-                      길잡이
-                    </Link> */}
-                    {/* {!entitlement?.isSupporter && (
-                      <Link
-                        href="/supporter"
-                        className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                      >
-                        결제
-                      </Link>
-                    )} */}
-                    {user ? (
+                  <div className="order-last -mx-2 flex w-[calc(100%+1rem)] items-center gap-1 overflow-x-auto py-1 [scrollbar-width:none] md:order-none md:mx-0 md:w-auto md:flex-1 md:justify-end [&::-webkit-scrollbar]:hidden">
+                    <NavLink href="/board">게시판</NavLink>
+                    <NavLink href="/docs">길잡이</NavLink>
+                    {!entitlement?.isSupporter && (
+                      <NavLink href="/supporter">결제</NavLink>
+                    )}
+                    {user && (
                       <>
-                        <Link
-                          href="/files"
-                          className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                        >
-                          파일
-                        </Link>
+                        <NavLink href="/files">파일</NavLink>
                         <ExtensionsMenu
                           analytics={features.has("analytics")}
                           database={features.has("database")}
                           customDomains={features.has("custom_domains")}
                           githubDeploys={features.has("github_deploys")}
                         />
-                        <AccountMenu
-                          loginName={user.loginName}
-                          paymentOperator={PAYMENT_OPERATOR_USERS.has(
-                            user.loginName,
-                          )}
-                        />
                       </>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1">
+                    {user ? (
+                      <AccountMenu
+                        loginName={user.loginName}
+                        paymentOperator={PAYMENT_OPERATOR_USERS.has(
+                          user.loginName,
+                        )}
+                      />
                     ) : (
                       <>
-                        <Link
-                          href="/login"
-                          className="text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-                        >
-                          로그인
-                        </Link>
+                        <NavLink href="/login">로그인</NavLink>
                         <Link
                           href="/signup"
-                          className="bg-primary hover:bg-primary/90 text-primary-foreground px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 shadow-sm hover:shadow-md"
+                          className="press mx-1 whitespace-nowrap border-2 border-line bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground"
                         >
                           회원가입
                         </Link>
@@ -128,9 +128,9 @@ export default async function RootLayout({
               </div>
 
               {user && (
-                <div className="border-t border-border bg-primary/5">
-                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-                    <p className="text-sm flex items-center gap-2 whitespace-nowrap overflow-x-auto">
+                <div className="border-t border-border bg-accent">
+                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
+                    <p className="font-mono text-sm flex items-center gap-2 whitespace-nowrap overflow-x-auto">
                       <span className="text-muted-foreground select-none">
                         {user.loginName}@naru:~$
                       </span>
@@ -140,13 +140,13 @@ export default async function RootLayout({
                       <Link
                         href={getHomepageUrl(user.loginName)}
                         target="_blank"
-                        className="text-primary font-medium hover:underline transition-colors duration-200"
+                        className="text-link font-medium underline-offset-4 hover:underline"
                       >
                         {getHomepageUrl(user.loginName)}
                       </Link>
                       <span
                         aria-hidden="true"
-                        className="inline-block w-2 h-4 bg-primary/70 animate-pulse"
+                        className="inline-block w-2 h-4 bg-primary animate-pulse motion-reduce:animate-none"
                       />
                     </p>
                   </div>

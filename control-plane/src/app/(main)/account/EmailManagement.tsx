@@ -89,8 +89,8 @@ export default function EmailManagement({ currentEmail, emailVerifiedAt }: Email
   };
 
   return (
-    <Card className="bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <Mail size={20} />
           이메일 관리
@@ -107,7 +107,7 @@ export default function EmailManagement({ currentEmail, emailVerifiedAt }: Email
               <div className="flex items-center gap-2">
                 {emailVerifiedAt ? (
                   <div className="text-right">
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium bg-success/10 text-success">
                       <CheckCircle size={12} />
                       인증됨
                     </span>
@@ -117,7 +117,7 @@ export default function EmailManagement({ currentEmail, emailVerifiedAt }: Email
                   </div>
                 ) : (
                   <>
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-medium bg-warning/10 text-warning">
                       <Clock size={12} />
                       인증 대기
                     </span>
@@ -187,8 +187,8 @@ export default function EmailManagement({ currentEmail, emailVerifiedAt }: Email
         </Form>
 
         {!emailVerifiedAt && currentEmail && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 dark:bg-yellow-900/20 dark:border-yellow-800/30">
-            <p className="text-sm text-yellow-800 dark:text-yellow-300">
+          <div className="bg-warning/10 border border-warning p-4">
+            <p className="text-sm text-warning">
               이메일 인증이 완료되지 않았습니다. 이메일함을 확인해주세요.
             </p>
           </div>

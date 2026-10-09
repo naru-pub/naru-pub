@@ -53,7 +53,7 @@ export default async function SupportersPage() {
         </p>
       </div>
 
-      <div className="overflow-x-auto border-2 border-border bg-card">
+      <div className="overflow-x-auto border-2 border-line bg-card">
         <Table>
           <TableHeader>
             <TableRow>

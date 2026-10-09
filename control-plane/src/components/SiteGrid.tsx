@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { BrowserFrame, SiteAddress } from "@/components/BrowserFrame";
 import { getHomepageUrl, getRenderedSiteUrl } from "@/lib/site-urls";
 
 export interface SiteGridUser {
@@ -10,38 +10,43 @@ export interface SiteGridUser {
 }
 
 // Screenshots of discoverable sites, linking to each one. Shared by the home
-// page's 최근 업데이트된 and /sites.
-export function SiteGrid({ users }: { users: SiteGridUser[] }) {
+// page's 방금 고쳐진 사이트들 and /sites.
+export function SiteGrid({
+  users,
+  priorityCount = 0,
+}: {
+  users: SiteGridUser[];
+  // How many leading screenshots are above the fold and load eagerly.
+  priorityCount?: number;
+}) {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(min(220px,100%),1fr))] gap-4">
-      {users.map((user) => (
-        <div
-          key={user.id}
-          className="bg-card border border-border rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow duration-200"
-        >
+    <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(230px,100%),1fr))] gap-6">
+      {users.map((user, index) => (
+        <li key={user.id}>
           <Link
             href={getHomepageUrl(user.login_name)}
             target="_blank"
-            className="block"
+            className="lift block"
           >
-            <div className="border border-border rounded mb-3 overflow-hidden">
-              <Image
-                src={getRenderedSiteUrl(user.login_name, user.site_rendered_at)}
-                alt="screenshot"
-                width={320}
-                height={240}
-                className="w-full h-auto hover:opacity-90 transition-opacity"
-              />
-            </div>
-            <Button
-              variant="outline"
-              className="w-full border-border text-muted-foreground hover:bg-background bg-card"
-            >
-              {user.login_name}
-            </Button>
+            <BrowserFrame address={<SiteAddress loginName={user.login_name} />}>
+              <div className="relative aspect-[4/3] bg-muted">
+                <Image
+                  src={getRenderedSiteUrl(
+                    user.login_name,
+                    user.site_rendered_at,
+                  )}
+                  alt={`${user.login_name}의 사이트`}
+                  fill
+                  sizes="(max-width: 640px) 100vw, 320px"
+                  priority={index < priorityCount}
+                  // A missing screenshot leaves the muted frame, not alt text.
+                  className="object-cover object-top text-transparent"
+                />
+              </div>
+            </BrowserFrame>
           </Link>
-        </div>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }

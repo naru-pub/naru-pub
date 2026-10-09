@@ -2,64 +2,96 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 종이배: the design language, documented at /design. Ink lines on paper,
+   one flag-blue accent for anything you can act on, a little sun-yellow as a
+   highlighter. Corners are square; the only shadows are hard ink offsets on
+   things you can press. Keep /design's token list in step with this file. */
 @layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.9%;
+  :root,
+  .light {
+    /* paper and ink */
+    --background: 220 14% 96%; /* ground #F3F4F6 */
+    --foreground: 225 17% 8%; /* ink #111318 */
+    --card: 0 0% 100%; /* surface */
+    --card-foreground: 225 17% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
-    --radius: 0rem;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
+    --popover-foreground: 225 17% 8%;
+    --muted: 220 13% 93%;
+    --muted-foreground: 220 11% 33%; /* ink-2 #4A505C */
+    --secondary: 220 13% 93%;
+    --secondary-foreground: 225 17% 8%;
+    --line: 225 17% 8%; /* strong 2px rules */
+    --border: 220 13% 86%; /* hairlines #D8DBE1 */
+    --input: 225 17% 8%;
+    --shadow: 225 17% 8%;
 
+    /* flag */
+    --primary: 226 100% 58%; /* #2B5BFF */
+    --primary-foreground: 0 0% 100%;
+    --link: 226 75% 48%; /* flag as text on paper, 5.9:1 */
+    --accent: 226 100% 96%; /* wash #E9EEFF */
+    --accent-foreground: 225 17% 8%;
+    --ring: 226 100% 58%;
+
+    /* sun */
+    --sun: 43 100% 62%; /* #FFC83D */
+    --sun-foreground: 225 17% 8%;
+
+    /* status; each reads as text on paper and as a /10 tint */
+    --destructive: 4 74% 49%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 146 78% 27%;
+    --warning: 35 100% 30%;
+
+    --chart-1: 226 100% 58%;
+    --chart-2: 35 95% 50%;
+    --chart-3: 170 70% 35%;
+    --chart-4: 330 70% 55%;
+    --chart-5: 260 60% 55%;
+
+    --radius: 0rem;
     --logo-filter: none;
   }
 
   .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 40 100% 65%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 20%;
-    --input: 0 0% 14.9%;
-    --ring: 40 100% 65%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
+    --background: 220 19% 6%; /* #0D0F13 */
+    --foreground: 220 18% 94%; /* #ECEEF2 */
+    --card: 220 18% 10%; /* #15181E */
+    --card-foreground: 220 18% 94%;
+    --popover: 220 18% 10%;
+    --popover-foreground: 220 18% 94%;
+    --muted: 220 15% 15%;
+    --muted-foreground: 220 10% 69%; /* #A6ACB8 */
+    --secondary: 220 15% 15%;
+    --secondary-foreground: 220 18% 94%;
+    --line: 220 18% 94%;
+    --border: 219 14% 19%; /* #2A2F38 */
+    --input: 220 10% 69%;
+    --shadow: 0 0% 0%;
 
-    --logo-filter: drop-shadow(0 0 1px white) drop-shadow(1px 0 1px white) drop-shadow(-1px 0 1px white) drop-shadow(0 1px 1px white) drop-shadow(0 -1px 1px white);
+    --primary: 225 100% 73%; /* #7395FF */
+    --primary-foreground: 220 19% 6%;
+    --link: 225 100% 81%;
+    --accent: 225 44% 17%;
+    --accent-foreground: 220 18% 94%;
+    --ring: 225 100% 73%;
+
+    --sun: 43 100% 62%;
+    --sun-foreground: 225 17% 8%;
+
+    --destructive: 4 90% 66%;
+    --destructive-foreground: 220 19% 6%;
+    --success: 146 55% 55%;
+    --warning: 40 95% 60%;
+
+    --chart-1: 225 100% 73%;
+    --chart-2: 40 95% 60%;
+    --chart-3: 170 60% 50%;
+    --chart-4: 330 80% 70%;
+    --chart-5: 260 80% 75%;
+
+    /* The logo is ink lines on a white boat; inverted it keeps a blue flag. */
+    --logo-filter: invert(1) hue-rotate(180deg);
   }
 
   /* The canvas, not just the layout wrapper, carries the theme background.
@@ -67,6 +99,72 @@
      window everything below the fold would otherwise fall through to the
      browser's default canvas and show as a seam mid-scroll. */
   body {
-    @apply bg-background;
+    @apply bg-background text-foreground font-sans antialiased;
+    /* Korean wraps between words, not inside them. */
+    word-break: keep-all;
+    overflow-wrap: break-word;
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Something you can press: a hard ink shadow that lifts on hover and
+     sinks on press. */
+  .press {
+    box-shadow: 3px 3px 0 hsl(var(--shadow));
+    transition:
+      transform 120ms,
+      box-shadow 120ms;
+  }
+  .press:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 hsl(var(--shadow));
+  }
+  .press:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 hsl(var(--shadow));
+  }
+
+  /* The sun highlighter, under the one word on a screen that matters. On a
+     dark page the band sits lower, under light letters rather than behind. */
+  .highlight {
+    background: linear-gradient(
+      transparent 62%,
+      hsl(var(--sun)) 62%,
+      hsl(var(--sun)) 92%,
+      transparent 92%
+    );
+  }
+  .dark .highlight {
+    background: linear-gradient(
+      transparent 86%,
+      hsl(var(--sun)) 86%,
+      hsl(var(--sun)) 100%,
+      transparent 100%
+    );
+  }
+
+  /* A card that is a link: it lifts off the page on hover. */
+  .lift {
+    transition:
+      transform 120ms,
+      box-shadow 120ms;
+  }
+  .lift:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 5px 5px 0 hsl(var(--shadow));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .press,
+    .press:hover,
+    .press:active,
+    .lift:hover {
+      transform: none;
+    }
   }
 }

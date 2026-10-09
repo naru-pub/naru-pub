@@ -20,7 +20,7 @@ export default async function NewPostPage({
   if (!user.emailVerifiedAt) {
     return (
       <div className="bg-background min-h-screen p-4 sm:p-6">
-        <main className="mx-auto max-w-3xl space-y-4 border-2 border-border p-6">
+        <main className="mx-auto max-w-3xl space-y-4 border-2 border-line p-6">
           <h1 className="text-2xl font-bold">새 글 쓰기</h1>
           <p className="text-sm text-muted-foreground">
             게시판에 글을 쓰려면{" "}

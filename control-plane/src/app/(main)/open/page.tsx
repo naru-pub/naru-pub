@@ -173,7 +173,7 @@ export default async function OpenPage() {
 
   return (
     <div className="w-full p-6 space-y-8">
-      <div className="bg-card border-2 border-border shadow-lg rounded-lg p-6">
+      <div className="bg-card border-2 border-line rounded-lg p-6">
         <h2 className="text-3xl font-bold text-foreground mb-2 flex items-center gap-3">
           <BarChart3 size={28} /> 지표
         </h2>
@@ -184,8 +184,8 @@ export default async function OpenPage() {
 
       {/* Current Statistics */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
             <CardTitle className="text-sm font-medium text-foreground">
               총 저장 용량
             </CardTitle>
@@ -197,8 +197,8 @@ export default async function OpenPage() {
             <p className="text-xs text-muted-foreground">측정된 갠홈 합계</p>
           </CardContent>
         </Card>
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
             <CardTitle className="text-sm font-medium text-foreground">
               평균 저장 용량
             </CardTitle>
@@ -210,8 +210,8 @@ export default async function OpenPage() {
             <p className="text-xs text-muted-foreground">사용자당 평균</p>
           </CardContent>
         </Card>
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
             <CardTitle className="text-sm font-medium text-foreground">
               최대 저장 용량
             </CardTitle>
@@ -223,8 +223,8 @@ export default async function OpenPage() {
             <p className="text-xs text-muted-foreground">가장 큰 갠홈</p>
           </CardContent>
         </Card>
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
             <CardTitle className="text-sm font-medium text-foreground">
               전체 사용자
             </CardTitle>
@@ -236,8 +236,8 @@ export default async function OpenPage() {
             <p className="text-xs text-muted-foreground">가입한 모든 사용자</p>
           </CardContent>
         </Card>
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
             <CardTitle className="text-sm font-medium text-foreground">
               전체 조회수
             </CardTitle>
@@ -249,8 +249,8 @@ export default async function OpenPage() {
             <p className="text-xs text-muted-foreground">누적 페이지뷰</p>
           </CardContent>
         </Card>
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
             <CardTitle className="text-sm font-medium text-foreground">
               전체 순방문자
             </CardTitle>
@@ -262,8 +262,8 @@ export default async function OpenPage() {
             <p className="text-xs text-muted-foreground">누적 순방문자</p>
           </CardContent>
         </Card>
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
             <CardTitle className="text-sm font-medium text-foreground">
               전체 편집
             </CardTitle>

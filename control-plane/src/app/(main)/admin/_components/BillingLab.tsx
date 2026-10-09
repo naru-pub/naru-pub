@@ -101,7 +101,7 @@ function RecordDiff({
             return (
               <tr
                 key={key}
-                className={changed ? "bg-yellow-500/15 font-medium" : ""}
+                className={changed ? "bg-warning/10 font-medium" : ""}
               >
                 <td className="py-0.5 pr-3 align-top text-muted-foreground">
                   {key}
@@ -164,14 +164,14 @@ function PaymentsDiff({
             return (
               <tr
                 key={String(row.id)}
-                className={old ? "" : "bg-green-500/15 font-medium"}
+                className={old ? "" : "bg-success/10 font-medium"}
               >
                 {columns.map((column) => {
                   const changed = old && old[column] !== row[column];
                   return (
                     <td
                       key={column}
-                      className={`py-1 pr-3 align-top ${changed ? "bg-yellow-500/15 font-medium" : ""}`}
+                      className={`py-1 pr-3 align-top ${changed ? "bg-warning/10 font-medium" : ""}`}
                       title={changed ? `이전: ${show(old[column])}` : undefined}
                     >
                       {show(row[column])}
@@ -303,7 +303,7 @@ export function BillingLab({
     testCode ? `${label} (${codeLabel})` : label;
 
   return (
-    <div className="space-y-4 border-2 border-dashed border-yellow-500 bg-card p-4">
+    <div className="space-y-4 border-2 border-dashed border-warning bg-card p-4">
       <div>
         <h2 className="flex items-center gap-2 text-lg font-bold">
           <FlaskConical size={18} />
@@ -321,7 +321,7 @@ export function BillingLab({
         <label className="text-sm">
           <div className="mb-1 text-muted-foreground">계정</div>
           <select
-            className="border-2 border-border bg-background px-2 py-1"
+            className="border-2 border-line bg-background px-2 py-1"
             value={userId ?? ""}
             onChange={(event) => selectAccount(event.target.value)}
           >
@@ -341,7 +341,7 @@ export function BillingLab({
             Toss 응답 (TossPayments-Test-Code)
           </div>
           <select
-            className="border-2 border-border bg-background px-2 py-1"
+            className="border-2 border-line bg-background px-2 py-1"
             value={testCode}
             onChange={(event) => setTestCode(event.target.value)}
           >
@@ -498,7 +498,7 @@ export function BillingLab({
       ) : null}
 
       {runs.map((entry) => (
-        <div key={entry.id} className="space-y-3 border-2 border-border p-3">
+        <div key={entry.id} className="space-y-3 border-2 border-line p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={entry.result.ok ? "secondary" : "destructive"}>
               {entry.result.ok ? "완료" : "오류"}

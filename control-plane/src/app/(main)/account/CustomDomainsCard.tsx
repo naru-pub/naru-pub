@@ -139,8 +139,8 @@ export default function CustomDomainsCard({
   }
 
   return (
-    <Card className="bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <Globe2 size={20} />
           커스텀 도메인
@@ -210,9 +210,9 @@ export default function CustomDomainsCard({
                   return (
                     <div
                       key={domain.id}
-                      className={`rounded p-3 space-y-3 ${
+                      className={`p-3 space-y-3 ${
                         isActive
-                          ? "border-2 border-green-500 bg-green-500/5"
+                          ? "border-2 border-success bg-success/10"
                           : "border border-border"
                       }`}
                     >
@@ -233,7 +233,7 @@ export default function CustomDomainsCard({
                             </p>
                           )}
                           {isActive ? (
-                            <p className="text-sm font-medium text-green-600 dark:text-green-500 flex items-center gap-1">
+                            <p className="text-sm font-medium text-success flex items-center gap-1">
                               <CheckCircle2 size={14} />
                               연결 완료
                             </p>

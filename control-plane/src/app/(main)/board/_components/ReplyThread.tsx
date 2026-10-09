@@ -248,7 +248,7 @@ function ReplyItemView({
             {reply.authorLoginName}
           </span>
           {isPostAuthor && (
-            <span className="border border-teal-600 px-1.5 text-[11px] text-teal-700 dark:border-teal-300 dark:text-teal-300">
+            <span className="border border-link px-1.5 text-[11px] text-link">
               작성자
             </span>
           )}
@@ -258,7 +258,7 @@ function ReplyItemView({
             </span>
           )}
           {solved && (
-            <span className="bg-green-100 px-1.5 text-[11px] text-green-800 dark:bg-green-950 dark:text-green-300">
+            <span className="bg-success/10 px-1.5 text-[11px] text-success">
               해결한 답글
             </span>
           )}

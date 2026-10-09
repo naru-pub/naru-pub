@@ -12,6 +12,7 @@ import {
 import { listPopularTemplatePosts, listPosts } from "@/lib/board/posts";
 import { countUnreadNotifications } from "@/lib/board/replies";
 import { PostRow } from "./_components/PostRow";
+import { PostTitle } from "./_components/PostTitle";
 import { Thumbnail, postThumbnailUrl } from "./_components/Thumbnail";
 
 export const metadata: Metadata = {
@@ -74,8 +75,8 @@ export default async function BoardPage({
         </div>
 
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-          <section className="min-w-0 flex-1 border-2 border-border bg-card">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-border bg-secondary px-2">
+          <section className="min-w-0 flex-1 border-2 border-line bg-card">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-line bg-secondary px-2">
               <nav
                 aria-label="글 종류"
                 className="flex overflow-x-auto text-sm"
@@ -170,8 +171,8 @@ export default async function BoardPage({
             )}
 
             {popular.length > 0 && (
-              <section className="border-2 border-border bg-card">
-                <h2 className="border-b-2 border-border bg-secondary px-4 py-3 font-bold">
+              <section className="border-2 border-line bg-card">
+                <h2 className="border-b-2 border-line bg-secondary px-4 py-3 font-bold">
                   인기 템플릿
                 </h2>
                 <ul>
@@ -188,7 +189,7 @@ export default async function BoardPage({
                         />
                         <span className="min-w-0 space-y-1">
                           <span className="block truncate text-sm font-bold">
-                            {post.title}
+                            <PostTitle title={post.title} />
                           </span>
                           <span className="block text-xs text-muted-foreground">
                             {post.authorLoginName} ·{" "}
@@ -210,8 +211,8 @@ export default async function BoardPage({
               </section>
             )}
 
-            <section className="border-2 border-border bg-card">
-              <h2 className="border-b-2 border-border bg-secondary px-4 py-3 font-bold">
+            <section className="border-2 border-line bg-card">
+              <h2 className="border-b-2 border-line bg-secondary px-4 py-3 font-bold">
                 게시판 안내
               </h2>
               <div className="space-y-3 p-4 text-sm leading-relaxed text-muted-foreground">

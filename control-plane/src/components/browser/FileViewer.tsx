@@ -210,7 +210,7 @@ const FileViewer = forwardRef<FileViewerRef, FileViewerProps>(
         <div className="flex items-center justify-center h-full">
           <div className="text-center">
             <div className="text-4xl mb-4">❌</div>
-            <p className="text-red-600 mb-2">파일을 불러올 수 없습니다</p>
+            <p className="text-destructive mb-2">파일을 불러올 수 없습니다</p>
             <p className="text-sm text-muted-foreground">{error}</p>
           </div>
         </div>

@@ -152,8 +152,8 @@ export default async function PaymentsPage() {
           </Button>
         </div>
 
-        <Card className="min-w-0 max-w-full overflow-hidden rounded-none bg-card border-2 border-border shadow-lg">
-          <CardHeader className="bg-secondary border-b-2 border-border">
+        <Card className="min-w-0 max-w-full overflow-hidden rounded-none bg-card border-2 border-line">
+          <CardHeader className="border-b border-border">
             <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
               <ReceiptText size={20} />
               결제 내역

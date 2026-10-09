@@ -31,8 +31,8 @@ export default function FediverseCard({
   }
 
   return (
-    <Card className="bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <AtSign size={20} />
           연합우주

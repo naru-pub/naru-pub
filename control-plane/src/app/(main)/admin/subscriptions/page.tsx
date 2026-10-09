@@ -103,7 +103,7 @@ export default async function SubscriptionsPage({
         </p>
       </div>
 
-      <div className="overflow-x-auto border-2 border-border bg-card">
+      <div className="overflow-x-auto border-2 border-line bg-card">
         <Table>
           <TableHeader>
             <TableRow>

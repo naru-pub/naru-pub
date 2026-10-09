@@ -38,7 +38,7 @@ function formatChargeDate(nextBillingAt: string | Date) {
 
 function RenewalRetryNotice() {
   return (
-    <div className="border-2 border-yellow-500 bg-yellow-500/5 p-3 text-sm text-yellow-800 dark:text-yellow-300">
+    <div className="border-2 border-warning bg-warning/10 p-3 text-sm text-warning">
       정기 결제가 아직 완료되지 않아 매일 오전 9시에 다시 시도하고 있습니다.
       카드에 문제가 있다면 카드를 변경해 주세요.
     </div>
@@ -347,8 +347,8 @@ export default function SupportCard({
   }
 
   return (
-    <Card className="rounded-none bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="rounded-none bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <Heart size={20} />
           나루 유료 서비스
@@ -368,7 +368,7 @@ export default function SupportCard({
 
         {comp ? (
           <div className="space-y-3">
-            <div className="bg-green-500/5 border-2 border-green-500 p-3 text-sm text-green-700 dark:text-green-500">
+            <div className="bg-success/10 border-2 border-success p-3 text-sm text-success">
               평생 이용 권한으로 등록되어 있습니다. 나루를 아껴 주셔서
               감사합니다. 🙏
             </div>
@@ -477,8 +477,8 @@ export default function SupportCard({
             ) : null}
 
             {!emailVerified && (
-              <div className="space-y-3 border-2 border-yellow-500 bg-yellow-500/5 p-3 text-sm">
-                <p className="text-yellow-800 dark:text-yellow-300">
+              <div className="space-y-3 border-2 border-warning bg-warning/10 p-3 text-sm">
+                <p className="text-warning">
                   {email
                     ? `결제 영수증과 결제 안내를 보내드려야 하므로, 결제를 시작하려면 먼저 이메일 인증이 필요합니다. ${email} 주소로 보낸 인증 메일을 확인해 주세요.`
                     : "결제 영수증과 결제 안내를 보내드려야 하므로, 결제를 시작하려면 인증된 이메일 주소가 필요합니다. 계정 관리에서 이메일을 등록해 주세요."}

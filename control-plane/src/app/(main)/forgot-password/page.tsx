@@ -64,13 +64,13 @@ export default function ForgotPasswordPage() {
   if (isSubmitted) {
     return (
       <div className="max-w-md mx-auto p-6">
-        <div className="bg-white border-2 border-gray-300 shadow-lg rounded-lg p-6 text-center">
-          <h1 className="text-2xl font-bold text-gray-800 mb-4">이메일을 확인해주세요</h1>
-          <p className="text-gray-600 mb-4">
+        <div className="bg-card border-2 border-line p-6 text-center">
+          <h1 className="text-2xl font-bold text-foreground mb-4">이메일을 확인해주세요</h1>
+          <p className="text-muted-foreground mb-4">
             비밀번호 재설정 링크가 입력하신 이메일로 발송되었습니다.
             이메일을 확인하여 비밀번호를 재설정해주세요.
           </p>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             이메일이 도착하지 않았다면 스팸 폴더를 확인해주세요.
           </p>
         </div>
@@ -80,10 +80,10 @@ export default function ForgotPasswordPage() {
 
   return (
     <div className="max-w-md mx-auto p-6">
-      <div className="bg-white border-2 border-gray-300 shadow-lg rounded-lg p-6">
+      <div className="bg-card border-2 border-line p-6">
         <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-800 mb-2">비밀번호 찾기</h1>
-          <p className="text-gray-600">등록하신 이메일 주소를 입력해주세요</p>
+          <h1 className="text-2xl font-bold text-foreground mb-2">비밀번호 찾기</h1>
+          <p className="text-muted-foreground">등록하신 이메일 주소를 입력해주세요</p>
         </div>
         
         <Form {...form}>
@@ -96,16 +96,15 @@ export default function ForgotPasswordPage() {
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-gray-800 font-medium">이메일 주소</FormLabel>
+                  <FormLabel className="text-foreground font-medium">이메일 주소</FormLabel>
                   <FormControl>
                     <Input
                       type="email"
                       placeholder="example@email.com"
                       {...field}
-                      className="border-gray-300 focus:border-gray-500 bg-white"
                     />
                   </FormControl>
-                  <FormDescription className="text-gray-600 text-sm">
+                  <FormDescription className="text-muted-foreground text-sm">
                     계정에 연결된 인증된 이메일 주소를 입력해주세요.
                   </FormDescription>
                   <FormMessage />
@@ -114,7 +113,7 @@ export default function ForgotPasswordPage() {
             />
             <Button 
               type="submit" 
-              className="w-full bg-gray-600 hover:bg-gray-700 text-white border border-gray-400 font-medium"
+              className="w-full font-medium"
             >
               비밀번호 재설정 링크 보내기
             </Button>

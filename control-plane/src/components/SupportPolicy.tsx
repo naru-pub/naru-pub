@@ -21,8 +21,8 @@ const krw = (amount: number) => `${amount.toLocaleString("ko-KR")}원`;
 // REFUND_WINDOW_DAYS와 refundEligibility가 그대로 집행한다.
 export function SupportPolicy() {
   return (
-    <Card className="rounded-none bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="rounded-none bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <ScrollText size={20} />
           결제 상품 안내 및 판매 정책

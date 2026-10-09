@@ -31,7 +31,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const TRIGGER_CLASS =
-  "text-muted-foreground hover:text-foreground hover:bg-accent whitespace-nowrap px-2 sm:px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200";
+  "inline-flex min-h-10 items-center whitespace-nowrap px-2 sm:px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground";
+
+// A top-level item in the site's nav bar; the menus share its look.
+export function NavLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link href={href} className={TRIGGER_CLASS}>
+      {children}
+    </Link>
+  );
+}
 
 type ExtensionItem = {
   href: string;

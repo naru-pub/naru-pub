@@ -27,8 +27,8 @@ interface UserAgentsTableProps {
 
 export default function UserAgentsTable({ data }: UserAgentsTableProps) {
   return (
-    <Card className="bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground">브라우저</CardTitle>
         <CardDescription className="text-muted-foreground">
           최근 30일 기준 브라우저별 방문 현황

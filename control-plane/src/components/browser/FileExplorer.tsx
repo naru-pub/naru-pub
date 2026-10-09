@@ -387,14 +387,14 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
                     })()}
                     <button
                       onClick={handleConfirmRename}
-                      className="px-2 py-1 text-xs bg-green-100 text-green-700 border border-green-300 hover:bg-green-200 hover:border-green-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition-colors"
+                      className="px-2 py-1 text-xs bg-success/10 text-success border border-success hover:bg-success/20 focus:outline-none focus:ring-2 focus:ring-success/50 transition-colors"
                       title="저장 (Enter)"
                     >
                       ✓
                     </button>
                     <button
                       onClick={handleCancelRename}
-                      className="px-2 py-1 text-xs bg-red-100 text-red-700 border border-red-300 rounded-r hover:bg-red-200 hover:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 transition-colors"
+                      className="px-2 py-1 text-xs bg-destructive/10 text-destructive border border-destructive hover:bg-destructive/20 focus:outline-none focus:ring-2 focus:ring-destructive/50 transition-colors"
                       title="취소 (Esc)"
                     >
                       ✕
@@ -519,7 +519,7 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
       {/* Drag and Drop Overlay */}
       {isDragOver && (
         <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-card p-6 rounded-lg border-2 border-border shadow-lg text-center border-4 border-dashed border-primary">
+          <div className="bg-card p-6 rounded-lg border-2 border-line text-center border-4 border-dashed border-primary">
             <Upload size={60} className="mx-auto mb-4 text-primary" strokeWidth={1.25} />
             <p className="text-xl font-semibold text-primary">파일을 여기에 드롭하세요</p>
             <p className="text-sm mt-2 text-muted-foreground">
@@ -532,7 +532,7 @@ export default function FileExplorer({ initialFiles, userLoginName }: FileExplor
       {/* Upload Progress Overlay */}
       {uploading && (
         <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-card p-6 rounded-lg border-2 border-border shadow-lg text-center">
+          <div className="bg-card p-6 rounded-lg border-2 border-line text-center">
             <ArrowUpToLine size={28} className="mx-auto mb-2" />
             {uploadProgress && <UploadStatus progress={uploadProgress} />}
           </div>

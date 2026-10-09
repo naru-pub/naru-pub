@@ -91,8 +91,8 @@ export default async function BoardModerationPage({
         </p>
       </div>
 
-      <section className="border-2 border-border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-border bg-secondary px-2">
+      <section className="border-2 border-line bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-line bg-secondary px-2">
           <nav aria-label="종류" className="flex text-sm">
             <Link
               href={href({ view: "posts" })}

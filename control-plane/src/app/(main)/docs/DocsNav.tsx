@@ -14,10 +14,10 @@ export default function DocsNav({ current }: { current: string }) {
             <a
               href={href}
               aria-current={current === key ? "page" : undefined}
-              className={`block rounded-full border px-3 py-1.5 transition-colors ${
+              className={`block px-3 py-1.5 transition-colors ${
                 current === key
-                  ? "border-foreground bg-foreground text-background"
-                  : "text-muted-foreground hover:border-foreground hover:text-foreground"
+                  ? "border-2 border-line bg-foreground text-background"
+                  : "border-2 border-transparent text-muted-foreground hover:border-line hover:text-foreground"
               }`}
             >
               {label}

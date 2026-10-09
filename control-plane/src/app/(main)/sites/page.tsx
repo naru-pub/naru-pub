@@ -49,8 +49,8 @@ export default async function SitesPage({
   return (
     <div className="bg-background min-h-screen p-6">
       <div className="mx-auto max-w-7xl space-y-8">
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="border-b border-border">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
                 <Globe size={20} /> 모든 사이트

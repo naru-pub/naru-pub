@@ -78,7 +78,7 @@ export function NewPostForm({
     <form onSubmit={submit} className="space-y-6">
       <fieldset>
         <legend className="mb-2 text-sm font-bold">종류</legend>
-        <div className="grid grid-cols-2 border-2 border-border sm:grid-cols-4">
+        <div className="grid grid-cols-2 border-2 border-line sm:grid-cols-4">
           {POST_KINDS.map((value) => (
             <label
               key={value}
@@ -118,7 +118,7 @@ export function NewPostForm({
       </div>
 
       {kind === "template" && (
-        <div className="space-y-6 border-2 border-border p-4">
+        <div className="space-y-6 border-2 border-line p-4">
           <FolderPicker value={selection} onChange={setSelection} />
           <p className="text-xs text-muted-foreground">
             게시하는 순간의 파일이 공유돼요. 나중에 원본을 고쳐도 게시한

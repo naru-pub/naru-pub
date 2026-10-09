@@ -27,8 +27,8 @@ interface TopReferrersTableProps {
 
 export default function TopReferrersTable({ data }: TopReferrersTableProps) {
   return (
-    <Card className="bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground">유입 경로</CardTitle>
         <CardDescription className="text-muted-foreground">
           최근 30일 기준 상위 유입 경로

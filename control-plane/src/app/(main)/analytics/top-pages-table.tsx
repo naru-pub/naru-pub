@@ -28,8 +28,8 @@ interface TopPagesTableProps {
 
 export default function TopPagesTable({ data }: TopPagesTableProps) {
   return (
-    <Card className="bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground">인기 페이지</CardTitle>
         <CardDescription className="text-muted-foreground">
           최근 30일 기준 가장 많이 방문된 페이지

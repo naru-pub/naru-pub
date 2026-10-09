@@ -237,8 +237,8 @@ export default async function AnalyticsPage() {
   return (
     <div className="bg-background min-h-screen">
       <div className="max-w-6xl mx-auto p-6 space-y-8">
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="border-b border-border">
             <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
               <BarChart3 size={20} /> 사이트 분석
             </CardTitle>
@@ -253,8 +253,8 @@ export default async function AnalyticsPage() {
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="bg-card border-2 border-border shadow-lg">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+          <Card className="bg-card border-2 border-line">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
               <CardTitle className="text-sm font-medium text-foreground">
                 오늘
               </CardTitle>
@@ -269,8 +269,8 @@ export default async function AnalyticsPage() {
               </p>
             </CardContent>
           </Card>
-          <Card className="bg-card border-2 border-border shadow-lg">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+          <Card className="bg-card border-2 border-line">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
               <CardTitle className="text-sm font-medium text-foreground">
                 최근 7일
               </CardTitle>
@@ -285,8 +285,8 @@ export default async function AnalyticsPage() {
               </p>
             </CardContent>
           </Card>
-          <Card className="bg-card border-2 border-border shadow-lg">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+          <Card className="bg-card border-2 border-line">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
               <CardTitle className="text-sm font-medium text-foreground">
                 최근 30일
               </CardTitle>
@@ -301,8 +301,8 @@ export default async function AnalyticsPage() {
               </p>
             </CardContent>
           </Card>
-          <Card className="bg-card border-2 border-border shadow-lg">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-secondary border-b-2 border-border">
+          <Card className="bg-card border-2 border-line">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-border">
               <CardTitle className="text-sm font-medium text-foreground">
                 전체 기간
               </CardTitle>

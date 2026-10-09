@@ -57,7 +57,7 @@ export default function VerifyEmailPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="max-w-md w-full p-6">
-        <div className="bg-card border-2 border-border shadow-lg rounded-lg p-8">
+        <div className="bg-card border-2 border-line rounded-lg p-8">
           <div className="text-center mb-6">
             <h1 className="text-2xl font-bold text-foreground mb-2">
               이메일 인증
@@ -73,11 +73,11 @@ export default function VerifyEmailPage() {
 
           {status === "success" && (
             <div className="text-center">
-              <CheckCircle className="h-16 w-16 text-green-600 dark:text-green-400 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold text-green-700 dark:text-green-400 mb-2">
+              <CheckCircle className="h-16 w-16 text-success mx-auto mb-4" />
+              <h2 className="text-xl font-semibold text-success mb-2">
                 인증 완료
               </h2>
-              <p className="text-green-600 dark:text-green-500 mb-6">
+              <p className="text-success mb-6">
                 {message}
               </p>
               <Button asChild className="w-full">
@@ -92,11 +92,11 @@ export default function VerifyEmailPage() {
 
           {status === "error" && (
             <div className="text-center">
-              <XCircle className="h-16 w-16 text-red-600 dark:text-red-400 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold text-red-700 dark:text-red-400 mb-2">
+              <XCircle className="h-16 w-16 text-destructive mx-auto mb-4" />
+              <h2 className="text-xl font-semibold text-destructive mb-2">
                 인증 실패
               </h2>
-              <p className="text-red-600 dark:text-red-500 mb-6">{message}</p>
+              <p className="text-destructive mb-6">{message}</p>
               <Button variant="outline" asChild className="w-full">
                 <a href="/account">계정 관리로 이동</a>
               </Button>

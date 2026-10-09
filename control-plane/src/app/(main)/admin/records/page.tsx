@@ -89,9 +89,9 @@ export default async function PaymentRecordsPage({
           name="user"
           defaultValue={loginName ?? ""}
           placeholder="계정 이름으로 거르기"
-          className="border-2 border-border bg-background px-2 py-1"
+          className="border-2 border-line bg-background px-2 py-1"
         />
-        <button className="border-2 border-border px-3 py-1">보기</button>
+        <button className="border-2 border-line px-3 py-1">보기</button>
       </form>
 
       <section className="space-y-2">

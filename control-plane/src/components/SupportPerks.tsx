@@ -35,8 +35,8 @@ const PERKS = [
 
 export function SupportPerks() {
   return (
-    <Card className="rounded-none bg-card border-2 border-border shadow-lg">
-      <CardHeader className="bg-secondary border-b-2 border-border">
+    <Card className="rounded-none bg-card border-2 border-line">
+      <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <BadgeCheck size={20} />
           유료 기능
@@ -47,7 +47,7 @@ export function SupportPerks() {
           {PERKS.map((perk) => (
             <div
               key={perk.title}
-              className="border-2 border-border bg-background p-3"
+              className="border-2 border-line bg-background p-3"
             >
               <strong className="text-foreground">
                 {perk.emoji} {perk.title}:

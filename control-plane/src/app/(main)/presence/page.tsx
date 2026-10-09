@@ -50,8 +50,8 @@ export default async function PresencePage() {
   return (
     <div className="bg-background min-h-screen">
       <div className="mx-auto max-w-4xl space-y-8 p-6">
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="border-b border-border">
             <CardTitle className="text-foreground flex items-center gap-2 text-xl font-bold">
               <Globe2 size={20} /> 공개 설정
             </CardTitle>

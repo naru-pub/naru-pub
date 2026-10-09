@@ -19,8 +19,8 @@ export default async function AccountPage() {
   return (
     <div className="bg-background min-h-screen">
       <div className="max-w-4xl mx-auto p-6 space-y-8">
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="border-b border-border">
             <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
               <User size={20} /> 계정 관리
             </CardTitle>
@@ -46,8 +46,8 @@ export default async function AccountPage() {
         />
         <ChangePasswordForm />
 
-        <Card className="bg-card border-2 border-border shadow-lg">
-          <CardHeader className="bg-secondary border-b-2 border-border">
+        <Card className="bg-card border-2 border-line">
+          <CardHeader className="border-b border-border">
             <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
               <Settings size={20} /> 계정 작업
             </CardTitle>
