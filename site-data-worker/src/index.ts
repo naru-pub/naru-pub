@@ -1,4 +1,5 @@
-import type { Outcome, SiteData } from "./site";
+import type { SiteData } from "./site";
+import type { Outcome } from "./types";
 import { website, type WebsiteEnv } from "./website";
 
 export { SiteData } from "./site";

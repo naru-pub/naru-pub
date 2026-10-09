@@ -11,7 +11,8 @@ import {
   NAME,
   protocolError,
 } from "../../control-plane/src/lib/site-data/validation";
-import type { Outcome, Served, SiteData } from "./site";
+import type { SiteData } from "./site";
+import type { Outcome, Served } from "./types";
 
 // The public data API, /api/data/v1/<site>/..., routed here for every site.
 // A visitor's request is answered at the edge from the site's object instead
