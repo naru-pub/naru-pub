@@ -10,6 +10,11 @@ interface Env extends WebsiteEnv {
   SITE_DATA_WORKER_SECRET: string;
   /** The default monthly budget of anonymous requests per site. */
   SITE_MONTHLY_REQUESTS?: string;
+  /**
+   * "1" opens TEST_OPERATIONS. Only the test harness sets it
+   * (control-plane/scripts/with-site-data-worker.sh); production never does.
+   */
+  TEST_OPERATIONS?: string;
 }
 
 // Two surfaces. /api/data/v1/<site>/... is the public data API for sites the
@@ -22,12 +27,13 @@ const OPERATIONS = [
   "batch",
   "collections",
   "createCollections",
-  "export",
-  "import",
   "erase",
   "configure",
 ] as const;
-type Operation = (typeof OPERATIONS)[number];
+// Read and replace a whole site, ids and times included: for tests to plant
+// and inspect what the public operations cannot. Not found in production.
+const TEST_OPERATIONS = ["export", "import"] as const;
+type Operation = (typeof OPERATIONS)[number] | (typeof TEST_OPERATIONS)[number];
 
 // Site names.
 const SITE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -94,7 +100,11 @@ export default {
     const match = /^\/v1\/sites\/([^/]+)\/([A-Za-z]+)$/.exec(pathname);
     const site = match && decodeURIComponent(match[1]);
     const operation = match?.[2] as Operation | undefined;
-    if (!site || !SITE.test(site) || !OPERATIONS.includes(operation!))
+    const operations: readonly string[] =
+      env.TEST_OPERATIONS === "1"
+        ? [...OPERATIONS, ...TEST_OPERATIONS]
+        : OPERATIONS;
+    if (!site || !SITE.test(site) || !operations.includes(operation!))
       return failure(404, "Not found.");
     if (request.method !== "POST") return failure(405, "Method not allowed.");
     let input: unknown;

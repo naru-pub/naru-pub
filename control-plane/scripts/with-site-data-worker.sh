@@ -4,7 +4,8 @@
 # database lives in. Sets SITE_DATA_WORKER_URL and SITE_DATA_WORKER_SECRET for
 # it, and SITE_DATA_TEST_ORIGIN_PORT: the Worker sends what it does not answer
 # itself to a server a test may start on that port, standing in for the
-# control plane. Install ../site-data-worker first: pnpm install there.
+# control plane. It also opens the Worker's test-only export and import
+# operations. Install ../site-data-worker first: pnpm install there.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 worker_dir=../site-data-worker
@@ -26,6 +27,7 @@ origin_port=$((port + 2))
   --ip 127.0.0.1 --port "$port" --inspector-port $((port + 1)) \
   --persist-to "$scratch/worker" --var "SITE_DATA_WORKER_SECRET:$secret" \
   --var "PASSTHROUGH_ORIGIN:http://127.0.0.1:$origin_port" \
+  --var "TEST_OPERATIONS:1" \
   --log-level warn) >"$scratch/worker.log" 2>&1 &
 worker_pid=$!
 for _ in $(seq 1 150); do

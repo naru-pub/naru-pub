@@ -667,8 +667,8 @@ export class SiteData extends DurableObject<Env> {
   }
 
   /**
-   * Replaces the whole site with `snapshot`, keeping its ids. For restoring
-   * an `export`, and for tests; the control plane's configuration goes too.
+   * Replaces the whole site with `snapshot`, keeping its ids; the control
+   * plane's configuration goes too. Only tests reach this and `export`.
    */
   async import(snapshot: Snapshot) {
     return this.run(() => {

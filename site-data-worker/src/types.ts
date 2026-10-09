@@ -42,7 +42,7 @@ export type Collection = {
   write_access: string;
 };
 
-/** A document as `export` and `import` carry it; times are epoch ms. */
+/** A document as test-only `export` and `import` carry it; times in ms. */
 export type StoredDocument = {
   collection_id: string;
   id: string;

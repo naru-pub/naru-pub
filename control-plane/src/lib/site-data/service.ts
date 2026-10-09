@@ -74,7 +74,7 @@ function withDates(value: unknown): unknown {
  * The owner, whether the site has the database feature, and the sign-in's
  * scope (renewing its token), in that order.
  */
-async function admit(command: DataCommand) {
+async function resolveSiteAccess(command: DataCommand) {
   return db.transaction().execute(async (tx) => {
     await requestDeadline(tx);
     const owner = await tx
@@ -96,7 +96,7 @@ export async function executeData(command: DataCommand) {
   const { path, adminUserId } = command;
   if (path.length > 2) throw new DataError(404, "Not found.");
   path.forEach(name);
-  const { owner, allowedIds } = await admit(command);
+  const { owner, allowedIds } = await resolveSiteAccess(command);
   const admin = adminUserId === owner.id || allowedIds !== undefined;
   if (adminUserId !== undefined && !admin)
     throw new DataError(403, "Permission denied.");
@@ -140,7 +140,7 @@ export async function executeBatch(command: DataCommand) {
     operations.length > 100
   )
     throw new DataError(400, "Batch requires 1–100 operations.");
-  const { owner, allowedIds } = await admit(command);
+  const { owner, allowedIds } = await resolveSiteAccess(command);
   if (allowedIds === undefined && command.adminUserId !== owner.id)
     throw new DataError(403, "A batch needs an owner sign-in.");
   return withDates(
