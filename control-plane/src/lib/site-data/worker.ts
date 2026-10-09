@@ -48,7 +48,10 @@ export async function callSiteDataWorker<T>(
   } catch (error) {
     // The caller canceled: http.ts reports that itself.
     if (signal?.aborted) throw error;
-    console.error("Site database Worker unreachable", error);
+    console.error(
+      `Site database Worker unreachable for ${operation} on ${site}`,
+      error,
+    );
     throw unavailable();
   }
   const body = (await response.json().catch(() => null)) as {
@@ -59,7 +62,7 @@ export async function callSiteDataWorker<T>(
   if (body?.error && body.error.status === response.status)
     throw new DataError(body.error.status, body.error.message, body.error.code);
   console.error(
-    `Site database Worker answered ${response.status} to ${operation}`,
+    `Site database Worker answered ${response.status} to ${operation} on ${site}`,
   );
   throw unavailable();
 }

@@ -301,25 +301,29 @@ export class SiteData extends DurableObject<Env> {
 
   /**
    * An anonymous request at the edge. The object answers it only while the
-   * control plane's paid-status date is confirmed (`configure`); otherwise
-   * the Worker sends the request on and the control plane decides.
+   * site has the database feature by the control plane's confirmed date
+   * (`configure`). Otherwise the Worker sends the request on and the control
+   * plane decides from PostgreSQL, which never lags: a site whose feature
+   * has ended is refused there, and one whose owner just paid again is
+   * served without waiting for the next sync.
    */
   async serve(input: ServeInput): Promise<Outcome<Served>> {
     const ownerId = this.meta("owner_id");
     const until = this.meta("entitled_until");
     const confirmed = Number(this.meta("confirmed_until") ?? 0);
-    if (ownerId === null || until === null || confirmed <= Date.now())
+    const now = Date.now();
+    if (
+      ownerId === null ||
+      until === null ||
+      confirmed <= now ||
+      (until !== "forever" && Number(until) <= now)
+    )
       return { ok: true, value: { pass: true } };
     const spent = this.run(() => this.spend());
     if (!spent.ok) return spent;
     return this.run(() => {
       if (input.path.length > 2) throw new DataError(404, "Not found.");
       input.path.forEach(name);
-      if (until !== "forever" && Number(until) <= Date.now())
-        throw new DataError(
-          403,
-          "Database access is not enabled for this site.",
-        );
       return this.executeSync({
         ...input,
         ownerId,

@@ -346,7 +346,10 @@ serve to the control plane. That fallback still uses the same Durable Object
 for documents; PostgreSQL handles authentication and media metadata.
 
 The object serves visitors only while its database entitlement is valid and
-its confirmation is current. The `site-data-edge-sync` job runs every five
+its confirmation is current. Otherwise it sends the request to the control
+plane, which checks PostgreSQL: the edge never refuses on paid status, so a
+lapsed site is refused on time and a renewed one is served at once, without
+waiting for the next sync. The `site-data-edge-sync` job runs every five
 minutes, sends the entitlement end date and a one-hour confirmation, and copies
 document count and bytes used to `users` for admin reporting. It includes
 active complimentary accounts and subscriptions that expired within the last

@@ -82,7 +82,9 @@ export type Served =
 
 /**
  * What the control plane keeps current in the object of each site with the
- * database feature, so the edge can make PostgreSQL's paid-status check.
+ * database feature, so the edge knows when it may answer the site's visitors.
+ * It never refuses on paid status itself: past these dates, the control plane
+ * decides.
  */
 export type EdgeConfiguration = {
   ownerId: string;

@@ -44,6 +44,11 @@ export async function configureEdge(site: string, ownerId: string) {
  * Renews the confirmation of every site with the database feature, and of
  * sites that lost it recently, and copies each one's usage to `users` for the
  * /admin usage page. Run by the site-data-edge-sync job.
+ *
+ * A site that fails is tried once more after the others: an object that
+ * stalls for a moment should not fail the job, and a missed sync costs
+ * nothing until its confirmation runs out an hour later. Only a site that
+ * fails both times is reported.
  */
 export async function syncEdge() {
   const sites = await db
@@ -61,22 +66,37 @@ export async function syncEdge() {
       ]),
     )
     .execute();
-  const failures: string[] = [];
+  const sync = async (site: (typeof sites)[number]) => {
+    const usage = await configureEdge(site.login_name, site.id);
+    await db
+      .updateTable("users")
+      .set({
+        site_data_document_count: usage.documents,
+        site_data_bytes_used: usage.bytes,
+      })
+      .where("id", "=", site.id)
+      .execute();
+  };
+  const retry: typeof sites = [];
   for (const site of sites) {
     try {
-      const usage = await configureEdge(site.login_name, site.id);
-      await db
-        .updateTable("users")
-        .set({
-          site_data_document_count: usage.documents,
-          site_data_bytes_used: usage.bytes,
-        })
-        .where("id", "=", site.id)
-        .execute();
+      await sync(site);
+    } catch (error) {
+      retry.push(site);
+      console.warn(
+        `Edge sync for ${site.login_name} failed; trying it again after the others`,
+        error,
+      );
+    }
+  }
+  const failures: string[] = [];
+  for (const site of retry) {
+    try {
+      await sync(site);
     } catch (error) {
       failures.push(site.login_name);
       console.error(`Edge sync failed for ${site.login_name}`, error);
     }
   }
-  return { sites: sites.length, failures };
+  return { sites: sites.length, retried: retry.length, failures };
 }

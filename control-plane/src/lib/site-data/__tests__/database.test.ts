@@ -771,21 +771,25 @@ integration("answering visitors at the edge", () => {
     expect((await visit("posts/one?fresh=1")).status).toBe(200);
   });
 
-  test("a lapsed database feature is refused at the edge as in PostgreSQL", async () => {
+  test("paid status is decided by the control plane, never refused at the edge", async () => {
+    // Lapsed, and the edge told so: the control plane refuses, on time.
     await sql`update users set supporter_comp = false, supporter_until = now() - interval '60 days' where id = ${owner}`.execute(
       db,
     );
     await configureEdge("erin", owner);
-    const response = await visit("posts/one?fresh=1");
-    expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({
-      error: { message: "Database access is not enabled for this site." },
-    });
+    passed.length = 0;
+    expect((await visit("posts/one?fresh=1")).status).toBe(299);
+    // Paid again, before any sync: the edge still holds the old date, and
+    // sends visitors on rather than refusing them for the minutes until then.
     await sql`update users set supporter_comp = true where id = ${owner}`.execute(
       db,
     );
+    expect((await visit("posts/one?fresh=1")).status).toBe(299);
+    expect(passed).toHaveLength(2);
+    // The next sync lets the edge answer again.
     await configureEdge("erin", owner);
     expect((await visit("posts/one?fresh=1")).status).toBe(200);
+    expect(passed).toHaveLength(2);
   });
 
   test("a site's visitors stop at its monthly budget; its owner does not", async () => {
