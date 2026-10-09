@@ -18,6 +18,6 @@
 ## 3. 개발 가이드라인
 
 - TypeScript/JavaScript 코드는 ESLint 규칙을 따릅니다
-- Rust 코드는 `cargo fmt`와 `cargo clippy`를 통과해야 합니다
+- 엣지 Worker(`edge/`)를 바꾸면 `cd edge && pnpm test`를 통과해야 합니다
 - 새로운 기능은 테스트 코드를 포함해야 합니다
 - 커밋 메시지는 명확하고 설명적이어야 합니다

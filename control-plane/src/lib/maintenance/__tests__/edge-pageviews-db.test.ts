@@ -58,13 +58,27 @@ integration("edge pageview drain", () => {
         event(4, "192.0.2.3", "nobody-by-this-name"),
         event(5, ""),
       ];
+      // A run allowed no batches only reports how long events have waited.
+      expect(await drainEdgePageviews(db, 0)).toEqual({
+        stored: 0,
+        skipped: 0,
+        waitingSince: at + 60_000,
+      });
       // The first run stores everything, but its acknowledgement is lost.
       loseAcks = true;
-      expect(await drainEdgePageviews(db)).toEqual({ stored: 3, skipped: 2 });
+      expect(await drainEdgePageviews(db)).toEqual({
+        stored: 3,
+        skipped: 2,
+        waitingSince: null,
+      });
       expect(log).toHaveLength(5);
       // The next run is handed the same events and stores none twice.
       loseAcks = false;
-      expect(await drainEdgePageviews(db)).toEqual({ stored: 0, skipped: 5 });
+      expect(await drainEdgePageviews(db)).toEqual({
+        stored: 0,
+        skipped: 5,
+        waitingSince: null,
+      });
       expect(log).toHaveLength(0);
 
       const days = await sql<{ date: string; views: number; unique: number }>`

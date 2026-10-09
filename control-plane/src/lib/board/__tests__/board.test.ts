@@ -36,7 +36,7 @@ jest.mock("../storage", () => ({
       if (key.startsWith(prefix)) bucket.delete(key);
     }
   }),
-  purgeUrls: jest.fn(async () => {}),
+  purgeSiteFiles: jest.fn(async () => {}),
 }));
 // Hourly limits would trip over this many posts from one person.
 jest.mock("../limits", () => ({

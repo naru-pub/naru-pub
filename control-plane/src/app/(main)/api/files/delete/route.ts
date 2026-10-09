@@ -5,36 +5,10 @@ import { s3Client } from "@/lib/s3";
 import { assertJsonContentType } from "@/lib/utils";
 import { getUserObjectKey } from "@/lib/site-urls";
 import { assertNoPathTraversal } from "@/lib/file-paths";
-import { User } from "@/lib/auth";
 import * as Sentry from "@sentry/nextjs";
+import { purgeSiteFiles } from "@/lib/cache-purge";
 import { recordSiteEdit } from "@/lib/database";
 import { revalidatePath } from "next/cache";
-
-async function invalidateCloudflareCacheSingleFile(
-  user: User,
-  filename: string,
-) {
-  const zoneId = process.env.CLOUDFLARE_ZONE_ID!;
-  const userApiToken = process.env.CLOUDFLARE_USER_API_TOKEN!;
-  const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${userApiToken}`,
-    },
-    body: JSON.stringify({
-      files: [
-        getUserObjectKey(user.loginName, filename),
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    Sentry.captureException(response);
-  }
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -107,7 +81,7 @@ export async function POST(request: NextRequest) {
           // Extract filename from S3 key safely
           const keyParts = obj.Key.split("/");
           const filename = keyParts[keyParts.length - 1];
-          await invalidateCloudflareCacheSingleFile(user, filename);
+          await purgeSiteFiles(user.loginName, [filename]);
         }
       }
     } catch (e) {

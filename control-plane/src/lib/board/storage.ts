@@ -4,7 +4,6 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
-import * as Sentry from "@sentry/nextjs";
 import { s3Client } from "@/lib/s3";
 
 // The R2 operations templates need, in the site bucket. Kept apart so the
@@ -101,32 +100,5 @@ export async function deletePrefix(
   );
 }
 
-// Purges public URLs from Cloudflare's cache, 30 per call as the API allows.
-// A failed purge only delays a change, so it is reported and not thrown.
-export async function purgeUrls(urls: string[]): Promise<void> {
-  const zoneId = process.env.CLOUDFLARE_ZONE_ID;
-  const apiToken = process.env.CLOUDFLARE_USER_API_TOKEN;
-  if (!zoneId || !apiToken) return;
-  for (let i = 0; i < urls.length; i += 30) {
-    try {
-      const response = await fetch(
-        `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiToken}`,
-          },
-          body: JSON.stringify({ files: urls.slice(i, i + 30) }),
-        },
-      );
-      if (!response.ok) {
-        Sentry.captureMessage(
-          `Cloudflare purge failed: ${response.status} ${await response.text()}`,
-        );
-      }
-    } catch (error) {
-      Sentry.captureException(error);
-    }
-  }
-}
+// Through this module, which tests replace, like the bucket operations above.
+export { purgeSiteFiles } from "@/lib/cache-purge";

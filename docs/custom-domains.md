@@ -1,33 +1,21 @@
-# 커스텀 도메인 (Cloudflare for SaaS + Tunnel)
+# 커스텀 도메인 (Cloudflare for SaaS + 엣지 Worker)
 
-커스텀 도메인은 Cloudflare Tunnel public hostname만으로는 처리할 수 없습니다. 제3자 도메인은 우리 Cloudflare 계정의 zone이 아니므로, Cloudflare for SaaS의 Custom Hostnames가 TLS와 호스트 수락을 담당해야 합니다. Tunnel은 fallback origin으로 들어온 요청을 프록시까지 전달하고, 프록시는 `Host` 헤더를 보고 Cloudflare에서 활성화된 `custom_domains` 레코드를 사용자 홈 디렉터리로 매핑합니다.
+제3자 도메인은 우리 Cloudflare 계정의 zone이 아니므로, Cloudflare for SaaS의 Custom Hostnames가 TLS와 호스트 수락을 담당합니다. 커스텀 도메인 요청은 원래 호스트명(예: `limeburst.net`)으로 `naru.pub` zone에 들어오고, zone의 `*/*` Worker 라우트가 이를 엣지 Worker(`naru-edge`, `edge/`)로 보냅니다. Worker는 `Host` 헤더를 control plane이 보낸 커스텀 도메인 표에서 찾아 사용자 사이트를 R2에서 바로 서빙합니다. 표에 없는 호스트는 404입니다. 라우트 구성은 [배포 문서](deployment.md#hosted-sites-at-the-edge)를 참고하세요.
 
 운영 시 필요한 설정:
 
-- Cloudflare for SaaS fallback origin: Tunnel public hostname으로 연결되는 프록시 호스트입니다. 예: `proxy-fallback.naru.pub`
+- Cloudflare for SaaS fallback origin: Cloudflare for SaaS가 요구하므로 레코드는 있어야 하지만, Worker가 먼저 요청을 받으므로 트래픽이 실제로 도달하지는 않습니다.
 - `CUSTOM_DOMAIN_CNAME_TARGET`: 사용자가 DNS에 설정할 CNAME/ALIAS 대상입니다. Cloudflare for SaaS CNAME target으로 설정해야 합니다. 예: `customers.naru.pub`
 - `CLOUDFLARE_USER_API_TOKEN`: Custom Hostnames를 생성/조회/삭제할 API 토큰입니다. Cloudflare의 `SSL and Certificates Write` 권한이 필요합니다.
-- `PLATFORM_DOMAIN`: 프록시가 기본 서브도메인 라우팅에 사용할 플랫폼 도메인입니다. 예: `naru.pub`
-- `R2_PUBLIC_DOMAIN`: HTML/JS/JSON 외 정적 파일 리다이렉트에 사용할 R2 공개 도메인입니다. 예: `r2.naru.pub`
+- `EDGE_WORKER_URL`, `EDGE_WORKER_SECRET`: control plane이 Worker에 커스텀 도메인 표를 보낼 때 씁니다([배포 문서](deployment.md#edge-worker) 참고).
 
-유료 기능 활성화는 시간 기반 엔티틀먼트로 제어됩니다([유료 서비스와 결제](billing.md) 참고). 사용자가 계정 페이지에서 도메인을 등록하면 control-plane이 Cloudflare Custom Hostname을 생성하고, 사용자는 Cloudflare가 반환한 소유권/인증서 검증 레코드를 DNS에 추가합니다. 프록시는 `cloudflare_status = 'active'`, `ssl_status = 'active'`, `verified_at IS NOT NULL`이고 소유자가 유료 이용자(`supporter_comp` 또는 `supporter_until + PAYMENT_GRACE_DAYS > now()`)인 커스텀 도메인만 서빙합니다.
+유료 기능 활성화는 시간 기반 엔티틀먼트로 제어됩니다([유료 서비스와 결제](billing.md) 참고). 사용자가 계정 페이지에서 도메인을 등록하면 control-plane이 Cloudflare Custom Hostname을 생성하고, 사용자는 Cloudflare가 반환한 소유권/인증서 검증 레코드를 DNS에 추가합니다. 엣지는 `cloudflare_status = 'active'`, `ssl_status = 'active'`, `verified_at IS NOT NULL`이고 소유자가 유료 이용자(`supporter_comp` 또는 `supporter_until + PAYMENT_GRACE_DAYS > now()`)인 커스텀 도메인만 서빙합니다.
 
-## ⚠️ Tunnel catch-all 라우트 (필수)
+## 엣지의 커스텀 도메인 표
 
-Cloudflare for SaaS는 커스텀 도메인 요청을 fallback origin으로 보내면서 `Host` 헤더를 원래 커스텀 도메인(예: `limeburst.net`)으로 유지합니다. 이 호스트명은 Tunnel의 어떤 public hostname 규칙과도 일치하지 않으므로, **Tunnel ingress의 마지막 catch-all 규칙이 `http_status:404`가 아니라 프록시(`http://localhost:40001`)를 가리켜야 합니다.** 그렇지 않으면 인증서가 정상 발급되고 프록시 코드가 올바르더라도 모든 커스텀 도메인이 엣지에서 404를 반환합니다.
+control plane(`control-plane/src/lib/edge/domains.ts`)은 위 조건을 만족하는 도메인 전체를 로그인 이름과 엔티틀먼트가 끝나는 시각(`entitledUntil`)에 매핑해 내부 API `/v1/domains/replace`로 Worker에 보냅니다. Worker는 이 표를 KV(`DOMAINS` 바인딩, 항목 하나)에 두고 `confirmedUntil`까지, 즉 마지막으로 받은 뒤 3일 동안 서빙합니다. `site-data-edge-sync` 작업이 5분마다 표를 다시 보내고, 도메인이 활성화되거나 삭제되면 곧바로 보냅니다. 그래서 control plane이 멈춰도 커스텀 도메인은 최대 3일 동안 계속 응답합니다.
 
-이 catch-all 규칙은 **Zero Trust 웹 콘솔에서는 설정할 수 없습니다.** Public Hostnames 탭은 자신이 소유한 zone의 `hostname → service` 매핑만 추가할 수 있고, 호스트명 없는 catch-all 항목은 항상 `http_status:404`로 고정되어 편집/삭제가 불가능합니다. 따라서 API로 설정해야 합니다(또는 로컬 `config.yml`의 `ingress` catch-all 사용):
-
-```bash
-# 현재 설정 조회 후 마지막 catch-all 항목만 프록시로 변경하여 PUT
-# 계정 → Cloudflare Tunnel → Edit 권한이 있는 토큰 필요
-curl https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations \
-  -H "Authorization: Bearer $TOKEN"
-# config.ingress 배열의 마지막 항목을 {"service": "http://localhost:40001"} 로 바꾼 뒤
-# 같은 엔드포인트에 PUT {"config": {...}}
-```
-
-여러 앱이 같은 Tunnel을 공유하므로 편집 시 기존 ingress 규칙을 모두 보존해야 합니다. 알 수 없는 호스트는 프록시가 그대로 404를 반환하므로 다른 앱에 영향이 없습니다.
+Worker가 원본보다 먼저 커스텀 호스트명을 가로채므로, 예전 Rust 서버 시절에 필요했던 Tunnel ingress catch-all 규칙(커스텀 도메인을 `localhost:40001`로 보내던 것)은 더 이상 필요하지 않습니다.
 
 ## 인증 상태 자동 폴링
 

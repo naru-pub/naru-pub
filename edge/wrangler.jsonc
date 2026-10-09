@@ -28,7 +28,7 @@
     "SiteData": { "type": "durable-object", "storage": "sqlite" },
     "PageviewLog": { "type": "durable-object", "storage": "sqlite" },
   },
-  // The site bucket the proxy serves from: each site's files under <login>/.
+  // The site bucket: each site's files under <login>/.
   "r2_buckets": [{ "binding": "SITE_FILES", "bucket_name": "naru-pub" }],
   // The custom domain table the control plane sends (src/domains.ts).
   "kv_namespaces": [
@@ -57,9 +57,6 @@
     "SITE_MONTHLY_REQUESTS": "500000",
     "PLATFORM_DOMAIN": "naru.pub",
     "R2_PUBLIC_DOMAIN": "r2.naru.pub",
-    // Sites served here rather than by the proxy: logins separated by
-    // commas, or "*" for every site.
-    "EDGE_SITES": "*",
   },
   "observability": { "enabled": true },
 }

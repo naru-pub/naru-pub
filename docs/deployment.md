@@ -7,10 +7,9 @@ Production runs the images GitHub Actions builds. Every push to `main` runs
 ```
 ghcr.io/naru-pub/naru-pub-control-plane:git-<commit>-arm64
 ghcr.io/naru-pub/naru-pub-control-plane-jobs:git-<commit>-arm64
-ghcr.io/naru-pub/naru-pub-proxy:git-<commit>-arm64
 ```
 
-The two control-plane images are targets of one multi-stage
+The two images are targets of one multi-stage
 [`control-plane/Dockerfile`](../control-plane/Dockerfile). `control-plane` is
 the Next.js server built with `output: "standalone"`: only the files the server
 uses, without Chromium, pnpm, devDependencies or the build cache. The blue and
@@ -29,9 +28,8 @@ mise run deploy        # same as ./deploy.sh
 It resolves `origin/main`, waits with `gh` for that commit's CI run to succeed,
 and runs `deploy-server.sh <commit>` on the host named by the `naru-pub-deploy`
 alias in `~/.ssh/config`. The server pulls the images from ghcr.io and tags
-them `naru-pub-control-plane:<commit>`, `naru-pub-control-plane-jobs:<commit>`
-and `naru-pub-proxy:<commit>`. Only
-`origin/main` is deployed, so push first. `./deploy-server.sh <commit>` on the
+them `naru-pub-control-plane:<commit>` and
+`naru-pub-control-plane-jobs:<commit>`. Only `origin/main` is deployed, so push first. `./deploy-server.sh <commit>` on the
 server does the same deployment without the CI wait.
 
 This path is meant for a metered connection such as a phone hotspot. The
@@ -76,12 +74,13 @@ the development machine, and it uploads the compressed images from there, so
 avoid it on a metered connection.
 
 Neither path compiles on the server, and its Compose file has no `build:` on
-purpose: a Next.js build and a release Cargo build there ran the Docker VM that
+purpose: a Next.js build there ran the Docker VM that
 every other service on the host shares out of memory.
 
 `deploy-server.sh` uses blue-green HTTP deployments. A stable nginx gateway owns host
-ports `40000` (control plane) and `40001` (hosted-site proxy). The blue and green
-application slots have no published host ports.
+port `40000` (control plane). The blue and green application slots have no
+published host ports. Hosted sites are not served from the host at all; the
+edge Worker serves them ([below](#hosted-sites-at-the-edge)).
 
 For each deployment, `deploy-server.sh`:
 
@@ -92,8 +91,8 @@ For each deployment, `deploy-server.sh`:
 4. keeps the active web slot serving, stops the worker, and runs compatible
    database migrations from the new jobs image, then configures the pg_cron
    payment and maintenance schedules and enqueues catch-up tasks;
-5. starts the inactive slot and waits for the control plane, database, and
-   hosted-site proxy to become healthy;
+5. starts the inactive slot and waits for the control plane and database to
+   become healthy;
 6. reloads nginx to atomically direct new requests to the healthy slot;
 7. recreates the worker process from the new jobs image; and
 8. stops the previous slot and removes release images nothing can come back to.
@@ -132,8 +131,8 @@ fix; an older image may no longer work with the current schema. Backward
 compatibility is not maintained solely to support rollback.
 
 With `DEPLOY_DOWNTIME=1`, control-plane requests are unavailable until the new
-slot starts and passes its health checks. The stable gateway and hosted-site
-proxy can remain running. Use this mode for schema changes that the old web
+slot starts and passes its health checks. The stable gateway can remain
+running, and hosted sites keep answering from the edge. Use this mode for schema changes that the old web
 code cannot safely use; ordinary releases must be compatible with the schema
 while the previous slot serves.
 
@@ -146,8 +145,9 @@ active-slot file is lost, inspect the nginx configuration and restore
 The edge Worker ([`edge/`](../edge), deployed as `naru-edge`) serves
 hosted sites and keeps every site's database
 ([database.md](database.md#durable-objects-backend)). It is not part of the
-images and deploys on its own, from the development machine, with an account
-on the Workers Paid plan:
+images and deploys on its own: Cloudflare Workers Builds deploys it from
+`main` (root directory `edge`), on an account on the Workers Paid plan. To set
+it up, or deploy by hand from the development machine:
 
 ```bash
 cd edge
@@ -163,12 +163,13 @@ plane so application and background processes read them. Without these
 settings, site database operations are unavailable. Change the secret in
 both places together; private `/v1/sites/*` operations require it.
 
-`wrangler.jsonc` declares the `edge.naru.pub` custom domain and the
-public `naru.pub/api/data/v1/*` route. Cloudflare manages the custom domain's
-DNS and certificate. Both `workers.dev` and Preview URLs are disabled.
-The public route handles every site; the control plane does not manage
-per-site Worker routes. The `site-data-edge-sync` maintenance job renews
-entitlements and updates usage counters every five minutes.
+`wrangler.jsonc` declares the `edge.naru.pub` custom domain, the
+public `naru.pub/api/data/v1/*` route, and the hosted-site routes below.
+Cloudflare manages the custom domain's DNS and certificate. Both `workers.dev`
+and Preview URLs are disabled. The public route handles every site; the
+control plane does not manage per-site Worker routes. The `site-data-edge-sync`
+maintenance job renews entitlements, sends the custom-domain table, and updates
+usage counters every five minutes.
 
 Deploy the Worker before a control plane that relies on what is new in it,
 and redeploy it whenever `edge/` or the control-plane modules it
@@ -179,108 +180,70 @@ create them compatibly with what existing objects already hold.
 ## Hosted sites at the edge
 
 The same Worker serves hosted sites, `<login>.naru.pub`, straight from the
-site bucket (`edge/src/pages.ts`), so they keep working while the
-Mac mini is down. It follows the proxy's rules: directories resolve to
-`index.html`; HTML, JS and JSON come from the bucket; other files redirect to
-`r2.naru.pub`; a directory without its trailing slash redirects to it. It
-needs no database: a site's files are its `<login>/` prefix, and deleting an
-account deletes them. Custom domains stay on the proxy, because they reach the
-zone under their own hostnames.
+site bucket `naru-pub` (`edge/src/pages.ts`), so they keep working while the
+Mac mini is down. Directories resolve to `index.html`; HTML, JS and JSON come
+from the bucket; other files redirect (`302`) to
+`https://r2.naru.pub/<login>/<path>`; a directory without its trailing slash
+redirects (`308`) to it, keeping the query. A missing site or file is a `404`
+and a bucket failure a `502`. It needs no database: a site's files are its
+`<login>/` prefix, and deleting an account deletes them.
 
-Sites move over by `EDGE_SITES` in `wrangler.jsonc`: logins separated by
-commas, or `*` for all. The `*.naru.pub/*` route sends every subdomain to the
-Worker, which hands the sites it does not serve, and any other host, to the
-proxy through the tunnel unchanged. Before adding sites, compare the edge's
-answers with the proxy's for real URLs, for example the most visited paths:
+Pages carry `Cache-Control: public, max-age=0, stale-if-error=86400` and
+redirects `public, max-age=3600, stale-if-error=86400`, for browsers: Worker
+responses are not stored in Cloudflare's cache, so edits appear at once and
+every pageview reaches the Worker.
+
+Custom domains are served the same way. The control plane
+(`control-plane/src/lib/edge/domains.ts`) sends the Worker the whole table of
+domains it serves, through `/v1/domains/replace`: every domain active in
+Cloudflare and verified whose owner is complimentary or paid up through the
+grace period, mapped to the owner's login, with when that entitlement ends.
+The Worker keeps it in KV (`DOMAINS`, one entry) and serves it until its
+`confirmedUntil`, three days after the last push. `site-data-edge-sync` pushes
+it every five minutes, and activating or deleting a domain pushes it at once.
+Any host that is neither a site nor a listed custom domain gets a `404` from
+the Worker.
+
+Routes decide which requests reach the Worker. `wrangler.jsonc` declares
+`*.naru.pub/*` for sites and `*/*`, which catches custom domains: they reach
+the zone through Cloudflare for SaaS under their own hostnames. Those routes
+would also catch the control plane and the bucket's public domains, so keep
+them off with routes that have no Worker, created once (Workers Routes in the
+zone dashboard, or the API with a `zone:workers_routes` token):
 
 ```bash
-cd edge
-node scripts/compare-pages.mjs < urls.txt
-```
-
-The route would also catch the bucket's public domains, which a Worker route
-takes from R2. Keep them on R2 with routes that have no Worker, created once
-(Workers Routes in the zone dashboard, or the API with a `zone:workers_routes`
-token):
-
-```bash
-for host in r2.naru.pub media.naru.pub; do
+for host in naru.pub r2.naru.pub media.naru.pub; do
   curl -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/workers/routes" \
     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
     --data "{\"pattern\": \"$host/*\"}"
 done
 ```
 
+The more specific `naru.pub/api/data/v1/*` still goes to the Worker, and the
+Worker's custom domain `edge.naru.pub` takes precedence over every route.
+
 The Worker reads the bucket through its `SITE_FILES` binding, so it deploys
 with a token that can read R2 (Workers Builds' does).
 
-Pageviews of edge-served sites go to the Worker's pageview log, one Durable
-Object, and the `edge-pageview-drain` job moves them into the pageview tables
-every minute with the proxy's rules. While the control plane is down they wait
-there, up to six million, and are counted when it is back; the
-`edge_pageview_cursors` row keeps a batch from being counted twice.
+Pageviews go to the Worker's pageview log, one Durable Object, and the
+`edge-pageview-drain` job moves them into the pageview tables every minute
+([pageview analytics](design/pageview-analytics.md)). While the control plane
+is down they wait there, up to six million, and are counted when it is back;
+the `edge_pageview_cursors` row keeps a batch from being counted twice. The
+job fails, and alerts like any failed job, once the oldest waiting pageview is
+more than 30 minutes old.
 
-## Cloudflare cache rule for hosted sites
+After a file edit the control plane purges the file's
+`https://r2.naru.pub/<login>/<path>` URL (`control-plane/src/lib/cache-purge.ts`);
+hosted HTML, JS and JSON are not cached, so nothing else needs purging.
 
-Sites the edge serves answer from the Worker before the cache, so this rule
-applies only to what the proxy still serves: custom domains, and subdomains
-not yet in `EDGE_SITES`.
+## Former cache rule for hosted sites
 
-Hosted pages (HTML, JS and JSON served by the site proxy) carry
-`Cache-Control: public, max-age=0, stale-if-error=86400`. Cloudflare stores
-each page but revalidates it at the origin on every request, so edits appear
-at once and pageviews are still counted. When the origin answers with a `5xx`,
-Cloudflare serves the last good copy for up to a day instead. The proxy
-therefore reports its own failures as `5xx`: `503` when PostgreSQL is
-unreachable (after at most 3 seconds) and `502` when R2 fails. Only a missing
-site or file is a `404`, which replaces the cached copy. Redirects to R2 and
-to directory URLs are cached for an hour, with the same one-day fallback.
-
-This only covers failures the origin can still answer: PostgreSQL or R2
-outages, and both proxy slots being down (the nginx gateway returns `502`).
-When the whole host or the tunnel is down, Cloudflare generates the error
-itself (`530`/1033) and `stale-if-error` does not apply.
-
-Cloudflare does not cache HTML or JSON by default, so the rule below is
-required. Without it the header has no effect (`cf-cache-status: DYNAMIC`).
-Custom domains use this zone's rules through Cloudflare for SaaS. Like the data
-rule, it is zone configuration: recreate it by hand if the zone is rebuilt.
-
-**Caching → Cache Rules → `Hosted site fallback`**
-
-Expression (list every hostname that is not a hosted site). The R2 hosts must
-stay out: their objects carry no `Cache-Control`, so this rule would stop them
-being cached at all:
-
-```
-(not http.host in {"naru.pub" "r2.naru.pub" "media.naru.pub"})
-```
-
-| Setting                                | Value                                                    |
-| -------------------------------------- | -------------------------------------------------------- |
-| Cache eligibility                      | Eligible for cache                                       |
-| Edge TTL                               | Use cache-control header if present, bypass cache if not |
-| Browser TTL                            | Respect origin TTL                                       |
-| Serve stale content while revalidating | Off                                                      |
-
-Keep this rule after the zone's `Exclude CSS/ICO/JS from being cached` rules.
-Later rules win, so hosted-site JS gets the fallback (the `max-age=0` header
-keeps it fresh) while the exclusions still apply to `naru.pub` and R2.
-
-**Always Online** (Caching → Configuration) must stay off, because Cloudflare
-ignores `stale-if-error` while it is on.
-
-Enable the rule only after the proxy that sends these headers is deployed. The
-older proxy sends `max-age=3600`, and only URLs on the platform subdomain are
-purged on edit, so an edited page on a custom domain would stay stale for up
-to an hour.
-
-Check it with a GET on a hosted page. The first request is `MISS`, later ones
-are `REVALIDATED` or `EXPIRED`, never `DYNAMIC`:
-
-```bash
-curl -s -o /dev/null -D - "https://eyecntct.naru.pub/" | grep -iE 'cf-cache-status|cache-control'
-```
+The zone's `Hosted site fallback` Cache Rule (Caching → Cache Rules) gave the
+retired hosted-site proxy's pages a one-day `stale-if-error` fallback. Worker
+responses bypass the cache, so the rule no longer has any effect and can be
+deleted from the dashboard. Always Online no longer matters for hosted sites
+either.
 
 ## Public data caching
 

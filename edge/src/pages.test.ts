@@ -12,14 +12,12 @@ import {
 } from "./pages";
 import type { PageviewEvent } from "./pageview-log";
 
-// The proxy's own cases (proxy/src/main.rs, proxy/src/pageviews.rs), so the
-// edge and the proxy keep answering alike, and the handler against a bucket
-// held in memory.
+// The retired proxy's own cases, ported from its Rust tests, so sites keep
+// answering as they did, and the handler against a bucket held in memory.
 
-const env = (files: Record<string, string> = {}, sites = "*"): PagesEnv => ({
+const env = (files: Record<string, string> = {}): PagesEnv => ({
   PLATFORM_DOMAIN: "naru.pub",
   R2_PUBLIC_DOMAIN: "r2.naru.pub",
-  EDGE_SITES: sites,
   SITE_FILES: {
     async get(key: string) {
       if (!(key in files)) return null;
@@ -34,15 +32,12 @@ const env = (files: Record<string, string> = {}, sites = "*"): PagesEnv => ({
 });
 
 describe("hosts", () => {
-  test("serves the sites it is given, by login", () => {
+  test("names a site by its login", () => {
     expect(siteOf("alice.naru.pub", env())).toBe("alice");
     expect(siteOf("Alice.Naru.Pub.", env())).toBe("alice");
-    expect(siteOf("alice.naru.pub", env({}, "bob, alice"))).toBe("alice");
-    expect(siteOf("carol.naru.pub", env({}, "bob,alice"))).toBeNull();
-    expect(siteOf("alice.naru.pub", env({}, ""))).toBeNull();
   });
 
-  test("leaves the platform's own hosts and other names to the origin", () => {
+  test("names no site for the platform's own hosts and other names", () => {
     for (const host of [
       "naru.pub",
       "r2.naru.pub",

@@ -10,35 +10,9 @@ import { assertJsonContentType } from "@/lib/utils";
 import { collapseSlashes, getUserObjectKey } from "@/lib/site-urls";
 import { assertNoPathTraversal } from "@/lib/file-paths";
 import { revalidatePath } from "next/cache";
-import { User } from "@/lib/auth";
 import * as Sentry from "@sentry/nextjs";
+import { purgeSiteFiles } from "@/lib/cache-purge";
 import { recordSiteEdit } from "@/lib/database";
-
-async function invalidateCloudflareCacheSingleFile(
-  user: User,
-  filename: string,
-) {
-  const zoneId = process.env.CLOUDFLARE_ZONE_ID!;
-  const userApiToken = process.env.CLOUDFLARE_USER_API_TOKEN!;
-  const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${userApiToken}`,
-    },
-    body: JSON.stringify({
-      files: [
-        getUserObjectKey(user.loginName, filename),
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    Sentry.captureException(response);
-  }
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -152,10 +126,7 @@ export async function POST(request: NextRequest) {
       );
 
       // Invalidate Cloudflare cache
-      await Promise.all([
-        invalidateCloudflareCacheSingleFile(user, sourcePath),
-        invalidateCloudflareCacheSingleFile(user, newPath),
-      ]);
+      await purgeSiteFiles(user.loginName, [sourcePath, newPath]);
 
       revalidatePath("/files", "layout");
       await recordSiteEdit(user.id);

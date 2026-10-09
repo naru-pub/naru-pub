@@ -3,7 +3,6 @@
 ## 사전 요구사항
 
 - **Node.js** 18+
-- **Rust** 1.70+
 - **PostgreSQL** 15+
 - **Cloudflare R2** 계정 (또는 AWS S3)
 
@@ -67,25 +66,19 @@ pnpm migrate
 pnpm kysely-codegen
 ```
 
-## 4. Proxy Server 설정
+## 4. Edge Worker 설정
+
+호스팅 사이트(`<login>.naru.pub`와 커스텀 도메인)는 Cloudflare Worker인 `edge/`가 R2에서 바로 서빙합니다. 사이트 데이터베이스와 페이지뷰 기록도 이 Worker에 있습니다.
 
 ```bash
-cd ../proxy
-
-# 의존성 설치
-cargo build
-
-# 환경 변수 설정
-export R2_BUCKET_NAME=your-bucket-name
-export R2_ACCOUNT_ID=your-cloudflare-account-id
-export AWS_ACCESS_KEY_ID=your-access-key
-export AWS_SECRET_ACCESS_KEY=your-secret-key
-export PORT=5000
-export PLATFORM_DOMAIN=naru.pub
-export R2_PUBLIC_DOMAIN=r2.naru.pub
+cd ../edge
+pnpm install
+pnpm test
 ```
 
-> 커스텀 도메인 운영 설정(Cloudflare for SaaS, Tunnel catch-all)은 [커스텀 도메인](custom-domains.md)을, 결제 흐름 설정은 [유료 서비스와 결제](billing.md)를 참고하세요.
+Control Plane 테스트 가운데 Worker가 필요한 것은 `control-plane/scripts/with-edge-worker.sh`가 Worker를 `wrangler dev`로 띄운 채 실행합니다.
+
+> 커스텀 도메인 운영 설정(Cloudflare for SaaS, Worker 라우트)은 [커스텀 도메인](custom-domains.md)을, 결제 흐름 설정은 [유료 서비스와 결제](billing.md)를 참고하세요.
 
 ## 5. 개발 서버 실행
 
@@ -96,17 +89,9 @@ cd control-plane
 pnpm dev
 ```
 
-**Proxy Server:**
-
-```bash
-cd proxy
-cargo run
-```
-
-이제 다음 주소에서 서비스에 접근할 수 있습니다:
+이제 다음 주소에서 Control Plane에 접근할 수 있습니다:
 
 - Control Plane: http://localhost:3000
-- Proxy Server: http://localhost:5000
 
 ## 프로젝트 구조
 
@@ -119,10 +104,9 @@ naru-pub/
 │   │   ├── lib/          # 유틸리티 및 설정
 │   │   └── migrations/   # 데이터베이스 마이그레이션
 │   └── package.json
-├── proxy/                 # Rust 프록시 서버
+├── edge/                  # Cloudflare Worker (호스팅 사이트, 사이트 데이터베이스, 페이지뷰)
 │   ├── src/
-│   │   └── main.rs       # 메인 서버 로직
-│   └── Cargo.toml
+│   └── wrangler.jsonc
 ├── docs/                  # 문서
 └── README.md
 ```
@@ -152,10 +136,10 @@ pnpm kysely-codegen       # 데이터베이스 타입 생성
 pnpm charge-subscriptions # 구독 자동 갱신 청구 (cron이 매일 실행)
 ```
 
-### Proxy
+### Edge
 
 ```bash
-cargo build               # 빌드
-cargo run                 # 실행
-cargo test                # 테스트
+pnpm test                 # 테스트
+pnpm typecheck            # 타입 검사
+pnpm dev                  # wrangler dev로 실행
 ```

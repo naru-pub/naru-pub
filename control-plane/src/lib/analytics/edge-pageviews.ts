@@ -3,10 +3,10 @@ import { sql, type Kysely } from "kysely";
 import type { DB } from "@/lib/db";
 import { callPageviewLog } from "@/lib/edge/client";
 
-// Pageviews of the hosted sites the edge serves (site-data-worker/src/pages.ts)
-// wait in the Worker's pageview log until this takes them into the same tables
-// the proxy writes (proxy/src/pageviews.rs), with the same rules: a day is the
-// visit's UTC date, and a visitor is counted once per site and day.
+// Pageviews of hosted sites (edge/src/pages.ts) wait in the edge Worker's
+// pageview log until this takes them into the pageview tables, with the rules
+// the retired proxy wrote them by: a day is the visit's UTC date, and a
+// visitor is counted once per site and day.
 
 const LOG = "pageviews";
 const BATCH = 1000;
@@ -87,7 +87,8 @@ export async function storePageviews(db: Kysely<DB>, events: LoggedPageview[]) {
 /**
  * Takes everything waiting in the edge's log into PostgreSQL, a batch at a
  * time: store, then acknowledge. Stops after `maxBatches`, so a backlog after
- * an outage is worked off over several runs rather than in one long one.
+ * an outage is worked off over several runs rather than in one long one;
+ * `waitingSince` is then when the oldest event still waiting was recorded.
  */
 export async function drainEdgePageviews(db: Kysely<DB>, maxBatches = 20) {
   let stored = 0;
@@ -101,7 +102,10 @@ export async function drainEdgePageviews(db: Kysely<DB>, maxBatches = 20) {
     stored += result.stored;
     skipped += result.skipped;
     await callPageviewLog("ack", { through: events.at(-1)!.id });
-    if (events.length < BATCH) break;
+    if (events.length < BATCH) return { stored, skipped, waitingSince: null };
   }
-  return { stored, skipped };
+  const [oldest] = await callPageviewLog<LoggedPageview[]>("drain", {
+    limit: 1,
+  });
+  return { stored, skipped, waitingSince: oldest?.timestamp ?? null };
 }

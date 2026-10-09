@@ -4,9 +4,9 @@ import {
 } from "../../control-plane/src/lib/const";
 import type { PageviewEvent } from "./pageview-log";
 
-// Hosted sites, <login>.naru.pub, answered at the edge from the site bucket
-// instead of by the proxy (proxy/src/main.rs) on the Mac mini, so they stay up
-// while it is down. The rules are the proxy's, kept in step with it:
+// Hosted sites, <login>.naru.pub or a custom domain (domains.ts), answered at
+// the edge from the site bucket, so they stay up while the control plane is
+// down. The rules are those the retired Rust proxy followed:
 //
 // - a path names a file under the site's prefix, `<login>/`; one without an
 //   extension, or ending in `/`, names that directory's index.html;
@@ -15,17 +15,12 @@ import type { PageviewEvent } from "./pageview-log";
 // - an existing directory requested without its trailing slash redirects to
 //   it, keeping the query;
 // - a top-level navigation to an HTML page records a pageview.
-//
-// The proxy still serves custom domains (they reach the zone under their own
-// hostnames) and every subdomain this does not answer, which it sends on.
 
 export interface PagesEnv {
   /** The site bucket: each site's files under `<login>/`. */
   SITE_FILES: R2Bucket;
   PLATFORM_DOMAIN: string;
   R2_PUBLIC_DOMAIN: string;
-  /** Sites answered here: logins separated by commas, or `*` for all. */
-  EDGE_SITES?: string;
 }
 
 /**
@@ -42,7 +37,7 @@ const REDIRECT_CACHE_CONTROL = "public, max-age=3600, stale-if-error=86400";
 const SERVED = ["html", "htm", "js", "json"];
 const MAX_METADATA_BYTES = 2048;
 
-/** The site a host names, or null when it names none this Worker serves. */
+/** The site a subdomain names, or null when it names none. */
 export function siteOf(host: string, env: PagesEnv) {
   const name = host.replace(/\.$/, "").toLowerCase();
   const suffix = `.${env.PLATFORM_DOMAIN}`;
@@ -50,12 +45,11 @@ export function siteOf(host: string, env: PagesEnv) {
   const login = name.slice(0, -suffix.length);
   if (!LOGIN_NAME_REGEX.test(login) || RESERVED_LOGIN_NAMES.has(login))
     return null;
-  const sites = (env.EDGE_SITES ?? "").split(",").map((site) => site.trim());
-  return sites.includes("*") || sites.includes(login) ? login : null;
+  return login;
 }
 
 /**
- * Percent-decodes a URL path as the proxy does: `%XX` becomes that byte, any
+ * Percent-decodes a URL path as the proxy did: `%XX` becomes that byte, any
  * other `%` stays, and a path that is not UTF-8 afterwards decodes to "".
  */
 export function decodePath(path: string) {
@@ -140,14 +134,14 @@ export function pageviewPath(decoded: string) {
 // never sent.
 const text = (body: string) => new TextEncoder().encode(body);
 
-function notFound() {
+export function notFound() {
   return new Response(text("Not Found"), {
     status: 404,
     headers: { "Cache-Control": "no-store" },
   });
 }
 
-// A 5xx, never a 404, for failures on our side, as the proxy answers.
+// A 5xx, never a 404, for failures on our side, as the proxy answered.
 function unavailable() {
   return new Response(text("Service Unavailable"), {
     status: 502,

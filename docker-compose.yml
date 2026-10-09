@@ -30,21 +30,6 @@ x-control-plane: &control-plane
     retries: 30
     start_period: 5s
 
-x-proxy: &proxy
-  image: naru-pub-proxy:current
-  pull_policy: never
-  restart: unless-stopped
-  init: true
-  env_file: .env
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  healthcheck:
-    test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/5000'"]
-    interval: 2s
-    timeout: 3s
-    retries: 30
-    start_period: 5s
-
 services:
   gateway:
     image: nginx:1.30.4-alpine
@@ -52,7 +37,6 @@ services:
     restart: always
     ports:
       - "40000:3000"
-      - "40001:5000"
     volumes:
       - ./.deploy-state/nginx:/etc/nginx/conf.d:ro
     healthcheck:
@@ -66,12 +50,6 @@ services:
 
   control-plane-green:
     <<: *control-plane
-
-  proxy-blue:
-    <<: *proxy
-
-  proxy-green:
-    <<: *proxy
 
   # The jobs image: the compiled CLIs, and Chromium for screenshots. The web
   # image above is only the Next.js server and cannot run these.

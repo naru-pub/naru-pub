@@ -5,18 +5,18 @@
 #   ./deploy-server.sh <commit>
 #   ./deploy-server.sh rollback
 #
-# It deploys naru-pub-control-plane:<commit> (the Next.js server),
-# naru-pub-control-plane-jobs:<commit> (worker and migrations) and
-# naru-pub-proxy:<commit>. When `deploy.sh build` has already loaded them,
+# It deploys naru-pub-control-plane:<commit> (the Next.js server) and
+# naru-pub-control-plane-jobs:<commit> (worker and migrations). Hosted sites
+# are served by the edge Worker (edge/), not from here. When `deploy.sh build`
+# has already loaded them,
 # those are used. Otherwise they are pulled from the images GitHub Actions
 # built for <commit>:
 #
 #   ghcr.io/naru-pub/naru-pub-control-plane:git-<commit>-arm64
 #   ghcr.io/naru-pub/naru-pub-control-plane-jobs:git-<commit>-arm64
-#   ghcr.io/naru-pub/naru-pub-proxy:git-<commit>-arm64
 #
 # Nothing is compiled here. The builds used to run on this machine, where a
-# Next.js build and a release Cargo build ran the Docker VM out of memory while
+# Next.js build ran the Docker VM out of memory while
 # the live slot, and every other service on this host, was sharing it.
 set -Eeuo pipefail
 
@@ -101,12 +101,6 @@ upstream naru_control_plane {
     keepalive 32;
 }
 
-upstream naru_site_proxy {
-    zone naru_site_proxy 64k;
-    server proxy-$slot:5000 resolve;
-    keepalive 32;
-}
-
 server {
     listen 3000;
     client_max_body_size 0;
@@ -115,8 +109,7 @@ server {
     # Trusted only when the peer is the private tunnel address: cloudflared
     # connects outbound and these ports are not routable from off the host's
     # network, so an internet caller cannot supply this header themselves.
-    # Scoped to this server block, leaving the hosted-site proxy on :5000
-    # exactly as it was. real_ip runs before limit_req, so \$binary_remote_addr
+    # real_ip runs before limit_req, so \$binary_remote_addr
     # is already the visitor by the time a bucket is chosen.
     set_real_ip_from 10.0.0.0/8;
     set_real_ip_from 172.16.0.0/12;
@@ -214,23 +207,6 @@ server {
         proxy_buffering off;
     }
 }
-
-server {
-    listen 5000;
-    client_max_body_size 0;
-
-    location / {
-        proxy_pass http://naru_site_proxy;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$http_host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$naru_forwarded_proto;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-        proxy_buffering off;
-    }
-}
 EOF
 }
 
@@ -315,7 +291,7 @@ stop_slot() {
   # A stopped slot costs no memory. Its containers are kept, so a rollback
   # starts them again rather than rebuilding.
   echo "Stopping the $slot slot..."
-  docker compose stop "control-plane-$slot" "proxy-$slot"
+  docker compose stop "control-plane-$slot"
 }
 
 rollback() {
@@ -330,9 +306,8 @@ rollback() {
     echo "The $target slot has no containers to roll back to." >&2
     exit 1
   fi
-  docker compose start "control-plane-$target" "proxy-$target"
+  docker compose start "control-plane-$target"
   wait_for_healthy "control-plane-$target"
-  wait_for_healthy "proxy-$target"
   switch_gateway "$target"
   stop_slot "$current"
   echo "Traffic rolled back from $current to $target."
@@ -369,7 +344,6 @@ fi
 COMMIT=$1
 CONTROL_PLANE_IMAGE="naru-pub-control-plane:$COMMIT"
 JOBS_IMAGE="naru-pub-control-plane-jobs:$COMMIT"
-PROXY_IMAGE="naru-pub-proxy:$COMMIT"
 
 # The images were built from <commit>, and the Compose topology and this script
 # come from this checkout, so the two have to agree. Fast-forward to exactly
@@ -397,7 +371,7 @@ IMAGE_REGISTRY=${IMAGE_REGISTRY:-ghcr.io/naru-pub/naru-pub}
 # keychain, which the ssh session deploy.sh runs this in cannot open; see
 # docs/deployment.md.
 
-REPOSITORIES=(naru-pub-control-plane naru-pub-control-plane-jobs naru-pub-proxy)
+REPOSITORIES=(naru-pub-control-plane naru-pub-control-plane-jobs)
 
 # Pulled under the registry name, then renamed to the local one, so everything
 # below and the cleanup at the end only ever see naru-pub-*:<commit> and
@@ -421,14 +395,24 @@ done
 current=$(active_slot)
 target=$(other_slot "$current")
 control_plane_service="control-plane-$target"
-proxy_service="proxy-$target"
 
 # Every service is declared with the :current tags. Moving them does not touch
 # the running containers: a container holds the image it was created from, not
 # the name, which is also what keeps the stopped slot able to roll back.
 docker tag "$CONTROL_PLANE_IMAGE" naru-pub-control-plane:current
 docker tag "$JOBS_IMAGE" naru-pub-control-plane-jobs:current
-docker tag "$PROXY_IMAGE" naru-pub-proxy:current
+
+# Remove the retired hosted-site proxy, which the edge Worker replaced, and
+# its images. Neither slot's container is declared in Compose any more.
+for service in proxy-blue proxy-green; do
+  retired_proxy=$(docker ps -aq --filter label=com.docker.compose.project=naru-pub --filter "label=com.docker.compose.service=$service")
+  if [[ -n "$retired_proxy" ]]; then
+    docker rm -f $retired_proxy >/dev/null
+  fi
+done
+for tag in $(docker image ls naru-pub-proxy --format '{{.Tag}}'); do
+  docker rmi "naru-pub-proxy:$tag" >/dev/null 2>&1 || true
+done
 
 # Stop and remove the retired scheduler from older releases. It is no longer
 # declared in Compose; do not let it overlap the durable maintenance worker.
@@ -461,9 +445,8 @@ echo "Configuring pg_cron schedules..."
 docker compose run --rm --no-deps worker node dist/cli/configure-schedules.mjs
 
 echo "Starting and checking the $target slot..."
-docker compose up -d --no-deps --force-recreate "$control_plane_service" "$proxy_service"
+docker compose up -d --no-deps --force-recreate "$control_plane_service"
 wait_for_healthy "$control_plane_service"
-wait_for_healthy "$proxy_service"
 
 echo "Switching traffic to the $target slot..."
 switch_gateway "$target"

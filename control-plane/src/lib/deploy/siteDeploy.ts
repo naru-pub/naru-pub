@@ -6,6 +6,7 @@ import {
   ListObjectsV2Command,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
+import { purgeSiteFiles } from "@/lib/cache-purge";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createHash, randomBytes } from "crypto";
 import * as Sentry from "@sentry/nextjs";
@@ -240,32 +241,6 @@ async function updateUserHomeDirectorySize(userId: string, loginName: string) {
     .execute();
 
   return directorySize;
-}
-
-async function purgeCloudflareFiles(loginName: string, paths: string[]) {
-  const zoneId = process.env.CLOUDFLARE_ZONE_ID;
-  const userApiToken = process.env.CLOUDFLARE_USER_API_TOKEN;
-  if (!zoneId || !userApiToken || paths.length === 0) return;
-
-  const files = paths.map((path) =>
-    getUserObjectKey(loginName, path),
-  );
-
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${userApiToken}`,
-      },
-      body: JSON.stringify({ files }),
-    },
-  );
-
-  if (!response.ok) {
-    Sentry.captureException(response);
-  }
 }
 
 async function deleteObjects(keys: string[]) {
@@ -653,7 +628,7 @@ export async function finalizeGitHubDeployment(params: {
       .where("id", "=", deployment.id)
       .execute();
 
-    await purgeCloudflareFiles(deployment.login_name, [
+    await purgeSiteFiles(deployment.login_name, [
       ...manifest.files.map((file) =>
         publicPath(deployment.target_prefix, file.path),
       ),

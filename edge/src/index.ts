@@ -5,7 +5,7 @@ import {
   type DomainsEnv,
   type DomainTable,
 } from "./domains";
-import { servePage, siteOf, type PagesEnv } from "./pages";
+import { notFound, servePage, siteOf, type PagesEnv } from "./pages";
 import type { PageviewLog } from "./pageview-log";
 import type { SiteData } from "./site";
 import type { Outcome } from "./types";
@@ -98,18 +98,15 @@ const pageviews = (env: Env) =>
   env.PAGEVIEWS.get(env.PAGEVIEWS.idFromName("pageviews"));
 
 /**
- * A request for a subdomain or a custom domain. The edge answers the sites
- * EDGE_SITES names and the custom domains the control plane has listed;
- * everything else, and a request asking for the origin
- * (scripts/compare-pages.mjs), goes on to the proxy as before.
+ * A request for a subdomain or a custom domain: the site it names, or the one
+ * the control plane listed the domain for. Any other host is not found.
  */
 async function hostedSite(request: Request, env: Env, ctx: ExecutionContext) {
   const host = new URL(request.url).hostname;
   const login = host.endsWith(`.${env.PLATFORM_DOMAIN}`)
     ? siteOf(host, env)
     : await domainSite(host, env);
-  if (!login || request.headers.get("x-naru-origin") === "1")
-    return fetch(request);
+  if (!login) return notFound();
   return servePage(request, env, login, (event) =>
     ctx.waitUntil(
       pageviews(env)

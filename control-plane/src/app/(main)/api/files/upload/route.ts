@@ -8,6 +8,7 @@ import { assertNoPathTraversal, assertPlainFilename } from "@/lib/file-paths";
 import { revalidatePath } from "next/cache";
 import { User } from "@/lib/auth";
 import * as Sentry from "@sentry/nextjs";
+import { purgeSiteFiles } from "@/lib/cache-purge";
 import {
   ALLOWED_FILE_EXTENSIONS,
   FILE_EXTENSION_MIMETYPE_MAP,
@@ -78,32 +79,6 @@ function assertAllowedFilename(filename: string) {
   }
 }
 
-async function invalidateCloudflareCacheSingleFile(
-  user: User,
-  filename: string,
-) {
-  const zoneId = process.env.CLOUDFLARE_ZONE_ID!;
-  const userApiToken = process.env.CLOUDFLARE_USER_API_TOKEN!;
-  const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${userApiToken}`,
-    },
-    body: JSON.stringify({
-      files: [
-        getUserObjectKey(user.loginName, filename),
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    Sentry.captureException(response);
-  }
-}
-
 async function uploadSingleFile(user: User, directory: string, file: File) {
   if (file.size === 0) {
     return { success: false, message: "빈 파일은 업로드할 수 없습니다." };
@@ -140,7 +115,7 @@ async function uploadSingleFile(user: User, directory: string, file: File) {
     // Extract filename from S3 key safely for cache invalidation
     const keyParts = key.split("/");
     const filename = keyParts[keyParts.length - 1];
-    await invalidateCloudflareCacheSingleFile(user, filename);
+    await purgeSiteFiles(user.loginName, [filename]);
   } catch (e) {
     Sentry.captureException(e);
     console.error("S3 upload error:", e);

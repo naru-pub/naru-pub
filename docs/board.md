@@ -102,14 +102,14 @@ Code: `control-plane/src/lib/board/` (logic), `src/app/(main)/board/` (pages),
 
 ## Routes
 
-| page                                  | what                                             |
-| ------------------------------------- | ------------------------------------------------ |
-| `/board`                              | list; `?kind=`, `?sort=activity\|new\|applied`, `?page=` |
-| `/board/new`                          | compose; `?kind=`                                |
-| `/board/[postId]`                     | post, template panel and apply dialog, reply tree |
-| `/board/[postId]/edit`                | edit; publish a new template version             |
-| `/board/[postId]/replies/[replyId]`   | a reply and everything under it (permalink)      |
-| `/board/notifications`                | my reply notifications                           |
+| page                                | what                                                     |
+| ----------------------------------- | -------------------------------------------------------- |
+| `/board`                            | list; `?kind=`, `?sort=activity\|new\|applied`, `?page=` |
+| `/board/new`                        | compose; `?kind=`                                        |
+| `/board/[postId]`                   | post, template panel and apply dialog, reply tree        |
+| `/board/[postId]/edit`              | edit; publish a new template version                     |
+| `/board/[postId]/replies/[replyId]` | a reply and everything under it (permalink)              |
+| `/board/notifications`              | my reply notifications                                   |
 
 Every API route takes JSON only, including DELETE, and refuses cross-origin
 requests (`readJson`):
@@ -131,7 +131,7 @@ in-memory bucket in these tests.
 ## Not built yet
 
 - A live preview of the exact snapshot. It would need a separate preview
-  address handled by the Rust proxy, so a template's HTML never runs on the
+  address served by the edge Worker, so a template's HTML never runs on the
   control plane's origin.
 - Per-thread subscriptions, reports, and a moderator list separate from the
   payment operators.

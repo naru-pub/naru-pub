@@ -11,7 +11,6 @@ import { getUserFeatures } from "@/lib/entitlements";
 import { assertNoPathTraversal } from "@/lib/file-paths";
 import {
   collapseSlashes,
-  getPublicAssetUrl,
   getUserHomeDirectory,
   getUserObjectKey,
 } from "@/lib/site-urls";
@@ -619,21 +618,6 @@ export async function planApplication(
   };
 }
 
-// The URLs to purge after writing these paths. An index.html is also served
-// at its folder's own address, which is the one people visit.
-function publicUrls(loginName: string, paths: string[]): string[] {
-  const urls: string[] = [];
-  for (const path of paths) {
-    urls.push(getPublicAssetUrl(loginName, path));
-    if (path === "index.html" || path.endsWith("/index.html")) {
-      urls.push(
-        getPublicAssetUrl(loginName, path.slice(0, -"index.html".length)),
-      );
-    }
-  }
-  return urls;
-}
-
 function backupStamp(now: Date): string {
   // Seoul time, as the people reading the folder name are in Korea.
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -764,7 +748,7 @@ export async function applyTemplate(
   }
 
   await recordSiteEdit(user.id);
-  await storage.purgeUrls(publicUrls(user.loginName, written));
+  await storage.purgeSiteFiles(user.loginName, written);
 
   return {
     applicationId: application.id,

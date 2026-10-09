@@ -5,8 +5,8 @@ import { s3Client } from "@/lib/s3";
 import { assertJsonContentType } from "@/lib/utils";
 import { getUserObjectKey } from "@/lib/site-urls";
 import { assertNoPathTraversal } from "@/lib/file-paths";
-import { User } from "@/lib/auth";
 import * as Sentry from "@sentry/nextjs";
+import { purgeSiteFiles } from "@/lib/cache-purge";
 import {
   EDITABLE_FILE_EXTENSIONS,
   FILE_EXTENSION_MIMETYPE_MAP,
@@ -18,32 +18,6 @@ function assertEditableFilename(filename: string) {
   const extension = filename.split(".").pop();
   if (!extension || !EDITABLE_FILE_EXTENSIONS.includes(extension)) {
     throw new Error(`File type ${extension} is not editable.`);
-  }
-}
-
-async function invalidateCloudflareCacheSingleFile(
-  user: User,
-  filename: string,
-) {
-  const zoneId = process.env.CLOUDFLARE_ZONE_ID!;
-  const userApiToken = process.env.CLOUDFLARE_USER_API_TOKEN!;
-  const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${userApiToken}`,
-    },
-    body: JSON.stringify({
-      files: [
-        getUserObjectKey(user.loginName, filename),
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    Sentry.captureException(response);
   }
 }
 
@@ -131,7 +105,7 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      await invalidateCloudflareCacheSingleFile(user, filename);
+      await purgeSiteFiles(user.loginName, [filename]);
     } catch (e) {
       Sentry.captureException(e);
     }
