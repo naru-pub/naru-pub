@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 // 결제로 열리는 기능들을 한 줄씩 늘어놓는다. 첫 화면의 '사용 안내'와 같은
 // 행 스타일이되, /supporter 카드들의 두꺼운 테두리에 맞춘다. 결제 수단과 금액이
-// 묻히지 않도록 '나루 유료 서비스' 카드 안이 아니라 그 아래 별도 카드로 둔다. 여기
+// 묻히지 않도록 '나루 서포터 플랜' 카드 안이 아니라 그 아래 별도 카드로 둔다. 여기
 // 적힌 기능은 lib/entitlements의 PLAN_FEATURES.supporter와 일치해야 한다.
 const PERKS = [
   {

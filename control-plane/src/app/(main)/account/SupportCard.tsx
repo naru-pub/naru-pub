@@ -356,7 +356,7 @@ export default function SupportCard({
       <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <Heart size={20} />
-          나루 유료 서비스
+          나루 서포터 플랜
           {comp && <Badge variant="secondary">평생 이용</Badge>}
           {!comp && (isActive || isScheduled || supportActive) && (
             <Badge variant="secondary">결제 중</Badge>

@@ -147,7 +147,7 @@ export function SupporterMenu({
         <DropdownMenuItem asChild>
           <Link href="/supporter" className="flex items-center gap-2">
             <Heart size={16} />
-            서포터
+            플랜 관리
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />

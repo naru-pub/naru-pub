@@ -26,7 +26,7 @@ function SignedOutSupportCard() {
       <CardHeader className="border-b border-border">
         <CardTitle className="text-foreground text-xl font-bold flex items-center gap-2">
           <Heart size={20} />
-          나루 유료 서비스
+          나루 서포터 플랜
         </CardTitle>
       </CardHeader>
       <CardContent className="p-6 space-y-4">
