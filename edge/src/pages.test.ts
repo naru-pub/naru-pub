@@ -46,6 +46,7 @@ describe("hosts", () => {
     for (const host of [
       "naru.pub",
       "r2.naru.pub",
+      "edge.naru.pub",
       "site-data.naru.pub",
       "custom-domains.naru.pub",
       "a.b.naru.pub",

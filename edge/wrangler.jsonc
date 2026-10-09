@@ -4,12 +4,12 @@
 // public data API's visitors and serves the control plane (docs/database.md).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "naru-site-data",
+  "name": "naru-edge",
   // The account that holds the naru.pub zone: a route or custom domain only
   // reaches a Worker in its zone's account.
   "account_id": "5d508a37b0c6ea183620094959bbc8d1",
   "main": "src/index.ts",
-  // Production callers use site-data.naru.pub; expose no workers.dev URLs.
+  // The control plane calls edge.naru.pub; expose no workers.dev URLs.
   "workers_dev": false,
   "preview_urls": false,
   "compatibility_date": "2026-10-01",
@@ -22,10 +22,12 @@
       { "name": "PAGEVIEWS", "class_name": "PageviewLog" },
     ],
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["SiteData"] },
-    { "tag": "v2", "new_sqlite_classes": ["PageviewLog"] },
-  ],
+  // The classes' namespaces. Both moved here, with their data, from the
+  // Worker's former name, naru-site-data.
+  "exports": {
+    "SiteData": { "type": "durable-object", "storage": "sqlite" },
+    "PageviewLog": { "type": "durable-object", "storage": "sqlite" },
+  },
   // The site bucket the proxy serves from: each site's files under <login>/.
   "r2_buckets": [{ "binding": "SITE_FILES", "bucket_name": "naru-pub" }],
   // The public data API. Every site's database is a Durable Object, so the
@@ -33,8 +35,8 @@
   // control plane, the zone's origin.
   "routes": [
     { "pattern": "naru.pub/api/data/v1/*", "zone_name": "naru.pub" },
-    // The control plane calls /v1/sites/* through this production origin.
-    { "pattern": "site-data.naru.pub", "custom_domain": true },
+    // The control plane calls /v1/sites/* and /v1/pageviews/* here.
+    { "pattern": "edge.naru.pub", "custom_domain": true },
     // Hosted sites. r2.naru.pub, the bucket's public domain, is kept off this
     // by a more specific route without a Worker, set up once outside this
     // file (docs/deployment.md).

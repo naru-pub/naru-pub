@@ -140,7 +140,7 @@ export default {
     // which a route without a Worker keeps on R2 (docs/deployment.md).
     if (
       hostname.endsWith(`.${env.PLATFORM_DOMAIN}`) &&
-      hostname !== `site-data.${env.PLATFORM_DOMAIN}`
+      hostname !== `edge.${env.PLATFORM_DOMAIN}`
     )
       return hostedSite(request, env, ctx);
     const route = /^\/api\/data\/v1\/([^/]+)(?:\/(.*))?$/.exec(pathname);

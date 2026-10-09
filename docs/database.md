@@ -322,11 +322,11 @@ pnpm test:data:db
 
 ## Durable Objects backend
 
-All site collections and documents live in the `naru-site-data` Worker, in one
+All site collections and documents live in the `naru-edge` Worker, in one
 SQLite-backed Durable Object per site, named by the site. The control plane's
 `lib/site-data/service.ts` checks account existence, paid status, and owner
 sign-in scope before calling private Worker operations over HTTPS with a
-shared secret. Configure `SITE_DATA_WORKER_URL=https://site-data.naru.pub`
+shared secret. Configure `SITE_DATA_WORKER_URL=https://edge.naru.pub`
 and `SITE_DATA_WORKER_SECRET`; there is no PostgreSQL document fallback.
 
 PostgreSQL retains accounts, entitlements, website registrations,

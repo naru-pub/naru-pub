@@ -143,7 +143,7 @@ active-slot file is lost, inspect the nginx configuration and restore
 
 ## Edge Worker
 
-The edge Worker ([`edge/`](../edge), deployed as `naru-site-data`) serves
+The edge Worker ([`edge/`](../edge), deployed as `naru-edge`) serves
 hosted sites and keeps every site's database
 ([database.md](database.md#durable-objects-backend)). It is not part of the
 images and deploys on its own, from the development machine, with an account
@@ -157,13 +157,13 @@ pnpm run deploy
 openssl rand -base64 32 | tr -d '\n' | pnpm exec wrangler secret put SITE_DATA_WORKER_SECRET
 ```
 
-Set `SITE_DATA_WORKER_URL=https://site-data.naru.pub` and the same
+Set `SITE_DATA_WORKER_URL=https://edge.naru.pub` and the same
 `SITE_DATA_WORKER_SECRET` in the server's `.env`, then deploy the control
 plane so application and background processes read them. Without these
 settings, site database operations are unavailable. Change the secret in
 both places together; private `/v1/sites/*` operations require it.
 
-`wrangler.jsonc` declares the `site-data.naru.pub` custom domain and the
+`wrangler.jsonc` declares the `edge.naru.pub` custom domain and the
 public `naru.pub/api/data/v1/*` route. Cloudflare manages the custom domain's
 DNS and certificate. Both `workers.dev` and Preview URLs are disabled.
 The public route handles every site; the control plane does not manage
