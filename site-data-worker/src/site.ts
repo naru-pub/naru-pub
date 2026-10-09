@@ -89,7 +89,34 @@ export type Snapshot = {
 /** Errors cross the RPC boundary as values: a thrown error loses its fields. */
 export type Outcome<T> =
   | { ok: true; value: T }
-  | { ok: false; error: { status: number; message: string; code?: ErrorCode } };
+  | {
+      ok: false;
+      error: {
+        status: number;
+        message: string;
+        code?: ErrorCode;
+        /** Set when the monthly budget is spent: when it resets, epoch ms. */
+        resetsAt?: number;
+      };
+    };
+
+/** A request the object answers itself, at the edge, for a visitor. */
+export type ServeInput = Omit<ExecuteInput, "ownerId" | "access">;
+/** Answered, or to be sent on to the control plane. */
+export type Served =
+  | { pass: true }
+  | { pass?: undefined; result: unknown; publicRead: boolean };
+
+/** What the control plane keeps current in each object it serves at the edge. */
+export type EdgeConfiguration = {
+  ownerId: string;
+  /** Answer anonymous requests here rather than passing them on. */
+  edge: boolean;
+  /** When the site's database feature ends, epoch ms; null never. */
+  entitledUntil: number | null;
+  /** A budget other than the Worker's default; null restores the default. */
+  monthlyRequests?: number | null;
+};
 
 type Row = Record<string, SqlStorageValue>;
 
@@ -107,6 +134,25 @@ const outsideScope = (collection: string) =>
   );
 const unsupported = () =>
   new DataError(400, "Data contains unsupported characters or numbers.");
+/** Anonymous requests a site may make each calendar month (UTC). */
+const DEFAULT_MONTHLY_REQUESTS = 500_000;
+/** The count is kept in memory and written every this many requests. */
+const BUDGET_SAVE_EVERY = 25;
+
+class BudgetSpent extends DataError {
+  constructor(
+    limit: number,
+    public resetsAt: number,
+  ) {
+    super(
+      429,
+      `This site has used its ${limit.toLocaleString("en-US")} database requests for the month. They resume on ${new Date(resetsAt).toISOString().slice(0, 10)}.`,
+      "RATE_LIMITED",
+    );
+  }
+}
+const nextMonth = (now: Date) =>
+  Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
 const rateLimited = () =>
   new DataError(429, "Public write rate limit reached. Try again next minute.");
 
@@ -239,6 +285,8 @@ function filterConditions(filter: ReturnType<typeof filters>) {
 
 export class SiteData extends DurableObject<Env> {
   private sql: SqlStorage;
+  /** This month's anonymous requests, ahead of what is saved in `meta`. */
+  private budget?: { month: string; used: number; unsaved: number };
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -286,6 +334,9 @@ export class SiteData extends DurableObject<Env> {
             status: error.status,
             message: error.message,
             code: error.code,
+            ...(error instanceof BudgetSpent
+              ? { resetsAt: error.resetsAt }
+              : {}),
           },
         };
       throw error;
@@ -394,9 +445,104 @@ export class SiteData extends DurableObject<Env> {
     );
   }
 
+  private monthlyLimit() {
+    const own = this.meta("monthly_requests");
+    if (own !== null) return Number(own);
+    const configured = Number(
+      (this.env as { SITE_MONTHLY_REQUESTS?: string }).SITE_MONTHLY_REQUESTS,
+    );
+    return configured > 0 ? configured : DEFAULT_MONTHLY_REQUESTS;
+  }
+
+  /**
+   * Counts one anonymous request against the month, or refuses it once the
+   * month's budget is spent. Owners are never counted. Run on its own, not in
+   * the request's transaction: a request that then fails was still served.
+   * Losing up to BUDGET_SAVE_EVERY counts when the object is evicted is the
+   * price of not writing on every read.
+   */
+  private spend() {
+    const now = new Date();
+    const month = now.toISOString().slice(0, 7);
+    if (!this.budget || this.budget.month !== month)
+      this.budget = {
+        month,
+        used:
+          this.meta("budget_month") === month
+            ? Number(this.meta("budget_used"))
+            : 0,
+        unsaved: 0,
+      };
+    const limit = this.monthlyLimit();
+    if (this.budget.used >= limit) throw new BudgetSpent(limit, nextMonth(now));
+    this.budget.used += 1;
+    this.budget.unsaved += 1;
+    if (this.budget.unsaved >= BUDGET_SAVE_EVERY) {
+      this.setMeta("budget_month", month);
+      this.setMeta("budget_used", String(this.budget.used));
+      this.budget.unsaved = 0;
+    }
+  }
+
   /** A collection or document request; see service.ts executeAdmittedData. */
   async execute(input: ExecuteInput) {
+    if (input.access.anonymous) {
+      const spent = this.run(() => this.spend());
+      if (!spent.ok) return spent;
+    }
     return this.run(() => this.executeSync(input));
+  }
+
+  /**
+   * An anonymous request at the edge. The object answers it only while the
+   * control plane has it serving the site (`configure`) and it is not frozen
+   * by a move; otherwise the Worker sends the request on, and the control
+   * plane decides. The paid-status check PostgreSQL makes for the control
+   * plane is made here against the date the control plane last sent.
+   */
+  async serve(input: ServeInput): Promise<Outcome<Served>> {
+    const ownerId = this.meta("owner_id");
+    const until = this.meta("entitled_until");
+    if (
+      ownerId === null ||
+      until === null ||
+      this.meta("edge") !== "1" ||
+      this.meta("frozen") === "1"
+    )
+      return { ok: true, value: { pass: true } };
+    const spent = this.run(() => this.spend());
+    if (!spent.ok) return spent;
+    return this.run(() => {
+      if (input.path.length > 2) throw new DataError(404, "Not found.");
+      input.path.forEach(name);
+      if (until !== "forever" && Number(until) <= Date.now())
+        throw new DataError(
+          403,
+          "Database access is not enabled for this site.",
+        );
+      return this.executeSync({
+        ...input,
+        ownerId,
+        access: { admin: false, allowedIds: null, anonymous: true },
+      });
+    });
+  }
+
+  /** Sets what `serve` relies on; see EdgeConfiguration. */
+  async configure(input: EdgeConfiguration) {
+    return this.run(() => {
+      this.claim(input.ownerId);
+      this.setMeta("edge", input.edge ? "1" : null);
+      this.setMeta(
+        "entitled_until",
+        input.entitledUntil === null ? "forever" : String(input.entitledUntil),
+      );
+      if (input.monthlyRequests !== undefined)
+        this.setMeta(
+          "monthly_requests",
+          input.monthlyRequests === null ? null : String(input.monthlyRequests),
+        );
+    });
   }
 
   private executeSync(input: ExecuteInput) {
@@ -860,6 +1006,7 @@ export class SiteData extends DurableObject<Env> {
       this.sql.exec("DELETE FROM collections");
       this.sql.exec("DELETE FROM rate_limits");
       this.sql.exec("DELETE FROM meta");
+      this.budget = undefined;
       if (snapshot.ownerId !== null) this.setMeta("owner_id", snapshot.ownerId);
       for (const collection of snapshot.collections)
         this.sql.exec(
@@ -887,6 +1034,7 @@ export class SiteData extends DurableObject<Env> {
   /** Erases the site, for account deletion. */
   async erase(): Promise<Outcome<null>> {
     await this.ctx.storage.deleteAll();
+    this.budget = undefined;
     // deleteAll drops the tables too; this instance may serve again.
     this.createTables();
     return { ok: true, value: null };

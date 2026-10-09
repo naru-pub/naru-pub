@@ -33,9 +33,13 @@ pg_started=1
 
 secret=$(head -c 32 /dev/urandom | base64 | tr -dc A-Za-z0-9)
 port=$((20000 + RANDOM % 20000))
+# Where the Worker sends on what it does not answer itself: the control plane
+# in production, a server the tests start on this port here.
+origin_port=$((port + 2))
 (cd "$worker_dir" && exec ./node_modules/.bin/wrangler dev --local \
   --ip 127.0.0.1 --port "$port" --inspector-port $((port + 1)) \
   --persist-to "$scratch/worker" --var "SITE_DATA_WORKER_SECRET:$secret" \
+  --var "PASSTHROUGH_ORIGIN:http://127.0.0.1:$origin_port" \
   --log-level warn) >"$scratch/worker.log" 2>&1 &
 worker_pid=$!
 for _ in $(seq 1 100); do
@@ -47,8 +51,15 @@ for _ in $(seq 1 100); do
   sleep 0.2
 done
 
-NARU_DATA_TEST=1 NARU_DATA_DO_TEST=1 \
+export NARU_DATA_TEST=1 NARU_DATA_DO_TEST=1 NARU_DATA_TEST_BACKEND=durable_object \
   DATABASE_URL="postgresql://sdk_test@localhost/naru_data_test?host=$scratch" \
   SITE_DATA_WORKER_URL="http://127.0.0.1:$port" SITE_DATA_WORKER_SECRET="$secret" \
-  ./node_modules/.bin/jest --config jest.data.config.cjs --runInBand \
-  src/lib/site-data/__tests__/durable-object.test.ts "$@"
+  SITE_DATA_TEST_ORIGIN_PORT="$origin_port"
+# The backend's own suite, then the real SDK's contract suite with its site on
+# a Durable Object: first through the control plane (stage 1), then with its
+# data requests sent to the Worker as Cloudflare would route them (stage 2).
+./node_modules/.bin/jest --config jest.data.config.cjs --runInBand \
+  src/lib/site-data/__tests__/durable-object.test.ts \
+  src/lib/site-data/__tests__/sdk-integration.test.ts "$@"
+NARU_DATA_TEST_EDGE=1 ./node_modules/.bin/jest --config jest.data.config.cjs \
+  --runInBand src/lib/site-data/__tests__/sdk-integration.test.ts "$@"

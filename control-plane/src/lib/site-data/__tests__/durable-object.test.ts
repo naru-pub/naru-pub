@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { afterAll, beforeAll, describe, expect, test } from "@jest/globals";
+import { createServer, type Server } from "node:http";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { siteDataBackend } from "../backend";
@@ -9,6 +10,7 @@ import {
   eraseSiteData,
   executeOnDurableObject,
 } from "../durable-object";
+import { configureEdge } from "../edge";
 import { moveSite, postgresSnapshot, type Snapshot } from "../move";
 import {
   approveAuthorization,
@@ -82,6 +84,8 @@ integration("Durable Objects site database", () => {
   beforeAll(async () => {
     await setupTestDatabase();
     initialized = true;
+    // The Worker's storage outlives a suite, and other suites use alice too.
+    await eraseSiteData("alice");
     owner = await insertUser("alice");
     await onDurableObject("alice");
   });
@@ -607,6 +611,7 @@ integration("moving a site between stores", () => {
   beforeAll(async () => {
     await setupTestDatabase();
     initialized = true;
+    await eraseSiteData("dave");
     owner = await insertUser("dave");
     for (const name of ["posts", "notes"])
       await executeData({
@@ -807,4 +812,244 @@ integration("both stores answer the same queries", () => {
     );
     expect(await compareSite("carol")).toEqual([]);
   }, 120_000);
+});
+
+integration("answering visitors at the edge", () => {
+  let initialized = false;
+  let owner: string;
+  let origin: Server;
+  /** What reached the stand-in control plane. */
+  const passed: { method: string; url: string; body: string }[] = [];
+  const worker = process.env.SITE_DATA_WORKER_URL!;
+  const visit = (path: string, init: RequestInit = {}) =>
+    fetch(`${worker}/api/data/v1/erin/${path}`, {
+      ...init,
+      headers: {
+        Origin: "https://erin.example",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+  const owned = async (method: string, path: string[], body?: object) =>
+    (await siteDataBackend("erin")).execute({
+      site: "erin",
+      path,
+      method,
+      body: body as Record<string, unknown>,
+      adminUserId: owner,
+    });
+
+  beforeAll(async () => {
+    await setupTestDatabase();
+    initialized = true;
+    await eraseSiteData("erin");
+    owner = await insertUser("erin");
+    await onDurableObject("erin");
+    await owned("POST", [], { name: "posts", read: "world", write: "create" });
+    await owned("POST", [], { name: "secret" });
+    await owned("PUT", ["posts", "one"], { data: { title: "first" } });
+    await configureEdge("erin", owner, true);
+    origin = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      passed.push({
+        method: request.method!,
+        url: request.url!,
+        body: Buffer.concat(chunks).toString(),
+      });
+      response.writeHead(299, { "Content-Type": "application/json" });
+      response.end('{"from":"control plane"}');
+    });
+    await new Promise<void>((resolve) =>
+      origin.listen(
+        Number(process.env.SITE_DATA_TEST_ORIGIN_PORT),
+        "127.0.0.1",
+        resolve,
+      ),
+    );
+  });
+  afterAll(async () => {
+    origin.closeAllConnections();
+    await new Promise((resolve) => origin.close(resolve));
+    if (initialized) await teardownTestDatabase();
+  });
+
+  test("a visitor's read is answered at the edge exactly as the control plane answers it", async () => {
+    const response = await visit("posts/one?fresh=1");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const body = await response.json();
+    expect(body).toEqual({
+      document: {
+        id: "one",
+        data: { title: "first" },
+        revision: "r1.1",
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      },
+    });
+    expect(passed).toEqual([]);
+    const list = await visit("posts");
+    expect(list.headers.get("cache-control")).toBe(
+      "public, max-age=0, s-maxage=10",
+    );
+    expect(await list.json()).toMatchObject({
+      documents: [{ id: "one" }],
+      nextCursor: null,
+    });
+  });
+
+  test("public reads are cached for seconds; fresh reads are not", async () => {
+    expect((await (await visit("posts?size=5")).json()).documents).toHaveLength(
+      1,
+    );
+    await owned("PUT", ["posts", "two"], { data: { title: "second" } });
+    const cached = await visit("posts?size=5");
+    expect(cached.headers.get("cache-control")).toBe(
+      "public, max-age=0, s-maxage=10",
+    );
+    expect((await cached.json()).documents).toHaveLength(1);
+    expect(
+      (await (await visit("posts?size=5&fresh=1")).json()).documents,
+    ).toHaveLength(2);
+  });
+
+  test("visitor writes, refusals and errors keep the v1 protocol", async () => {
+    const created = await visit("posts", {
+      method: "POST",
+      body: JSON.stringify({ data: { title: "from a visitor" } }),
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      data: { title: "from a visitor" },
+      revision: "r1.1",
+    });
+    const denied = await visit("secret");
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({
+      error: {
+        code: "ACCESS_DENIED",
+        message:
+          "Collection secret is not publicly readable. Change its read access in the control panel, or sign in.",
+      },
+    });
+    const replace = await visit("posts/one?ifRevision=r1.1", {
+      method: "PUT",
+      body: JSON.stringify({ data: {} }),
+    });
+    expect(replace.status).toBe(403);
+    expect((await visit("nowhere")).status).toBe(404);
+    expect((await visit("posts?size=500")).status).toBe(400);
+    const wrongType = await visit("posts", {
+      method: "POST",
+      body: "{}",
+      headers: { "Content-Type": "text/plain" },
+    });
+    expect(wrongType.status).toBe(415);
+    const preflight = await visit("posts", { method: "OPTIONS" });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe(
+      "https://erin.example",
+    );
+    expect(passed).toEqual([]);
+  });
+
+  test("owners, media and batches go on to the control plane, body and all", async () => {
+    passed.length = 0;
+    const signedIn = await visit("posts", {
+      method: "POST",
+      body: JSON.stringify({ data: 1 }),
+      headers: { Authorization: `Bearer ${"t".repeat(43)}` },
+    });
+    expect(signedIn.status).toBe(299);
+    await visit("_files", { method: "POST", body: '{"name":"a.png"}' });
+    await visit("_batch", { method: "POST", body: '{"operations":[]}' });
+    expect(passed).toEqual([
+      { method: "POST", url: "/api/data/v1/erin/posts", body: '{"data":1}' },
+      {
+        method: "POST",
+        url: "/api/data/v1/erin/_files",
+        body: '{"name":"a.png"}',
+      },
+      {
+        method: "POST",
+        url: "/api/data/v1/erin/_batch",
+        body: '{"operations":[]}',
+      },
+    ]);
+  });
+
+  test("an object not serving the site hands every request back", async () => {
+    passed.length = 0;
+    await configureEdge("erin", owner, false);
+    expect((await visit("posts/one")).status).toBe(299);
+    await configureEdge("erin", owner, true);
+    await callSiteDataWorker("erin", "freeze", {});
+    const write = await visit("posts", { method: "POST", body: '{"data":2}' });
+    expect(write.status).toBe(299);
+    await callSiteDataWorker("erin", "unfreeze", {});
+    expect(passed).toEqual([
+      { method: "GET", url: "/api/data/v1/erin/posts/one", body: "" },
+      { method: "POST", url: "/api/data/v1/erin/posts", body: '{"data":2}' },
+    ]);
+    expect((await visit("posts/one?fresh=1")).status).toBe(200);
+  });
+
+  test("a lapsed database feature is refused at the edge as in PostgreSQL", async () => {
+    await sql`update users set supporter_comp = false, supporter_until = now() - interval '60 days' where id = ${owner}`.execute(
+      db,
+    );
+    await configureEdge("erin", owner, true);
+    const response = await visit("posts/one?fresh=1");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: { message: "Database access is not enabled for this site." },
+    });
+    await sql`update users set supporter_comp = true where id = ${owner}`.execute(
+      db,
+    );
+    await configureEdge("erin", owner, true);
+    expect((await visit("posts/one?fresh=1")).status).toBe(200);
+  });
+
+  test("a site's visitors stop at its monthly budget; its owner does not", async () => {
+    await callSiteDataWorker("erin", "configure", {
+      ownerId: String(owner),
+      edge: true,
+      entitledUntil: null,
+      monthlyRequests: 3,
+    });
+    // The object's count survives from the tests above, so start a new one.
+    await callSiteDataWorker(
+      "erin",
+      "import",
+      await callSiteDataWorker("erin", "export", {}),
+    );
+    await callSiteDataWorker("erin", "configure", {
+      ownerId: String(owner),
+      edge: true,
+      entitledUntil: null,
+      monthlyRequests: 3,
+    });
+    for (let n = 0; n < 3; n += 1)
+      expect((await visit(`posts/one?fresh=1&n=${n}`)).status).toBe(200);
+    const refused = await visit("posts/one?fresh=1&n=3");
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toMatchObject({
+      error: {
+        code: "RATE_LIMITED",
+        message: expect.stringContaining("3 database requests for the month"),
+      },
+    });
+    // Visitors reaching it through the control plane are counted too.
+    await expect(
+      (await siteDataBackend("erin")).execute({
+        site: "erin",
+        path: ["posts", "one"],
+        method: "GET",
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+    await expect(owned("GET", ["posts", "one"])).resolves.toBeDefined();
+  });
 });

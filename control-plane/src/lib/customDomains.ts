@@ -94,7 +94,7 @@ export function normalizeHostname(input: string) {
   return asciiHostname;
 }
 
-function getCloudflareZoneId() {
+export function getCloudflareZoneId() {
   const zoneId = process.env.CLOUDFLARE_ZONE_ID;
 
   if (!zoneId) {
@@ -114,7 +114,7 @@ function getCloudflareApiToken() {
   return token;
 }
 
-async function cloudflareRequest<T>(
+export async function cloudflareRequest<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {

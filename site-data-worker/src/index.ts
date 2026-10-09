@@ -1,14 +1,19 @@
 import type { Outcome, SiteData } from "./site";
+import { website, type WebsiteEnv } from "./website";
 
 export { SiteData } from "./site";
 
-interface Env {
+interface Env extends WebsiteEnv {
   SITES: DurableObjectNamespace<SiteData>;
-  /** Shared with the control plane, which is this Worker's only caller. */
+  /** Shared with the control plane, the only caller of /v1/sites. */
   SITE_DATA_WORKER_SECRET: string;
+  /** The default monthly budget of anonymous requests per site. */
+  SITE_MONTHLY_REQUESTS?: string;
 }
 
-// POST /v1/sites/<site>/<operation> with a JSON body, answered with
+// Two surfaces. /api/data/v1/<site>/... is the public data API for sites the
+// control plane has routed here (website.ts). /v1/sites/<site>/<operation> is
+// the control plane's own: POST with a JSON body, answered with
 // `{ value }` or `{ error: { status, message, code } }` at that status. The
 // object is named by the site, so every request for a site meets the same one.
 const OPERATIONS = [
@@ -21,6 +26,7 @@ const OPERATIONS = [
   "export",
   "import",
   "erase",
+  "configure",
 ] as const;
 type Operation = (typeof OPERATIONS)[number];
 
@@ -52,6 +58,8 @@ function dispatch(
       return stub.import(input);
     case "erase":
       return stub.erase();
+    case "configure":
+      return stub.configure(input);
   }
 }
 
@@ -72,12 +80,23 @@ async function authorized(request: Request, secret: string | undefined) {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx): Promise<Response> {
+    const pathname = new URL(request.url).pathname;
+    const route = /^\/api\/data\/v1\/([^/]+)(?:\/(.*))?$/.exec(pathname);
+    if (route)
+      return website(
+        request,
+        env,
+        ctx,
+        decodeURIComponent(route[1]),
+        (route[2] ?? "")
+          .split("/")
+          .filter(Boolean)
+          .map((part) => decodeURIComponent(part)),
+      );
     if (!(await authorized(request, env.SITE_DATA_WORKER_SECRET)))
       return failure(401, "Unauthorized.");
-    const match = /^\/v1\/sites\/([^/]+)\/([A-Za-z]+)$/.exec(
-      new URL(request.url).pathname,
-    );
+    const match = /^\/v1\/sites\/([^/]+)\/([A-Za-z]+)$/.exec(pathname);
     const site = match && decodeURIComponent(match[1]);
     const operation = match?.[2] as Operation | undefined;
     if (!site || !SITE.test(site) || !OPERATIONS.includes(operation!))

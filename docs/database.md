@@ -332,9 +332,10 @@ A site's collections and documents can live in PostgreSQL or in a Cloudflare
 Durable Object, one object per site, named by the site. Which one is
 `users.site_data_backend`, and everything outside `lib/site-data` reaches the
 data through `siteDataBackend(site)` (`lib/site-data/backend.ts`), so the API,
-the SDK and the control panel are the same either way. This is stage 1 of
-moving sites off the host's PostgreSQL: the control plane still receives every
-request and forwards those of moved sites.
+the SDK and the control panel are the same either way. Visitors' requests for
+a moved site are answered at Cloudflare's edge (below); everything else still
+goes through the control plane, which forwards a moved site's requests to its
+object.
 
 What stays in PostgreSQL for every site: accounts and paid status, page
 registrations, authorization codes and tokens, and media metadata (the bytes
@@ -358,6 +359,48 @@ The object answers like PostgreSQL does, with these differences:
   reorders them; the contract gives key order no meaning.
 - Usage counters on `users` (the `/admin` usage page) are not updated for a
   moved site; they show its usage when it moved.
+
+### Answering visitors at the edge
+
+When a site moves, the control plane adds a Worker route for it,
+`naru.pub/api/data/v1/<site>/*` (`lib/site-data/edge.ts`), so only moved
+sites pass through the Worker; the rest of the data API reaches the control
+plane directly, as before. The Worker (`site-data-worker/src/website.ts`)
+answers a request with no owner token from the site's object, with the
+control plane's headers, caching and errors (both use
+`lib/site-data/protocol.ts`). It sends on, unchanged, everything that needs
+the control plane: requests with an owner token (sign-in scope and renewal
+are in PostgreSQL), `_files`, `_batch`, and any request the object is not
+serving.
+
+The object serves visitors only while the control plane has told it to
+(`configure`, with the date the site's database feature runs to, which is the
+check PostgreSQL made) and it is not frozen by a move. Otherwise it hands the
+request back and the control plane decides, so a stale route or configuration
+is never wrong, only slower. The `site-data-edge-sync` job (every 5 minutes)
+adds missing routes, removes routes of sites no longer on Durable Objects, and
+carries paid-status changes (a renewal, a refund) to the objects. A move
+updates the edge itself; if that fails, the site is answered by the control
+plane until the next sync.
+
+Public reads the control plane would let a shared cache keep for ten seconds
+are kept for ten seconds in the edge's cache, by the Worker; the zone's cache
+rule for public data reads does not apply to responses a Worker produces.
+`fresh=1` reads are never cached.
+
+### Monthly request budget
+
+A site on a Durable Object answers at most 500,000 requests from visitors per
+calendar month (UTC), counted in its object; owners' requests are never
+counted. Past it, visitors get 429 `RATE_LIMITED` with the date the budget
+resets, and the Worker refuses the site's visitors without asking the object
+until then. The default is the Worker's `SITE_MONTHLY_REQUESTS`; one site's
+own budget is `monthlyRequests` in `configure`. The count is kept in memory and
+saved every 25 requests, so an evicted object can forget up to 24. Requests the
+edge's cache answers are not counted: they cost no object request. The budget
+bounds what a site can cost: at about ₩1,500 per million requests past
+Cloudflare's included allowance, a full budget is under ₩750 a month, below
+what a subscriber pays. Sites on PostgreSQL have no budget.
 
 ### Moving a site
 
@@ -385,7 +428,8 @@ carry across. While a site is `moving_to_durable_object` or
 under the owner row lock the move takes, and the object is frozen before it is
 copied. The copy is checked against the source before the state changes, and
 a move that fails anywhere puts the site back as it was. Writes are refused
-for the seconds the copy takes, so tell a site's owner before moving it.
+for the seconds the copy takes, so tell a site's owner before moving it. Moving
+back first removes the site's route, so visitors return to the control plane.
 
 The source keeps its copy: PostgreSQL's rows stay as they were when the site
 moved, and an object a site moved back from stays frozen. A later move

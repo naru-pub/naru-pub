@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { sql } from "kysely";
 import { db } from "@/lib/database";
 import { callSiteDataWorker } from "./durable-object";
+import { disableEdge, edgeConfigured, enableEdge } from "./edge";
 import type { SiteDataState } from "./backend";
 import type { Collection } from "./service";
 
@@ -205,12 +206,26 @@ export async function moveSite(
       await transition(site, "moving_to_durable_object", "postgres");
       throw error;
     }
+    await edge(
+      site,
+      () => enableEdge(site, ownerId),
+      "answering at the edge",
+      log,
+    );
     return;
   }
   const ownerId = await transition(
     site,
     "durable_object",
     "moving_to_postgres",
+  );
+  // Visitors go back to the control plane first. Not required for safety:
+  // the frozen object hands every request back anyway.
+  await edge(
+    site,
+    () => disableEdge(site),
+    "no longer routed to the edge",
+    log,
   );
   try {
     // The object runs one request at a time: once this returns, no write is
@@ -234,6 +249,36 @@ export async function moveSite(
   } catch (error) {
     await callSiteDataWorker(site, "unfreeze", {});
     await transition(site, "moving_to_postgres", "durable_object");
+    await edge(
+      site,
+      () => enableEdge(site, ownerId),
+      "answering at the edge",
+      log,
+    );
     throw error;
+  }
+}
+
+/**
+ * The edge follows a move, but does not hold it up: a site the edge has not
+ * caught up with is answered by the control plane, and the edge sync job
+ * repairs the route and configuration within minutes.
+ */
+async function edge(
+  site: string,
+  change: () => Promise<void>,
+  done: string,
+  log: (message: string) => void,
+) {
+  if (!edgeConfigured()) return;
+  try {
+    await change();
+    log(done);
+  } catch (error) {
+    console.error(
+      `Edge not updated for ${site}; the edge sync will retry`,
+      error,
+    );
+    log("edge not updated; the edge sync job will retry");
   }
 }

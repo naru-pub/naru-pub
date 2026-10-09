@@ -164,10 +164,20 @@ stays on PostgreSQL and `site-data-move` refuses to run. The Worker only
 answers requests carrying the secret, and the control plane is its only
 caller; change the secret in both places together.
 
-Redeploy the Worker whenever `site-data-worker/` or the control-plane modules
-it imports (`lib/site-data/validation.ts`, `filters.ts`, `pagination.ts`,
-`lib/uuid.ts`) change. A change to the object's tables must create them
-compatibly with what existing objects already hold.
+The control plane also adds and removes one Worker route per moved site,
+`naru.pub/api/data/v1/<site>/*`, through the Cloudflare API with
+`CLOUDFLARE_USER_API_TOKEN`, which needs **Zone → Workers Routes → Edit** on
+the zone. Set `SITE_DATA_WORKER_NAME` only if the Worker is not named
+`naru-site-data`. The `site-data-edge-sync` maintenance job puts back any route
+that goes missing within five minutes, including after a `wrangler deploy`
+(the routes are not in `wrangler.jsonc`); until then the control plane
+answers the site, more slowly.
+
+Deploy the Worker before a control plane that relies on what is new in it,
+and redeploy it whenever `site-data-worker/` or the control-plane modules it
+imports (`lib/site-data/validation.ts`, `filters.ts`, `pagination.ts`,
+`protocol.ts`, `lib/uuid.ts`) change. A change to the object's tables must
+create them compatibly with what existing objects already hold.
 
 ## Cloudflare cache rule for hosted sites
 

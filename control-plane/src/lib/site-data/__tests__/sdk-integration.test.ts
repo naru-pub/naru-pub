@@ -22,7 +22,9 @@ import { runSdkStress } from "./sdk-stress";
 import { runSdkMixedStress } from "./sdk-mixed-stress";
 import { GET as dataRoute } from "@/app/(main)/api/data/v1/[site]/[[...path]]/route";
 import { POST as authRoute } from "@/app/(main)/api/data-auth/v1/[action]/route";
-import { executeData } from "../service";
+import { siteDataBackend } from "../backend";
+import { eraseSiteData } from "../durable-object";
+import { configureEdge } from "../edge";
 import { mediaStorage } from "../media";
 import {
   approveAuthorization,
@@ -42,6 +44,12 @@ const integration =
 
 // Real SDK -> native fetch -> HTTP -> actual route -> service -> PostgreSQL.
 // The adapter replaces Next's HTTP listener, not the route or its responses.
+// With NARU_DATA_TEST_BACKEND=durable_object (scripts/test-data-durable-
+// objects.sh) the site's documents live in the site-data Worker instead.
+const backend = process.env.NARU_DATA_TEST_BACKEND ?? "postgres";
+// With NARU_DATA_TEST_EDGE=1 too, the SDK's data requests go to the Worker,
+// which answers visitors itself and sends the rest on to this suite's server.
+const edge = process.env.NARU_DATA_TEST_EDGE === "1";
 integration("SDK and data API contract", () => {
   let ready = false;
   let server: Server | undefined;
@@ -51,6 +59,8 @@ integration("SDK and data API contract", () => {
   let admin: Admin;
   let naru: NaruClient;
   const storage = new Map<string, string>();
+  /** Data requests without an owner token that reached this suite's server. */
+  let anonymousAtControlPlane = 0;
   const nativeFetch = globalThis.fetch;
   const browserGlobals = ["location", "sessionStorage", "history"] as const;
   const oldGlobals = browserGlobals.map((name) =>
@@ -89,6 +99,8 @@ integration("SDK and data API contract", () => {
           ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
         });
         const parts = new URL(request.url).pathname.split("/");
+        if (parts[2] === "data" && !headers.has("authorization"))
+          anonymousAtControlPlane += 1;
         const response =
           parts[2] === "data-auth"
             ? await authRoute(request, {
@@ -111,7 +123,12 @@ integration("SDK and data API contract", () => {
     });
     await new Promise<void>((resolve, reject) => {
       server!.once("error", reject);
-      server!.listen(0, "127.0.0.1", resolve);
+      // A fixed port when the site-data Worker sends requests on to it.
+      server!.listen(
+        Number(process.env.SITE_DATA_TEST_ORIGIN_PORT ?? 0),
+        "127.0.0.1",
+        resolve,
+      );
     });
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     mockOrigin = origin;
@@ -136,9 +153,20 @@ integration("SDK and data API contract", () => {
     // server. Node fetch does not add a browser Origin header. Everything else,
     // including HTTP errors, JSON serialization and response bodies, crosses
     // the socket.
+    const worker = process.env.SITE_DATA_WORKER_URL;
     globalThis.fetch = (input, init) => {
       const url = new URL(String(input));
-      if (url.origin === "https://naru.pub")
+      // The control plane's own calls to a local site-data Worker.
+      if (worker && url.origin === new URL(worker).origin)
+        return nativeFetch(input, init);
+      if (
+        edge &&
+        url.origin === "https://naru.pub" &&
+        url.pathname.startsWith("/api/data/v1/")
+      )
+        // As Cloudflare routes a moved site's data requests to the Worker.
+        input = `${worker}${url.pathname}${url.search}`;
+      else if (url.origin === "https://naru.pub")
         input = `${origin}${url.pathname}${url.search}`;
       else if (url.origin !== origin)
         throw new Error("SDK test attempted nonlocal HTTP");
@@ -156,9 +184,28 @@ integration("SDK and data API contract", () => {
     await sql`insert into sessions values ('sdk-session', ${userId}, now() + interval '1 hour')`.execute(
       db,
     );
+    if (backend === "durable_object") {
+      // The Worker's storage outlives a suite, and other suites use alice too.
+      await eraseSiteData("alice");
+      await sql`update users set site_data_backend = 'durable_object' where id = ${userId}`.execute(
+        db,
+      );
+      // The object makes UUIDs, as PostgreSQL does in production (migration
+      // 1790824144110); this schema predates that and keeps integer ids.
+      for (const table of [
+        "site_data_clients",
+        "site_data_auth_codes",
+        "site_data_access_tokens",
+      ])
+        await sql`alter table ${sql.table(table)} alter column collection_ids type text[]`.execute(
+          db,
+        );
+    }
     const collections = ["crud", "feed", "atomic", "private"];
     for (const name of collections)
-      await executeData({
+      await (
+        await siteDataBackend("alice")
+      ).execute({
         site: "alice",
         adminUserId: userId,
         method: "POST",
@@ -172,6 +219,7 @@ integration("SDK and data API contract", () => {
     // Registered as one address of the page and signed in from another; Naru
     // serves both as the page /admin/, and returns to the one signed in from.
     const redirectUri = `${origin}/admin`;
+    if (edge) await configureEdge("alice", userId, true);
     await registerClient(userId, {
       redirectUri: `${origin}/admin/index.html`,
       collections,
@@ -531,6 +579,18 @@ integration("SDK and data API contract", () => {
   // Public reads are the request a site makes most, and letting a shared cache
   // hold them is the whole reason the SDK stopped forcing no-store. What must
   // never be cacheable is a response that depended on a credential.
+  (edge ? test : test.skip)(
+    "at the edge, visitors' requests never reach the control plane",
+    async () => {
+      anonymousAtControlPlane = 0;
+      const feed = naru.collection("feed");
+      expect((await feed.list()).documents.length).toBeGreaterThan(0);
+      await feed.count();
+      await naru.collection("crud").add({ visitor: true });
+      expect(anonymousAtControlPlane).toBe(0);
+    },
+  );
+
   test("only anonymous reads of world collections are marked cacheable", async () => {
     const anonymous = await nativeFetch(`${origin}/api/data/v1/alice/feed`, {
       headers: { Origin: "https://example.test" },

@@ -80,6 +80,12 @@ export const MAINTENANCE_JOBS = [
     timeout: 300,
   },
   {
+    name: "site-data-edge-sync",
+    script: "sync-site-data-edge.ts",
+    minutes: 5,
+    timeout: 120,
+  },
+  {
     name: "site-data-grant-cleanup",
     script: "cleanup-site-data-grants.ts",
     minutes: 30,

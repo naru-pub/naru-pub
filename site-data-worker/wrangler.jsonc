@@ -4,6 +4,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "naru-site-data",
+  // The account that holds the naru.pub zone: the per-site routes attach to
+  // this Worker, and a route only reaches a Worker in its zone's account.
+  "account_id": "5d508a37b0c6ea183620094959bbc8d1",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   // Buffer and node:crypto, for the control plane's cursor and filter code.
@@ -12,5 +15,8 @@
     "bindings": [{ "name": "SITES", "class_name": "SiteData" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteData"] }],
+  // Anonymous requests a site may make each calendar month (UTC), unless the
+  // control plane sets its own. See docs/database.md, "Monthly request budget".
+  "vars": { "SITE_MONTHLY_REQUESTS": "500000" },
   "observability": { "enabled": true },
 }
