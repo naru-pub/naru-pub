@@ -5,7 +5,7 @@ import { tokenScope } from "./owner-auth";
 import { DataError, name } from "./validation";
 
 // Site databases live in Durable Objects, one per site, in the site-data
-// Worker (site-data-worker/ at the repository root); the object applies every
+// Worker (edge/ at the repository root); the object applies every
 // collection and document rule. What lives in PostgreSQL is decided here
 // first: whether the site exists and has the database feature, and an owner
 // token's scope, which renews the token. The object is then told the outcome.

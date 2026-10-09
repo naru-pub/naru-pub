@@ -1,5 +1,5 @@
 {
-  "name": "naru-site-data-worker",
+  "name": "naru-edge",
   "private": true,
   "type": "module",
   "scripts": {

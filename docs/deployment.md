@@ -141,16 +141,16 @@ Runtime state is stored under `.deploy-state/` and must not be committed. If the
 active-slot file is lost, inspect the nginx configuration and restore
 `.deploy-state/active-slot` to `blue` or `green` before deploying again.
 
-## Site-data Worker (Durable Objects)
+## Edge Worker
 
-All sites keep their databases in the `naru-site-data` Worker
-([`site-data-worker/`](../site-data-worker), see
-[database.md](database.md#durable-objects-backend)). It is not part of the
+The edge Worker ([`edge/`](../edge), deployed as `naru-site-data`) serves
+hosted sites and keeps every site's database
+([database.md](database.md#durable-objects-backend)). It is not part of the
 images and deploys on its own, from the development machine, with an account
 on the Workers Paid plan:
 
 ```bash
-cd site-data-worker
+cd edge
 pnpm install
 pnpm exec wrangler login
 pnpm run deploy
@@ -171,12 +171,60 @@ per-site Worker routes. The `site-data-edge-sync` maintenance job renews
 entitlements and updates usage counters every five minutes.
 
 Deploy the Worker before a control plane that relies on what is new in it,
-and redeploy it whenever `site-data-worker/` or the control-plane modules it
+and redeploy it whenever `edge/` or the control-plane modules it
 imports (`lib/site-data/validation.ts`, `filters.ts`, `pagination.ts`,
 `protocol.ts`, `lib/uuid.ts`) change. A change to the object's tables must
 create them compatibly with what existing objects already hold.
 
+## Hosted sites at the edge
+
+The same Worker serves hosted sites, `<login>.naru.pub`, straight from the
+site bucket (`edge/src/pages.ts`), so they keep working while the
+Mac mini is down. It follows the proxy's rules: directories resolve to
+`index.html`; HTML, JS and JSON come from the bucket; other files redirect to
+`r2.naru.pub`; a directory without its trailing slash redirects to it. It
+needs no database: a site's files are its `<login>/` prefix, and deleting an
+account deletes them. Custom domains stay on the proxy, because they reach the
+zone under their own hostnames.
+
+Sites move over by `EDGE_SITES` in `wrangler.jsonc`: logins separated by
+commas, or `*` for all. The `*.naru.pub/*` route sends every subdomain to the
+Worker, which hands the sites it does not serve, and any other host, to the
+proxy through the tunnel unchanged. Before adding sites, compare the edge's
+answers with the proxy's for real URLs, for example the most visited paths:
+
+```bash
+cd edge
+node scripts/compare-pages.mjs < urls.txt
+```
+
+The route would also catch the bucket's public domains, which a Worker route
+takes from R2. Keep them on R2 with routes that have no Worker, created once
+(Workers Routes in the zone dashboard, or the API with a `zone:workers_routes`
+token):
+
+```bash
+for host in r2.naru.pub media.naru.pub; do
+  curl -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/workers/routes" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    --data "{\"pattern\": \"$host/*\"}"
+done
+```
+
+The Worker reads the bucket through its `SITE_FILES` binding, so it deploys
+with a token that can read R2 (Workers Builds' does).
+
+Pageviews of edge-served sites go to the Worker's pageview log, one Durable
+Object, and the `edge-pageview-drain` job moves them into the pageview tables
+every minute with the proxy's rules. While the control plane is down they wait
+there, up to six million, and are counted when it is back; the
+`edge_pageview_cursors` row keeps a batch from being counted twice.
+
 ## Cloudflare cache rule for hosted sites
+
+Sites the edge serves answer from the Worker before the cache, so this rule
+applies only to what the proxy still serves: custom domains, and subdomains
+not yet in `EDGE_SITES`.
 
 Hosted pages (HTML, JS and JSON served by the site proxy) carry
 `Cache-Control: public, max-age=0, stale-if-error=86400`. Cloudflare stores
@@ -236,7 +284,7 @@ curl -s -o /dev/null -D - "https://eyecntct.naru.pub/" | grep -iE 'cf-cache-stat
 
 ## Public data caching
 
-The site-data Worker caches anonymous reads of world-readable collections
+The edge Worker caches anonymous reads of world-readable collections
 for ten seconds using Cloudflare's Cache API. A zone Cache Rule is not needed
 for these Worker responses. The former `Public site data reads` rule can be
 removed from the zone configuration.

@@ -86,6 +86,12 @@ export const MAINTENANCE_JOBS = [
     timeout: 120,
   },
   {
+    name: "edge-pageview-drain",
+    script: "drain-edge-pageviews.ts",
+    minutes: 1,
+    timeout: 120,
+  },
+  {
     name: "site-data-grant-cleanup",
     script: "cleanup-site-data-grants.ts",
     minutes: 30,

@@ -5,12 +5,12 @@
 # it, and SITE_DATA_TEST_ORIGIN_PORT: the Worker sends what it does not answer
 # itself to a server a test may start on that port, standing in for the
 # control plane. It also opens the Worker's test-only export and import
-# operations. Install ../site-data-worker first: pnpm install there.
+# operations. Install ../edge first: pnpm install there.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-worker_dir=../site-data-worker
+worker_dir=../edge
 if [[ ! -x "$worker_dir/node_modules/.bin/wrangler" ]]; then
-  echo "Run pnpm install in site-data-worker first." >&2
+  echo "Run pnpm install in edge/ first." >&2
   exit 1
 fi
 scratch=$(mktemp -d /tmp/naru-site-data-worker.XXXXXX)

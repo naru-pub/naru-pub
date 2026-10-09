@@ -310,6 +310,12 @@ export interface CustomDomains {
   verified_at: Timestamp | null;
 }
 
+export interface EdgePageviewCursors {
+  id: Generated<string>;
+  last_event_id: Int8;
+  log: string;
+}
+
 export interface EditDailyStats {
   date: Timestamp;
   edit_count: Generated<number>;
@@ -691,6 +697,7 @@ export interface DB {
   card_registrations: CardRegistrations;
   cron_jobs: CronJobs;
   custom_domains: CustomDomains;
+  edge_pageview_cursors: EdgePageviewCursors;
   edit_daily_stats: EditDailyStats;
   email_verification_tokens: EmailVerificationTokens;
   entitlement_repairs: EntitlementRepairs;

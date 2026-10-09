@@ -1,6 +1,6 @@
 import { DataError, type ErrorCode } from "./validation";
 
-// The control plane's client for the site-data Worker (site-data-worker/ at
+// The control plane's client for the site-data Worker (edge/ at
 // the repository root), reached over HTTPS with a shared secret. Each call is
 // one operation on one site's Durable Object.
 
@@ -18,9 +18,32 @@ const unavailable = () =>
  * as the DataError it threw; anything else the Worker answers is logged and
  * reported as unavailable.
  */
-export async function callSiteDataWorker<T>(
+export function callSiteDataWorker<T>(
   site: string,
   operation: string,
+  input: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  return callWorker<T>(
+    `/v1/sites/${encodeURIComponent(site)}/${operation}`,
+    `${operation} on ${site}`,
+    input,
+    signal,
+  );
+}
+
+/** Calls one operation on the edge's pageview log (pageview-log.ts). */
+export function callPageviewLog<T>(operation: string, input: unknown) {
+  return callWorker<T>(
+    `/v1/pageviews/${operation}`,
+    `pageview ${operation}`,
+    input,
+  );
+}
+
+async function callWorker<T>(
+  path: string,
+  what: string,
   input: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
@@ -33,25 +56,19 @@ export async function callSiteDataWorker<T>(
   const timeout = AbortSignal.timeout(WORKER_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(
-      new URL(`/v1/sites/${encodeURIComponent(site)}/${operation}`, base),
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${secret}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(input),
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    response = await fetch(new URL(path, base), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(input),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
   } catch (error) {
     // The caller canceled: http.ts reports that itself.
     if (signal?.aborted) throw error;
-    console.error(
-      `Site database Worker unreachable for ${operation} on ${site}`,
-      error,
-    );
+    console.error(`Site database Worker unreachable for ${what}`, error);
     throw unavailable();
   }
   const body = (await response.json().catch(() => null)) as {
@@ -61,9 +78,7 @@ export async function callSiteDataWorker<T>(
   if (response.ok && body && "value" in body) return body.value as T;
   if (body?.error && body.error.status === response.status)
     throw new DataError(body.error.status, body.error.message, body.error.code);
-  console.error(
-    `Site database Worker answered ${response.status} to ${operation} on ${site}`,
-  );
+  console.error(`Site database Worker answered ${response.status} to ${what}`);
   throw unavailable();
 }
 

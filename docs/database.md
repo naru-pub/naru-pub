@@ -313,7 +313,7 @@ Integration tests require an empty database named exactly `naru_data_test`. They
 
 The full database suite starts a scratch PostgreSQL cluster for accounts and
 authentication and a local Worker under `wrangler dev`. Install dependencies
-in both `control-plane/` and `site-data-worker/` first:
+in both `control-plane/` and `edge/` first:
 
 ```sh
 cd control-plane
@@ -339,7 +339,7 @@ are listed in byte order, and JSON object key order has no contract meaning.
 ### Answering visitors at the edge
 
 The configured `naru.pub/api/data/v1/*` Worker route covers every site.
-`site-data-worker/src/website.ts` answers anonymous document requests from
+`edge/src/website.ts` answers anonymous document requests from
 that site's object using shared headers, caching and errors. It forwards
 requests with owner tokens, `_files`, `_batch`, and requests the object cannot
 serve to the control plane. That fallback still uses the same Durable Object

@@ -112,10 +112,10 @@ jobs:
       # Site databases are Durable Objects: the database suites start the
       # site-data Worker under `wrangler dev` (scripts/with-site-data-worker.sh).
       - run: pnpm install --frozen-lockfile
-        working-directory: site-data-worker
+        working-directory: edge
       # The object's list query against SQLite, without a Worker.
       - run: pnpm test
-        working-directory: site-data-worker
+        working-directory: edge
       - run: pnpm test:board
         env:
           NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin

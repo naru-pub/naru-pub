@@ -39,6 +39,21 @@ This implements observable counters, not an external alerting integration.
 Analytics are best effort: a process exit can lose queued events; database
 failures drop an event. Serving a site must not depend on recording analytics.
 
+### Sites served at the edge
+
+Sites the edge Worker serves (`EDGE_SITES`, see
+[deployment](../deployment.md#hosted-sites-at-the-edge)) are classified the same
+way in `edge/src/pages.ts`, with the same 2,048-byte caps. A
+navigation is appended to the Worker's pageview log, one Durable Object, after
+the response is sent. The `edge-pageview-drain` job takes the oldest thousand
+events at a time into the transaction below, then tells the log to forget them.
+The batch's last id is stored in `edge_pageview_cursors` in the same
+transaction, so a batch handed out again after a lost acknowledgement is
+skipped, not counted twice. Unlike the proxy's queue, nothing is dropped while
+PostgreSQL or the whole host is down: the log keeps up to six million events,
+dropping the oldest past that. The edge keeps no frame, background or unknown
+counters.
+
 ## Atomic writes and daily visitors
 
 The event captures its UTC request time before origin fetching/enqueue, so a
