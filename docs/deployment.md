@@ -167,7 +167,7 @@ both places together; private `/v1/sites/*` operations require it.
 public `naru.pub/api/data/v1/*` route, and the hosted-site routes below.
 Cloudflare manages the custom domain's DNS and certificate. Both `workers.dev`
 and Preview URLs are disabled. The public route handles every site; the
-control plane does not manage per-site Worker routes. The `site-data-edge-sync`
+control plane does not manage per-site Worker routes. The `edge-sync`
 maintenance job renews entitlements, sends the custom-domain table, and updates
 usage counters every five minutes.
 
@@ -199,7 +199,7 @@ domains it serves, through `/v1/domains/replace`: every domain active in
 Cloudflare and verified whose owner is complimentary or paid up through the
 grace period, mapped to the owner's login, with when that entitlement ends.
 The Worker keeps it in KV (`DOMAINS`, one entry) and serves it until its
-`confirmedUntil`, three days after the last push. `site-data-edge-sync` pushes
+`confirmedUntil`, three days after the last push. `edge-sync` pushes
 it every five minutes, and activating or deleting a domain pushes it at once.
 Any host that is neither a site nor a listed custom domain gets a `404` from
 the Worker.

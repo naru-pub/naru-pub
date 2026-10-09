@@ -13,7 +13,7 @@
 
 ## 엣지의 커스텀 도메인 표
 
-control plane(`control-plane/src/lib/edge/domains.ts`)은 위 조건을 만족하는 도메인 전체를 로그인 이름과 엔티틀먼트가 끝나는 시각(`entitledUntil`)에 매핑해 내부 API `/v1/domains/replace`로 Worker에 보냅니다. Worker는 이 표를 KV(`DOMAINS` 바인딩, 항목 하나)에 두고 `confirmedUntil`까지, 즉 마지막으로 받은 뒤 3일 동안 서빙합니다. `site-data-edge-sync` 작업이 5분마다 표를 다시 보내고, 도메인이 활성화되거나 삭제되면 곧바로 보냅니다. 그래서 control plane이 멈춰도 커스텀 도메인은 최대 3일 동안 계속 응답합니다.
+control plane(`control-plane/src/lib/edge/domains.ts`)은 위 조건을 만족하는 도메인 전체를 로그인 이름과 엔티틀먼트가 끝나는 시각(`entitledUntil`)에 매핑해 내부 API `/v1/domains/replace`로 Worker에 보냅니다. Worker는 이 표를 KV(`DOMAINS` 바인딩, 항목 하나)에 두고 `confirmedUntil`까지, 즉 마지막으로 받은 뒤 3일 동안 서빙합니다. `edge-sync` 작업이 5분마다 표를 다시 보내고, 도메인이 활성화되거나 삭제되면 곧바로 보냅니다. 그래서 control plane이 멈춰도 커스텀 도메인은 최대 3일 동안 계속 응답합니다.
 
 Worker가 원본보다 먼저 커스텀 호스트명을 가로채므로, 예전 Rust 서버 시절에 필요했던 Tunnel ingress catch-all 규칙(커스텀 도메인을 `localhost:40001`로 보내던 것)은 더 이상 필요하지 않습니다.
 

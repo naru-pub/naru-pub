@@ -8,7 +8,7 @@ import { syncEdge } from "@/lib/edge/sync";
 async function main() {
   const { sites, retried, failures, domains } = await syncEdge();
   console.log(
-    `[site-data-edge-sync] ${sites} sites` +
+    `[edge-sync] ${sites} sites` +
       (domains !== null ? `, ${domains} custom domains` : "") +
       (retried ? `, ${retried} retried` : "") +
       (failures.length ? `, failed: ${failures.join(", ")}` : ""),

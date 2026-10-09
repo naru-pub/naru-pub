@@ -47,7 +47,7 @@ export async function configureEdge(site: string, ownerId: string) {
  * Renews the confirmation of every site with the database feature, of sites
  * that lost it recently and of sites holding data, and copies each one's
  * usage to `users` for the /admin usage page; and sends the custom domain
- * table (domains.ts). Run by the site-data-edge-sync job.
+ * table (domains.ts). Run by the edge-sync job.
  *
  * A site that fails is tried once more after the others: an object that
  * stalls for a moment should not fail the job, and a missed sync costs
