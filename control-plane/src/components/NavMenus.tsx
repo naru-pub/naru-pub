@@ -55,7 +55,9 @@ type ExtensionItem = {
   enabled: boolean;
 };
 
-export function ExtensionsMenu({
+// Supporters get a menu of the paid features with a link to their supporter
+// page; everyone else gets a plain 서포터 link (see the layout).
+export function SupporterMenu({
   analytics,
   database,
   customDomains,
@@ -99,22 +101,23 @@ export function ExtensionsMenu({
     },
   ];
 
-  // A menu of nothing but locked rows would be a dead end, so it only appears
-  // once at least one extension is actually available.
-  if (!items.some((item) => item.enabled)) {
-    return null;
-  }
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className={TRIGGER_CLASS}>
-        확장 기능
+        서포터
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuLabel className="flex items-center gap-2">
           <BadgeCheck size={16} />
-          확장 기능
+          서포터
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/supporter" className="flex items-center gap-2">
+            <Heart size={16} />
+            서포터
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         {items.map((item) =>
           item.enabled ? (
@@ -223,12 +226,6 @@ export function AccountMenu({
           <Link href="/board/notifications" className="flex items-center gap-2">
             <Bell size={16} />
             게시판 알림
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/supporter" className="flex items-center gap-2">
-            <Heart size={16} />
-            결제
           </Link>
         </DropdownMenuItem>
         {paymentOperator && (
