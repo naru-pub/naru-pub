@@ -1,3 +1,8 @@
+# The Worker is its own one-package workspace, apart from control-plane/.
+# Some pnpm versions (as in Cloudflare's Workers Builds) refuse a workspace
+# file without `packages`.
+packages:
+  - "."
 allowBuilds:
   esbuild: true
   workerd: true
