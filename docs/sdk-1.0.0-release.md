@@ -60,8 +60,8 @@ The blog tests exercise public browsing/guestbook and admin draft/publishing flo
 - Obtain the owner's instruction to freeze 1.0.0. Then remove its development
   notice, record release notes and checksums, and tag the exact verified commit.
   Future SDK changes must use a new versioned directory after that freeze:
-  compatible ones as 1.0.1 or 1.1.0, with the `/sdk/1/` rewrite in
-  `next.config.mjs` moved to it; breaking ones as `/sdk/2/` with a new
+  compatible ones as 1.0.1 or 1.1.0, with the `1` alias in
+  `sdk/aliases.json` moved to it (and the edge Worker redeployed); breaking ones as `/sdk/2/` with a new
   `/api/data/v2/` wire version beside v1.
 - A version's source is `sdk/<version>/naru.ts`; `pnpm sdk:build` emits its
   `public/sdk/<version>/naru.js` and `naru.d.ts`, which are committed and are

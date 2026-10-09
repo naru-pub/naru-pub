@@ -143,7 +143,7 @@ active-slot file is lost, inspect the nginx configuration and restore
 ## Edge Worker
 
 The edge Worker ([`edge/`](../edge), deployed as `naru-edge`) serves
-hosted sites and keeps every site's database
+hosted sites and the Data SDK's script, and keeps every site's database
 ([database.md](database.md#durable-objects-backend)). It is not part of the
 images and deploys on its own: Cloudflare Workers Builds deploys it from
 `main` (root directory `edge`), on an account on the Workers Paid plan. To set
@@ -164,7 +164,10 @@ settings, site database operations are unavailable. Change the secret in
 both places together; private `/v1/sites/*` operations require it.
 
 `wrangler.jsonc` declares the `edge.naru.pub` custom domain, the
-public `naru.pub/api/data/v1/*` route, and the hosted-site routes below.
+public `naru.pub/api/data/v1/*` and `naru.pub/sdk/*` routes, and the
+hosted-site routes below. The SDK route serves the committed
+`control-plane/public/sdk/` files, which deploy with the Worker as its static
+assets (`edge/src/sdk.ts`).
 Cloudflare manages the custom domain's DNS and certificate. Both `workers.dev`
 and Preview URLs are disabled. The public route handles every site; the
 control plane does not manage per-site Worker routes. The `edge-sync`
@@ -174,7 +177,9 @@ usage counters every five minutes.
 Deploy the Worker before a control plane that relies on what is new in it,
 and redeploy it whenever `edge/` or the control-plane modules it
 imports (`lib/site-data/validation.ts`, `filters.ts`, `pagination.ts`,
-`protocol.ts`, `lib/uuid.ts`) change. A change to the object's tables must
+`protocol.ts`, `lib/uuid.ts`) change, and whenever the SDK's files
+(`public/sdk/`, `sdk/aliases.json`) change: until then naru.pub serves the
+previous SDK. A change to the object's tables must
 create them compatibly with what existing objects already hold.
 
 ## Hosted sites at the edge
@@ -219,7 +224,8 @@ for host in naru.pub r2.naru.pub media.naru.pub; do
 done
 ```
 
-The more specific `naru.pub/api/data/v1/*` still goes to the Worker, and the
+The more specific `naru.pub/api/data/v1/*` and `naru.pub/sdk/*` still go to
+the Worker, and the
 Worker's custom domain `edge.naru.pub` takes precedence over every route.
 
 The Worker reads the bucket through its `SITE_FILES` binding, so it deploys

@@ -2,6 +2,7 @@
 // bucket (see docs/deployment.md, "Hosted sites at the edge"). Site databases
 // are one Durable Object per site, named by the site; the Worker answers the
 // public data API's visitors and serves the control plane (docs/database.md).
+// It also serves the Data SDK's script, naru.pub/sdk/*.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "naru-edge",
@@ -30,6 +31,14 @@
   },
   // The site bucket: each site's files under <login>/.
   "r2_buckets": [{ "binding": "SITE_FILES", "bucket_name": "naru-pub" }],
+  // The Data SDK's committed files, served at naru.pub/sdk/ (src/sdk.ts). The
+  // Worker runs first on every request, so a hosted site's own /1.0.0/naru.js
+  // is still its own file.
+  "assets": {
+    "directory": "../control-plane/public/sdk",
+    "binding": "SDK_FILES",
+    "run_worker_first": true,
+  },
   // The custom domain table the control plane sends (src/domains.ts).
   "kv_namespaces": [
     { "binding": "DOMAINS", "id": "11c38b8a51984f708edd9ebf619e3ab3" },
@@ -39,6 +48,9 @@
   // control plane, the zone's origin.
   "routes": [
     { "pattern": "naru.pub/api/data/v1/*", "zone_name": "naru.pub" },
+    // The Data SDK, so sites that import it load while the control plane is
+    // down.
+    { "pattern": "naru.pub/sdk/*", "zone_name": "naru.pub" },
     // The control plane calls /v1/sites/* and /v1/pageviews/* here.
     { "pattern": "edge.naru.pub", "custom_domain": true },
     // Hosted sites. r2.naru.pub and media.naru.pub, the bucket's public

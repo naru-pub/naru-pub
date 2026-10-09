@@ -7,6 +7,7 @@ import {
 } from "./domains";
 import { notFound, servePage, siteOf, type PagesEnv } from "./pages";
 import type { PageviewLog } from "./pageview-log";
+import { serveSdk, type SdkEnv } from "./sdk";
 import type { SiteData } from "./site";
 import type { Outcome } from "./types";
 import { website, type WebsiteEnv } from "./website";
@@ -14,7 +15,7 @@ import { website, type WebsiteEnv } from "./website";
 export { PageviewLog } from "./pageview-log";
 export { SiteData } from "./site";
 
-interface Env extends WebsiteEnv, PagesEnv, DomainsEnv {
+interface Env extends WebsiteEnv, PagesEnv, DomainsEnv, SdkEnv {
   PAGEVIEWS: DurableObjectNamespace<PageviewLog>;
   SITES: DurableObjectNamespace<SiteData>;
   /** Shared with the control plane, the only caller of /v1/sites. */
@@ -28,9 +29,10 @@ interface Env extends WebsiteEnv, PagesEnv, DomainsEnv {
   TEST_OPERATIONS?: string;
 }
 
-// Three surfaces. <login>.naru.pub, or a custom domain, is a hosted site
-// (pages.ts, domains.ts). Under the platform domain, /api/data/v1/<site>/...
-// is the public data API (website.ts). /v1/sites/<site>/<operation>,
+// Four surfaces. <login>.naru.pub, or a custom domain, is a hosted site
+// (pages.ts, domains.ts). Under the platform domain, /sdk/<version>/<file> is
+// the Data SDK (sdk.ts) and /api/data/v1/<site>/... the public data API
+// (website.ts). /v1/sites/<site>/<operation>,
 // /v1/pageviews/<operation> and /v1/domains/replace are the control plane's
 // own: POST with a JSON body, answered with `{ value }` or
 // `{ error: { status, message, code } }` at that status. A site's object is
@@ -156,7 +158,8 @@ async function replaceDomains(request: Request, env: Env) {
 }
 
 /**
- * Hosts that are not a hosted site: the platform domain (its data API route),
+ * Hosts that are not a hosted site: the platform domain (its SDK and data API
+ * routes),
  * this Worker's custom domain, and the address `wrangler dev` answers on.
  */
 function platformHost(hostname: string, env: Env) {
@@ -176,6 +179,7 @@ export default {
     // control plane and the bucket's public domains on R2; this Worker's own
     // custom domain takes precedence over all of them (docs/deployment.md).
     if (!platformHost(hostname, env)) return hostedSite(request, env, ctx);
+    if (pathname.startsWith("/sdk/")) return serveSdk(request, env);
     const route = /^\/api\/data\/v1\/([^/]+)(?:\/(.*))?$/.exec(pathname);
     if (route)
       return website(
