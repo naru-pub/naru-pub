@@ -4,8 +4,8 @@
 
 Avoid control-plane downtime for ordinary, schema-compatible deployments.
 For breaking migrations, downtime is acceptable and backward compatibility
-is not a requirement: deploy with `DEPLOY_DOWNTIME=1` to stop old application
-and background processes instead of maintaining compatibility bridges.
+is not a requirement: deploy with downtime, stopping the old application and
+background processes, instead of maintaining compatibility bridges.
 Preserve payment records and unfinished durable work during cutovers.
 
 ## Kysely Migrations

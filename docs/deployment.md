@@ -19,133 +19,27 @@ Next, React or the other web app packages, which the build refuses), and
 Chromium; `worker` and migrations run from it with plain `node`, no
 `tsx`.
 
-To deploy, push to `main` and run this from the development machine:
+The deploy itself is kept outside this repository. It deploys a commit only
+once that commit's whole CI run has succeeded, tests and the image smoke test
+included, and runs the images as they are: nothing compiles on the server.
 
-```bash
-mise run deploy        # same as ./deploy.sh
-```
+CI builds with the Dockerfile's default `NEXT_PUBLIC_DOMAIN` (`naru.pub`),
+which is compiled into the client bundle, so the images are only right for a
+server whose `.env` agrees.
 
-It resolves `origin/main`, waits with `gh` for that commit's CI run to succeed,
-and runs `deploy-server.sh <commit>` on the host named by the `naru-pub-deploy`
-alias in `~/.ssh/config`. The server pulls the images from ghcr.io and tags
-them `naru-control-plane:<commit>` and
-`naru-control-plane-jobs:<commit>`. Only `origin/main` is deployed, so push first. `./deploy-server.sh <commit>` on the
-server does the same deployment without the CI wait.
+What a release does that the code has to allow for:
 
-This path is meant for a metered connection such as a phone hotspot. The
-development machine reads one ref with `git ls-remote`, polls the run's status
-every `CI_POLL_SECONDS` (30 by default), and sends one ssh command. The images,
-several GB, go from ghcr.io to the server and never through the development
-machine.
-
-The packages are private, so the server pulls with its own `docker login
-ghcr.io`, using a classic personal access token with only the `read:packages`
-scope. Docker on the server must keep that login in `~/.docker/config.json`
-rather than the macOS keychain, because the ssh session `deploy.sh` uses
-cannot unlock the keychain. Set it up once on the server:
-
-```bash
-jq 'del(.credsStore)' ~/.docker/config.json > ~/.docker/config.json.new && mv ~/.docker/config.json.new ~/.docker/config.json
-docker login ghcr.io -u yangnaru
-```
-
-Removing `credsStore` alone is not enough when `auths` is empty: Docker then
-falls back to the keychain again. An existing `ghcr.io` entry, which a
-keychain login leaves behind, is enough to keep it on the file. Log in again
-the same way when the token expires.
-
-CI builds with the Dockerfile's default `NEXT_PUBLIC_DOMAIN` (`naru.pub`), which
-is compiled into the client bundle. If the server's `.env` ever sets a
-different value, deploy with the manual build below instead.
-
-### Manual build
-
-When CI is unavailable, or an image has to be built from this machine, run:
-
-```bash
-mise run deploy:local  # same as ./deploy.sh build
-```
-
-It builds the images from `origin/main` in a clean checkout of its own
-(`~/.cache/naru-pub-deploy`), using the server's `NEXT_PUBLIC_*` values, ships
-them over ssh, and runs the same `deploy-server.sh <commit>`. The server then
-finds the images already loaded and pulls nothing. Docker must be running on
-the development machine, and it uploads the compressed images from there, so
-avoid it on a metered connection.
-
-Neither path compiles on the server, and its Compose file has no `build:` on
-purpose: a Next.js build there ran the Docker VM that
-every other service on the host shares out of memory.
-
-`deploy-server.sh` uses blue-green HTTP deployments. A stable nginx gateway owns host
-port `40000` (control plane). The blue and green application slots have no
-published host ports. Hosted sites are not served from the host at all; the
-edge Worker serves them ([below](#hosted-sites-at-the-edge)).
-
-For each deployment, `deploy-server.sh`:
-
-1. replaces its own copies of `deploy-server.sh` and `docker-compose.yml`
-   with the ones committed at exactly the commit the images were built from;
-2. pulls that commit's images from ghcr.io unless they are already loaded;
-3. points the `:current` tags at that commit's images;
-4. keeps the active web slot serving, stops the worker, and runs compatible
-   database migrations from the new jobs image, then configures the pg_cron
-   payment and maintenance schedules and enqueues catch-up tasks;
-5. starts the inactive slot and waits for the control plane and database to
-   become healthy;
-6. reloads nginx to atomically direct new requests to the healthy slot;
-7. recreates the worker process from the new jobs image; and
-8. stops the previous slot and removes release images nothing can come back to.
-
-Ordinary deployments keep the active control plane serving until the new slot
-is healthy and traffic switches. For a breaking migration, run
-`DEPLOY_DOWNTIME=1 ./deploy.sh` (or set the same variable when running
-`deploy-server.sh` directly). This stops both web slots as well as background
-processes before migration. Backward compatibility is not required for these
-explicit cutovers; downtime remains acceptable when needed (see `AGENTS.md`). The Absurd payment migration imports existing work and
-removes the old queue; see [the payment deployment notes](design/absurd-payments.md#deployment).
-
-The server holds no git checkout. Its directory (`~/naru`, where `deploy.sh`
-looks for it as `REMOTE_DIR`) has only `.env`, `.deploy-state/`,
-`deploy-server.sh` and `docker-compose.yml`. The script downloads the last two
-from `raw.githubusercontent.com` at the commit being deployed (the repository
-is public, so no credentials), then re-executes the new copy before it reads
-the Compose topology. This keeps a deployment safe when the deployment script
-or Compose file itself changes in that commit. It records the commit in
-`.deploy-state/commit` and refuses one that GitHub's compare API does not
-report as ahead of it, so an older release cannot go live by accident; use
-rollback for that.
-
-The previous HTTP slot is stopped once traffic has left it. nginx finishes
-in-flight requests on its old workers after a reload, so the script waits for
-those workers to exit (at most `DRAIN_TIMEOUT_SECONDS`, 120 by default) before
-stopping the slot. Its containers are kept, not removed, so an immediate
-traffic rollback starts them again without a rebuild:
-
-```bash
-./deploy.sh rollback             # from the development machine
-./deploy-server.sh rollback      # or on the server itself
-```
-
-A rollback starts the stopped slot, waits for it to become healthy, switches
-traffic to it, and stops the slot it left. The slots use
-`restart: unless-stopped`, so a stopped slot also stays stopped across a Docker
-restart.
-
-Rollback only switches HTTP services. It does not reverse database migrations
-or roll back worker code. After a breaking migration, use a forward
-fix; an older image may no longer work with the current schema. Backward
-compatibility is not maintained solely to support rollback.
-
-With `DEPLOY_DOWNTIME=1`, control-plane requests are unavailable until the new
-slot starts and passes its health checks. The stable gateway can remain
-running, and hosted sites keep answering from the edge. Use this mode for schema changes that the old web
-code cannot safely use; ordinary releases must be compatible with the schema
-while the previous slot serves.
-
-Runtime state is stored under `.deploy-state/` and must not be committed. If the
-active-slot file is lost, inspect the nginx configuration and restore
-`.deploy-state/active-slot` to `blue` or `green` before deploying again.
+- The previous web slot keeps serving while the worker stops and the new
+  release's migrations run, and until the new slot is healthy. An ordinary
+  release's migrations therefore have to leave the previous release working.
+- A breaking migration goes out as a downtime deploy instead, which stops the
+  old web slot too; backward compatibility is not required then (see
+  `AGENTS.md`). The Absurd payment migration imports existing work and removes
+  the old queue; see
+  [the payment deployment notes](design/absurd-payments.md#deployment).
+- A rollback only switches the web slot back. It does not reverse migrations
+  or roll back the worker, so after a breaking migration, fix forward: an
+  older image may no longer work with the current schema.
 
 ## Edge Worker
 

@@ -1,9 +1,0 @@
-# Production deploys. See docs/deployment.md.
-
-[tasks.deploy]
-description = "Deploy origin/main with the images CI built (light on this machine's data)"
-run = "./deploy.sh"
-
-[tasks."deploy:local"]
-description = "Build origin/main's images on this machine, upload them to the server and deploy"
-run = "./deploy.sh build"

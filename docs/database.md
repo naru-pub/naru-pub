@@ -268,7 +268,7 @@ The Worker reads the visitor IP from Cloudflare’s trusted header. Requests for
 
 `cleanup-site-data-grants` periodically removes expired authorization codes and access tokens from PostgreSQL. It does not touch the object’s rate-limit buckets.
 
-These limits do not protect reads, invalid requests or authorization endpoints from high request volumes. `deploy-server.sh` renders per-client nginx limits for `/api/data/*` (30 r/s, burst 60) and `/api/data-auth/*` (2 r/s, burst 10) with matching body caps, keyed on the visitor address recovered from the trusted tunnel's forwarding chain. PostgreSQL backups cover authentication and media metadata, not the documents stored in Durable Objects. The existing hosted-file export does not include site database documents.
+These limits do not protect reads, invalid requests or authorization endpoints from high request volumes. The gateway's nginx config sets per-client limits for `/api/data/*` (30 r/s, burst 60) and `/api/data-auth/*` (2 r/s, burst 10) with matching body caps, keyed on the visitor address recovered from the trusted tunnel's forwarding chain. PostgreSQL backups cover authentication and media metadata, not the documents stored in Durable Objects. The existing hosted-file export does not include site database documents.
 
 ### Reads and caching
 

@@ -115,7 +115,7 @@ COPY --from=prod-deps /app/node_modules node_modules/
 COPY --from=prod-deps /app/package.json ./
 COPY --from=cli-builder /app/dist dist/
 
-# docker-compose.yml gives each service its own command.
+# The deploy's compose file gives each service its own command.
 CMD ["node", "dist/cli/worker.mjs"]
 
 FROM node:24-slim AS web

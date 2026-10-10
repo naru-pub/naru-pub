@@ -57,7 +57,7 @@ jobs:
           provenance: false
 
   # The payment tests: unit tests, then the database tests against a throwaway
-  # PostgreSQL cluster the script starts itself. Part of the run deploy.sh
+  # PostgreSQL cluster the script starts itself. Part of the run a deploy
   # checks, so a payment regression never reaches the server.
   test-payments:
     defaults:
@@ -89,7 +89,7 @@ jobs:
   # Everything else in the control plane: the unit suites, then the board and
   # site-data database tests, each against a throwaway PostgreSQL cluster and
   # a local edge Worker its script starts. Like test-payments, part of
-  # the run deploy.sh checks.
+  # the run a deploy checks.
   test-control-plane:
     defaults:
       run:
@@ -123,7 +123,7 @@ jobs:
         env:
           NARU_TEST_PG_BIN: /usr/lib/postgresql/18/bin
 
-  # Runs the images just pushed as a deploy would. deploy.sh deploys only a
+  # Runs the images just pushed as a deploy would. A deploy takes only a
   # commit whose whole run succeeded, so a failure here keeps it off the server.
   smoke-test-control-plane:
     needs: image-control-plane

@@ -2,7 +2,7 @@ import { sql, type Kysely } from "kysely";
 
 // Every site's collections and documents now live in its Durable Object, so
 // PostgreSQL's copies, the usage triggers that counted them and the per-site
-// store column go. Breaking: deploy with DEPLOY_DOWNTIME=1.
+// store column go. Breaking: deploy with downtime.
 //
 // Refuses to run while any site still has collections here that were never
 // moved (site_data_backend other than durable_object): those would be lost.

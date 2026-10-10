@@ -175,7 +175,7 @@ Each phase ships on its own and is safe to deploy blue/green.
 
 A rollback during phase 2 to phase 1 is safe, since phase 1 holds both. A
 rollback past phase 1 needs the old slot's lease writes, which phase 2's code
-no longer makes; deploy-server.sh's rollback only switches the web slot, so
+no longer makes; a rollback only switches the web slot, so
 note that phases 1 and 2 should not go out back to back.
 
 ## Tests

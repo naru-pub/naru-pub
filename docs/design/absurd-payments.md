@@ -112,8 +112,8 @@ Downtime is acceptable and backward compatibility is not required. This is a
 repository-wide preference recorded in `AGENTS.md`.
 
 Ordinary deployments keep the active web slot serving while background
-processes stop and compatible migrations run. Breaking migrations use
-`DEPLOY_DOWNTIME=1 ./deploy.sh`, which stops both web slots as well. The Absurd
+processes stop and compatible migrations run. Breaking migrations go out
+as a downtime deploy, which stops both web slots as well. The Absurd
 queue adoption required this breaking cutover: it imports unfinished jobs, schedules,
 remaining retry budgets, and terminal deduplication history, then drops
 `payment_jobs`. Claims left by stopped workers do not delay the cutover. No

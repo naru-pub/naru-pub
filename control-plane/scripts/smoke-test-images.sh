@@ -74,7 +74,7 @@ done
 
 echo "Starting the web server..."
 start web -e DATABASE_URL="$database_url" "$web_image"
-# The same check docker-compose.yml uses.
+# The same check production's compose file uses.
 wait_for "the web server to become healthy" 60 docker exec "$run-web" node -e \
   "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 
