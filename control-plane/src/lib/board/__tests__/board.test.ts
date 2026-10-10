@@ -51,7 +51,9 @@ jest.mock("@/lib/entitlements", () => ({
 import type { User } from "@/lib/auth";
 const { sql } = require("kysely") as typeof import("kysely");
 const { getUserFeatures } = require("@/lib/entitlements") as {
-  getUserFeatures: jest.Mock;
+  getUserFeatures: jest.Mock<
+    typeof import("@/lib/entitlements").getUserFeatures
+  >;
 };
 const { db } = require("@/lib/database") as typeof import("@/lib/database");
 const { BoardError } = require("../errors") as typeof import("../errors");
