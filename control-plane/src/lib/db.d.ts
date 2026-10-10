@@ -404,28 +404,37 @@ export interface HomeDirectoryExports {
   user_id: string;
 }
 
+export interface PageviewDailyBrowsers {
+  browser: string;
+  date: Timestamp;
+  id: Generated<string>;
+  user_id: string;
+  views: number;
+}
+
+export interface PageviewDailyPaths {
+  date: Timestamp;
+  id: Generated<string>;
+  path: string;
+  user_id: string;
+  views: number;
+  visitors: string;
+}
+
+export interface PageviewDailyReferrers {
+  date: Timestamp;
+  id: Generated<string>;
+  referrer: string;
+  user_id: string;
+  views: number;
+}
+
 export interface PageviewDailyStats {
   date: Timestamp;
   unique_visitors: Generated<number>;
   user_id: string;
   views: Generated<number>;
-}
-
-export interface PageviewDailyVisitors {
-  date: Timestamp;
-  id: Generated<string>;
-  ip: string;
-  user_id: string;
-}
-
-export interface Pageviews {
-  id: Generated<string>;
-  ip: string;
-  path: Generated<string>;
-  referrer: string | null;
-  timestamp: Generated<Timestamp>;
-  user_agent: string | null;
-  user_id: string;
+  visitors: string | null;
 }
 
 export interface PasswordResetTokens {
@@ -698,9 +707,10 @@ export interface DB {
   github_deploy_targets: GithubDeployTargets;
   github_deployments: GithubDeployments;
   home_directory_exports: HomeDirectoryExports;
+  pageview_daily_browsers: PageviewDailyBrowsers;
+  pageview_daily_paths: PageviewDailyPaths;
+  pageview_daily_referrers: PageviewDailyReferrers;
   pageview_daily_stats: PageviewDailyStats;
-  pageview_daily_visitors: PageviewDailyVisitors;
-  pageviews: Pageviews;
   password_reset_tokens: PasswordResetTokens;
   payment_cron_runs: PaymentCronRuns;
   payment_events: PaymentEvents;

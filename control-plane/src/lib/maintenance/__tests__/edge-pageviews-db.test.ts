@@ -26,7 +26,7 @@ integration("edge pageview drain", () => {
     await db.destroy();
   });
 
-  test("stores each pageview once, as the proxy does, even when an acknowledgement is lost", async () => {
+  test("counts each pageview once into the daily rollups, even when an acknowledgement is lost", async () => {
     const user = await db
       .insertInto("users")
       .values({ login_name: "edge-pageview-test", password_hash: "x" })
@@ -92,11 +92,36 @@ integration("edge pageview drain", () => {
         { date: "2026-10-09", views: 1, unique: 1 },
         { date: "2026-10-10", views: 2, unique: 2 },
       ]);
-      const raw = await sql<{ count: number }>`
-        select count(*)::int as count from pageviews where user_id = ${user.id}`.execute(
-        db,
-      );
-      expect(raw.rows[0].count).toBe(3);
+      // A later batch merges into the day's sketches: 192.0.2.2 is not new.
+      log = [{ ...event(6, "192.0.2.2"), path: "/about" }];
+      expect(await drainEdgePageviews(db)).toEqual({
+        stored: 1,
+        skipped: 0,
+        waitingSince: null,
+      });
+      const today = await sql<{ views: number; unique: number }>`
+        select views, unique_visitors as unique from pageview_daily_stats
+        where user_id = ${user.id} and date = '2026-10-10'`.execute(db);
+      expect(today.rows).toEqual([{ views: 3, unique: 2 }]);
+
+      const paths = await sql<{ path: string; views: number; unique: number }>`
+        select path, sum(views)::int as views,
+          round(hll_cardinality(hll_union_agg(visitors)))::int as unique
+        from pageview_daily_paths where user_id = ${user.id}
+        group by path order by path`.execute(db);
+      // / had 192.0.2.1 on both days and 192.0.2.2 on the 10th.
+      expect(paths.rows).toEqual([
+        { path: "/", views: 3, unique: 2 },
+        { path: "/about", views: 1, unique: 1 },
+      ]);
+      const referrers = await sql<{ referrer: string; views: number }>`
+        select referrer, sum(views)::int as views from pageview_daily_referrers
+        where user_id = ${user.id} group by referrer`.execute(db);
+      expect(referrers.rows).toEqual([{ referrer: "", views: 4 }]);
+      const browsers = await sql<{ browser: string; views: number }>`
+        select browser, sum(views)::int as views from pageview_daily_browsers
+        where user_id = ${user.id} group by browser`.execute(db);
+      expect(browsers.rows).toEqual([{ browser: "(기타)", views: 4 }]);
     } finally {
       await db.deleteFrom("users").where("id", "=", user.id).execute();
     }

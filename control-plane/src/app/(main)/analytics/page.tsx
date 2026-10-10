@@ -48,16 +48,18 @@ async function getTopPages(userId: string) {
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   const results = await db
-    .selectFrom("pageviews")
+    .selectFrom("pageview_daily_paths")
     .select([
       "path",
-      sql<number>`COUNT(*)`.as("views"),
-      sql<number>`COUNT(DISTINCT ip)`.as("unique_visitors"),
+      sql<number>`SUM(views)`.as("views"),
+      sql<number>`ROUND(hll_cardinality(hll_union_agg(visitors)))`.as(
+        "unique_visitors",
+      ),
     ])
     .where("user_id", "=", userId)
-    .where("timestamp", ">=", thirtyDaysAgo)
+    .where("date", ">=", thirtyDaysAgo)
     .groupBy("path")
-    .orderBy(sql`COUNT(*)`, "desc")
+    .orderBy(sql`SUM(views)`, "desc")
     .limit(10)
     .execute();
 
@@ -73,15 +75,15 @@ async function getTopReferrers(userId: string) {
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   const results = await db
-    .selectFrom("pageviews")
+    .selectFrom("pageview_daily_referrers")
     .select([
-      sql<string>`COALESCE(referrer, '(직접 방문)')`.as("referrer"),
-      sql<number>`COUNT(*)`.as("views"),
+      sql<string>`COALESCE(NULLIF(referrer, ''), '(직접 방문)')`.as("referrer"),
+      sql<number>`SUM(views)`.as("views"),
     ])
     .where("user_id", "=", userId)
-    .where("timestamp", ">=", thirtyDaysAgo)
-    .groupBy(sql`COALESCE(referrer, '(직접 방문)')`)
-    .orderBy(sql`COUNT(*)`, "desc")
+    .where("date", ">=", thirtyDaysAgo)
+    .groupBy("referrer")
+    .orderBy(sql`SUM(views)`, "desc")
     .limit(10)
     .execute();
 
@@ -91,61 +93,29 @@ async function getTopReferrers(userId: string) {
   }));
 }
 
-function parseBrowserName(ua: string): string {
-  // Order matters: check more specific strings first
-  if (ua.includes("Firefox/") && !ua.includes("Seamonkey/")) return "Firefox";
-  if (ua.includes("Edg/")) return "Edge";
-  if (ua.includes("OPR/") || ua.includes("Opera/")) return "Opera";
-  if (ua.includes("SamsungBrowser/")) return "Samsung Internet";
-  if (ua.includes("Chrome/") && !ua.includes("Edg/") && !ua.includes("OPR/"))
-    return "Chrome";
-  if (
-    ua.includes("Safari/") &&
-    !ua.includes("Chrome/") &&
-    !ua.includes("Chromium/")
-  )
-    return "Safari";
-  if (
-    ua.includes("bot") ||
-    ua.includes("Bot") ||
-    ua.includes("crawl") ||
-    ua.includes("Crawl") ||
-    ua.includes("spider") ||
-    ua.includes("Spider")
-  )
-    return "Bot";
-  if (ua.includes("curl/")) return "curl";
-  return "(기타)";
-}
-
 async function getUserAgentBreakdown(userId: string) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   const results = await db
-    .selectFrom("pageviews")
-    .select([
-      sql<string>`COALESCE(user_agent, '')`.as("user_agent"),
-      sql<number>`COUNT(*)`.as("views"),
-    ])
+    .selectFrom("pageview_daily_browsers")
+    .select(["browser", sql<number>`SUM(views)`.as("views")])
     .where("user_id", "=", userId)
-    .where("timestamp", ">=", thirtyDaysAgo)
-    .groupBy("user_agent")
+    .where("date", ">=", thirtyDaysAgo)
+    .groupBy("browser")
+    .orderBy(sql`SUM(views)`, "desc")
+    .limit(10)
     .execute();
 
-  // Aggregate by parsed browser name
-  const browserMap = new Map<string, number>();
-  for (const r of results) {
-    const browser = r.user_agent
-      ? parseBrowserName(r.user_agent)
-      : "(알 수 없음)";
-    browserMap.set(browser, (browserMap.get(browser) ?? 0) + Number(r.views));
-  }
+  return results.map((r) => ({ userAgent: r.browser, views: Number(r.views) }));
+}
 
-  return Array.from(browserMap.entries())
-    .map(([userAgent, views]) => ({ userAgent, views }))
-    .sort((a, b) => b.views - a.views)
-    .slice(0, 10);
+// Distinct visitors over a range of days: the union of the days' sketches,
+// so a returning visitor counts once. Days without a sketch, from before
+// sketches or past their retention, add their own counts.
+function rangeUniqueVisitors() {
+  return sql<number>`ROUND(COALESCE(hll_cardinality(hll_union_agg(visitors)), 0))
+    + COALESCE(SUM(unique_visitors) FILTER (WHERE visitors IS NULL), 0)`;
 }
 
 async function getStats(userId: string) {
@@ -167,7 +137,7 @@ async function getStats(userId: string) {
     .selectFrom("pageview_daily_stats")
     .select([
       sql<number>`SUM(views)`.as("views"),
-      sql<number>`SUM(unique_visitors)`.as("unique_visitors"),
+      rangeUniqueVisitors().as("unique_visitors"),
     ])
     .where("user_id", "=", userId)
     .where("date", ">=", sevenDaysAgo)
@@ -178,7 +148,7 @@ async function getStats(userId: string) {
     .selectFrom("pageview_daily_stats")
     .select([
       sql<number>`SUM(views)`.as("views"),
-      sql<number>`SUM(unique_visitors)`.as("unique_visitors"),
+      rangeUniqueVisitors().as("unique_visitors"),
     ])
     .where("user_id", "=", userId)
     .where("date", ">=", thirtyDaysAgo)

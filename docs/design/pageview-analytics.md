@@ -40,49 +40,56 @@ that, and they are counted when the control plane is back. The job fails, and
 so alerts the operator through the ordinary job-failure alert, while the oldest
 waiting pageview is more than 30 minutes old.
 
-## Atomic writes and daily visitors
+## Daily rollups and distinct visitors
 
 The event captures its UTC request time when the Worker receives the request,
 so a midnight crossing or a delay in the log does not move it to another day.
-One transaction per batch, with a 30-second statement timeout, does for each
-event:
+No pageview is stored on its own. One transaction per batch, with a 30-second
+statement timeout, adds the batch to four daily rollups, each keyed by site
+and UTC date:
 
-1. Insert `(user_id, UTC date, ip)` into `pageview_daily_visitors`, ignoring
-   conflicts on its unique constraint.
-2. Insert the raw pageview with the captured timestamp.
-3. Increment daily views; increment daily unique visitors only if step 1
-   inserted a row.
+| Table                      | Per                            | Holds                   |
+| -------------------------- | ------------------------------ | ----------------------- |
+| `pageview_daily_stats`     | site                           | views, visitors, sketch |
+| `pageview_daily_paths`     | path                           | views, sketch           |
+| `pageview_daily_referrers` | referrer (`''`: none)          | views                   |
+| `pageview_daily_browsers`  | browser named by `browsers.ts` | views                   |
 
-and then records the batch's last id and commits. Concurrent first visits
-serialize through the unique constraint. Any error rolls back the entire batch,
-which the next run takes again. A visitor is still an IP, not a person; shared
-IPs merge visitors and changing IPs split them. Multi-day unique totals remain
-the existing sum of daily visitors, not distinct people over the whole period.
+and then records the batch's last id and commits. Any error rolls back the
+entire batch, which the next run takes again.
 
-The visitor table uses a UUIDv7 primary key and a date/id retention index.
-Its migration seeded that day's visitor keys from existing rows to avoid
-recounting existing IPs on cutover, without rewriting historical totals.
+Distinct visitors are HyperLogLog sketches from the postgresql-hll extension:
+a visitor is `hll_hash_text(host(ip))`, and sketches use `log2m` 14 (sketches
+union only with sketches of the same parameters). A sketch is an exact set of
+hashes up to about 1,280 visitors, which almost every site-day and path-day
+stays under, and within about 0.8% past that. Addresses are never stored. A
+visitor is still an IP, not a person; shared IPs merge visitors and changing
+IPs split them.
+
+A day's unique visitor count is its sketch's cardinality, stored as an integer
+when the day is updated. Seven- and thirty-day figures, and a path's thirty-day
+visitors, are the cardinality of the union of the days' sketches, so a visitor
+returning on several days counts once. Days without a sketch (expired, or
+counted before sketches) add their stored count instead. All-time totals
+remain the sum of daily counts.
+
+The migration that introduced the rollups (`1791610422484`) built them from
+the 35 days of raw pageviews and visitor addresses then kept, which it
+dropped. Daily totals kept the counts they had.
 
 ## Retention and query compatibility
 
-A durable maintenance job runs every 15 minutes, removing events and visitor
-keys before UTC midnight 35 days ago. Each transaction removes at most 1,000
-rows with `SKIP LOCKED`; each run removes at most 100,000 rows per table. Large
-initial backlogs drain over successive runs. Existing daily totals remain
-indefinitely, preserving `지금까지의 조회` at its accumulated value; new
-accepted navigations continue incrementing it. Lifetime counts and historical daily graphs survive cleanup.
-Thirty-day path, referrer, and browser reports still use recent raw events.
-No partitioning or additional dimension rollups are needed for this change.
-
-Existing raw events lack Fetch Metadata and cannot be accurately reclassified.
-We retain their recorded meaning until they age out; historical aggregates
-remain legacy HTML-request counts. There is no site-specific correction or
-bulk deletion during migration. Retention changes storage policy for all sites.
+A durable maintenance job runs every 15 minutes, removing path, referrer and
+browser rollups before UTC midnight 35 days ago and clearing site-day sketches
+as old. Each transaction changes at most 1,000 rows with `SKIP LOCKED`; each
+run changes at most 100,000 rows per table. Daily totals remain indefinitely,
+preserving `지금까지의 조회` at its accumulated value; lifetime counts and
+historical daily graphs survive cleanup.
 
 ## Validation
 
 Regenerate db.d.ts from a fully migrated disposable database. Validate request
-classification, duplicate batches after a lost acknowledgement, concurrent
-same-IP writes, atomic rollback, UTC date handling, and retention preserving
-recent rows/daily totals against disposable PostgreSQL. Already expired raw
-events are not recoverable by a migration rollback.
+classification, duplicate batches after a lost acknowledgement, sketches
+merging across batches and days, UTC date handling, and retention preserving
+recent rollups and daily totals against disposable PostgreSQL with
+postgresql-hll installed.

@@ -4,7 +4,7 @@ import { prunePageviews } from "@/lib/analytics/retention";
 prunePageviews(db)
   .then((removed) =>
     console.log(
-      `[pageview-cleanup] Removed ${removed} expired events/visitors`,
+      `[pageview-cleanup] Pruned ${removed} expired rollups and sketches`,
     ),
   )
   .catch((error) => {

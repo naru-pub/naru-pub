@@ -2,11 +2,15 @@ import { isIP } from "node:net";
 import { sql, type Kysely } from "kysely";
 import type { DB } from "@/lib/db";
 import { callPageviewLog } from "@/lib/edge/client";
+import { browserName } from "./browsers";
 
 // Pageviews of hosted sites (edge/src/pages.ts) wait in the edge Worker's
-// pageview log until this takes them into the pageview tables, with the rules
-// the retired proxy wrote them by: a day is the visit's UTC date, and a
-// visitor is counted once per site and day.
+// pageview log until this adds them to the daily rollups: per site, path,
+// referrer and browser. A day is the visit's UTC date. Distinct visitors per
+// site and per path are HyperLogLog sketches (postgresql-hll) of
+// hll_hash_text(host(ip)), with log2m 14 like those the pageview-rollup
+// migration built, since only sketches of the same log2m union; the
+// addresses themselves are not kept.
 
 const LOG = "pageviews";
 const BATCH = 1000;
@@ -47,30 +51,62 @@ export async function storePageviews(db: Kysely<DB>, events: LoggedPageview[]) {
           .execute()
       : [];
     const ids = new Map(users.map((user) => [user.login_name, user.id]));
-    let stored = 0;
-    for (const event of fresh) {
+    const valid = fresh.flatMap((event) => {
       const userId = ids.get(event.login);
-      if (!userId || !isIP(event.ip)) continue;
-      const at = new Date(event.timestamp);
-      const visitor = await sql`
-        insert into pageview_daily_visitors (user_id, date, ip)
-        values (${userId}, (${at}::timestamptz at time zone 'UTC')::date, ${event.ip}::inet)
-        on conflict (user_id, date, ip) do nothing`.execute(tx);
+      return userId && isIP(event.ip) ? [{ ...event, userId }] : [];
+    });
+
+    if (valid.length) {
+      // The batch as a table, one row per pageview.
+      const batch = sql`unnest(
+        ${valid.map((event) => event.userId)}::uuid[],
+        ${valid.map((event) => new Date(event.timestamp).toISOString().slice(0, 10))}::date[],
+        ${valid.map((event) => event.path)}::text[],
+        ${valid.map((event) => event.ip)}::inet[],
+        ${valid.map((event) => event.referrer ?? "")}::text[],
+        ${valid.map((event) => browserName(event.userAgent))}::text[]
+      ) as pageview(user_id, date, path, ip, referrer, browser)`;
+      const visitors = sql`hll_add_agg(hll_hash_text(host(ip)), 14)`;
+      // A day counted before it had a sketch can only add to its count, and
+      // keeps no sketch: hll_union with null is null.
       await sql`
-        insert into pageviews (user_id, timestamp, path, ip, referrer, user_agent)
-        values (${userId}, ${at}, ${event.path}, ${event.ip}::inet, ${event.referrer}, ${event.userAgent})`.execute(
-        tx,
-      );
-      await sql`
-        insert into pageview_daily_stats (user_id, date, views, unique_visitors)
-        values (${userId}, (${at}::timestamptz at time zone 'UTC')::date, 1, ${Number(visitor.numAffectedRows ?? 0)})
+        insert into pageview_daily_stats as stats
+          (user_id, date, views, unique_visitors, visitors)
+        select user_id, date, count(*), round(hll_cardinality(${visitors})),
+          ${visitors}
+        from ${batch} group by 1, 2
         on conflict (user_id, date) do update set
-          views = pageview_daily_stats.views + 1,
-          unique_visitors = pageview_daily_stats.unique_visitors + excluded.unique_visitors`.execute(
-        tx,
-      );
-      stored += 1;
+          views = stats.views + excluded.views,
+          visitors = hll_union(stats.visitors, excluded.visitors),
+          unique_visitors = case
+            when stats.visitors is null
+            then stats.unique_visitors + round(hll_cardinality(excluded.visitors))
+            else round(hll_cardinality(hll_union(stats.visitors, excluded.visitors)))
+          end`.execute(tx);
+      await sql`
+        insert into pageview_daily_paths as paths
+          (user_id, date, path, views, visitors)
+        select user_id, date, path, count(*), ${visitors}
+        from ${batch} group by 1, 2, 3
+        on conflict (user_id, date, path) do update set
+          views = paths.views + excluded.views,
+          visitors = hll_union(paths.visitors, excluded.visitors)`.execute(tx);
+      await sql`
+        insert into pageview_daily_referrers as referrers
+          (user_id, date, referrer, views)
+        select user_id, date, referrer, count(*)
+        from ${batch} group by 1, 2, 3
+        on conflict (user_id, date, referrer) do update set
+          views = referrers.views + excluded.views`.execute(tx);
+      await sql`
+        insert into pageview_daily_browsers as browsers
+          (user_id, date, browser, views)
+        select user_id, date, browser, count(*)
+        from ${batch} group by 1, 2, 3
+        on conflict (user_id, date, browser) do update set
+          views = browsers.views + excluded.views`.execute(tx);
     }
+
     const last = events.at(-1)?.id ?? after;
     if (last > after)
       await tx
@@ -80,7 +116,7 @@ export async function storePageviews(db: Kysely<DB>, events: LoggedPageview[]) {
           conflict.column("log").doUpdateSet({ last_event_id: String(last) }),
         )
         .execute();
-    return { stored, skipped: events.length - stored };
+    return { stored: valid.length, skipped: events.length - valid.length };
   });
 }
 

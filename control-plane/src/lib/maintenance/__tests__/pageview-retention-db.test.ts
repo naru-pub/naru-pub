@@ -10,47 +10,61 @@ integration("pageview retention", () => {
   afterAll(async () => {
     await db.destroy();
   });
-  test("prunes expired raw data in batches and preserves lifetime counters and the cutoff day", async () => {
+  test("prunes expired rollups and sketches in batches and preserves lifetime counters and the cutoff day", async () => {
     const user = await db
       .insertInto("users")
       .values({ login_name: "pageview-retention-test", password_hash: "x" })
       .returning("id")
       .executeTakeFirstOrThrow();
     try {
-      await sql`insert into pageviews (user_id, timestamp, path, ip)
-        select ${user.id}, ((now() at time zone 'UTC')::date - 36)::timestamp at time zone 'UTC', '/', '192.0.2.1'::inet
-        from generate_series(1, 1001)`.execute(db);
-      await sql`insert into pageviews (user_id, timestamp, path, ip) values
-        (${user.id}, ((now() at time zone 'UTC')::date - 35)::timestamp at time zone 'UTC', '/', '192.0.2.1'::inet),
-        (${user.id}, now(), '/', '192.0.2.1'::inet)`.execute(db);
-      await sql`insert into pageview_daily_visitors (user_id, date, ip) values
-        (${user.id}, (now() at time zone 'UTC')::date - 36, '192.0.2.1'::inet),
-        (${user.id}, (now() at time zone 'UTC')::date - 35, '192.0.2.1'::inet)`.execute(
+      const sketch = sql`hll_add_agg(hll_hash_text('192.0.2.1'), 14)`;
+      const day = (ago: number) =>
+        sql`(now() at time zone 'UTC')::date - ${sql.lit(ago)}`;
+      // 1,001 expired paths: more than one batch.
+      await sql`insert into pageview_daily_paths (user_id, date, path, views, visitors)
+        select ${user.id}, ${day(36)}, '/' || i, 1, (select ${sketch})
+        from generate_series(1, 1001) as i`.execute(db);
+      await sql`insert into pageview_daily_paths (user_id, date, path, views, visitors)
+        select ${user.id}, ${day(35)}, '/', 1, ${sketch}`.execute(db);
+      await sql`insert into pageview_daily_referrers (user_id, date, referrer, views)
+        values (${user.id}, ${day(36)}, '', 1), (${user.id}, ${day(35)}, '', 1)`.execute(
         db,
       );
-      await sql`insert into pageview_daily_stats (user_id, date, views, unique_visitors)
-        values (${user.id}, (now() at time zone 'UTC')::date - 36, 1001, 1),
-        (${user.id}, (now() at time zone 'UTC')::date, 2, 1)`.execute(db);
-      expect(await prunePageviews(db)).toBeGreaterThanOrEqual(1002);
-      const raw = await db
-        .selectFrom("pageviews")
-        .select(sql<number>`count(*)::int`.as("count"))
-        .where("user_id", "=", user.id)
-        .executeTakeFirstOrThrow();
-      const visitors = await db
-        .selectFrom("pageview_daily_visitors")
-        .select(sql<number>`count(*)::int`.as("count"))
-        .where("user_id", "=", user.id)
-        .executeTakeFirstOrThrow();
-      const totals = await db
-        .selectFrom("pageview_daily_stats")
-        .select(sql<number>`sum(views)::int`.as("views"))
-        .where("user_id", "=", user.id)
-        .executeTakeFirstOrThrow();
-      expect(raw.count).toBe(2);
-      expect(visitors.count).toBe(1);
+      await sql`insert into pageview_daily_browsers (user_id, date, browser, views)
+        values (${user.id}, ${day(36)}, 'Firefox', 1), (${user.id}, ${day(35)}, 'Firefox', 1)`.execute(
+        db,
+      );
+      await sql`insert into pageview_daily_stats (user_id, date, views, unique_visitors, visitors)
+        select ${user.id}::uuid, ${day(36)}, 1001, 1, ${sketch}
+        union all select ${user.id}, ${day(35)}, 1, 1, ${sketch}
+        union all select ${user.id}, ${day(0)}, 2, 1, ${sketch}`.execute(db);
+
+      // 1,001 + 1 + 1 rows deleted and one sketch dropped.
+      expect(await prunePageviews(db)).toBe(1004);
+      const left = await sql<{
+        paths: number;
+        referrers: number;
+        browsers: number;
+      }>`
+        select
+          (select count(*)::int from pageview_daily_paths where user_id = ${user.id}) as paths,
+          (select count(*)::int from pageview_daily_referrers where user_id = ${user.id}) as referrers,
+          (select count(*)::int from pageview_daily_browsers where user_id = ${user.id}) as browsers`.execute(
+        db,
+      );
+      expect(left.rows).toEqual([{ paths: 1, referrers: 1, browsers: 1 }]);
+      const days = await sql<{ ago: number; views: number; sketch: boolean }>`
+        select (now() at time zone 'UTC')::date - date as ago, views,
+          visitors is not null as sketch
+        from pageview_daily_stats where user_id = ${user.id} order by date`.execute(
+        db,
+      );
       // Same SUM(views) used by 지금까지의 조회 on home/open/analytics.
-      expect(totals.views).toBe(1003);
+      expect(days.rows).toEqual([
+        { ago: 36, views: 1001, sketch: false },
+        { ago: 35, views: 1, sketch: true },
+        { ago: 0, views: 2, sketch: true },
+      ]);
       expect(await prunePageviews(db)).toBe(0);
     } finally {
       await db.deleteFrom("users").where("id", "=", user.id).execute();

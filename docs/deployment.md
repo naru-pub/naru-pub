@@ -294,6 +294,13 @@ and pg_cron needs database authentication to execute the command. Production
 already preloads pg_cron, so this change needs no PostgreSQL restart.
 Configuration failure stops deployment before the new background worker starts.
 
+Pageview analytics require the postgresql-hll extension, which keeps distinct
+visitors as HyperLogLog sketches ([pageview analytics](design/pageview-analytics.md)).
+It needs no preloading; a migration creates it, so the application role must be
+allowed to (production's is a superuser). Production's Homebrew PostgreSQL has
+it from `brew install postgresql-hll`; on Debian or Ubuntu the package is
+`postgresql-<major>-hll`, which CI installs.
+
 The application cron service is retired. The deployment script stops and removes
 its old container before migration, preserving database task state. Maintenance
 tasks have separate Absurd capacity and stop their child scripts on shutdown so
