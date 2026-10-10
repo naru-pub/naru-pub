@@ -129,8 +129,7 @@ ENV PORT=3000
 # asks 127.0.0.1.
 ENV HOSTNAME=0.0.0.0
 
-# The standalone server does not serve these from the build; they go next to
-# it. public/ is also read at runtime by path (docs/database/blog.zip).
+# The standalone server does not serve these from the build; they go next to it.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static .next/static/
 COPY --from=builder --chown=node:node /app/public public/

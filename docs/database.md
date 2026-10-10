@@ -378,7 +378,7 @@ failed collection creation is reported as skipped.
 
 ## Public guide and example
 
-The Korean guides are served publicly at `/docs` (index), `/docs/database` and `/docs/media`. The control panel links to it without adding a global header link. The static blog example lives in `control-plane/public/examples/database-blog/`; `/docs/database/blog.zip` packages these same source files at build time. See its README for installation and permission setup.
+The Korean guides are served publicly at `/docs` (index), `/docs/database` and `/docs/media`. The control panel links to it without adding a global header link.
 
 ## Server-side sorting and pagination (SDK 1.0.0)
 

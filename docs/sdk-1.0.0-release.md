@@ -9,7 +9,7 @@ and versioned SDK URL; do not restore the unversioned URL.
 From `control-plane`:
 
 ```sh
-node --experimental-vm-modules --test tests/naru-data-sdk.test.mjs tests/database-blog.test.mjs
+node --experimental-vm-modules --test tests/naru-data-sdk.test.mjs
 pnpm exec tsc --noEmit
 node tests/browser/serve-sdk.mjs
 ```

@@ -99,7 +99,6 @@ const expect = async (path, type) => {
   await expect("/sdk/1/naru.js", "application/javascript");
   await expect("/sdk/1.0.0/naru.d.ts", "text/plain");
   await expect("/logo.png", "image/png");
-  await expect("/docs/database/blog.zip", "application/zip");
 })().catch((error) => {
   console.error(error.message);
   process.exit(1);

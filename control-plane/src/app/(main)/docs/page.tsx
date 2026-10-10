@@ -59,7 +59,7 @@ export default function DocsIndex() {
         <div className="mt-10 flex flex-wrap gap-5 text-sm underline underline-offset-4">
           <a href="/database">데이터베이스 제어판 열기 →</a>
           <a href="/media">미디어 라이브러리 열기 →</a>
-          <a href="/docs/database/blog.zip">예제 블로그 ZIP 내려받기 ↓</a>
+          <a href="https://naru.pub/board?kind=template">템플릿 둘러보기 →</a>
         </div>
       </div>
     </div>

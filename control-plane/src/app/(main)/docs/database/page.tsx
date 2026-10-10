@@ -83,7 +83,7 @@ export default function DatabaseDocs() {
           </p>
           <div className="flex flex-wrap gap-5 text-sm underline underline-offset-4">
             <a href="/database">데이터베이스 제어판 열기 →</a>
-            <a href="/docs/database/blog.zip">예제 블로그 ZIP 내려받기 ↓</a>
+            <a href="https://naru.pub/board?kind=template">템플릿 둘러보기 →</a>
             <a href="/docs/sdk/1.0.0">SDK 레퍼런스 →</a>
           </div>
         </header>
@@ -411,31 +411,11 @@ await posts.set(id, { ...post.data, cover: image.url },
                   </section>
                 ))}
               </div>
-              <h3 className="font-bold">예제 블로그 ‘작은 기록’</h3>
               <p>
-                글 목록·상세·방명록·관리자 편집·비공개 초안을 갖춘 정적
-                사이트입니다. <a href="/docs/database/blog.zip">ZIP 내려받기</a>{" "}
-                ·{" "}
-                <a href="https://example.naru.pub/blog/">실제 사이트 보기 ↗</a>
+                바로 시작할 수 있는 사이트가 필요하면 게시판의{" "}
+                <a href="https://naru.pub/board?kind=template">템플릿</a>을
+                둘러보세요.
               </p>
-              <ol className="list-decimal space-y-3 pl-6">
-                <li>
-                  제어판에서 <code>posts</code>, <code>guestbook</code>,{" "}
-                  <code>drafts</code> 컬렉션을 위 설정대로 만듭니다.
-                </li>
-                <li>
-                  ‘웹사이트 관리자 로그인’에 올릴 위치의 <code>admin/</code>{" "}
-                  주소와 <code>posts</code>·<code>drafts</code>를 등록합니다.
-                </li>
-                <li>
-                  연결한 도메인에 올린다면 <code>config.js</code>의{" "}
-                  <code>site</code>에 로그인 이름을 적습니다.
-                </li>
-                <li>
-                  파일을 새 폴더에 올리고 <code>index.html</code>을 열어 글을 써
-                  봅니다.
-                </li>
-              </ol>
             </Section>
 
             <Section id="errors" title="07 · 한도와 오류">

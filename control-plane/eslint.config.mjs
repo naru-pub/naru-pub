@@ -7,7 +7,6 @@ const config = [
       ".next/**",
       "node_modules/**",
       "public/sdk/**",
-      "public/examples/**",
       "src/lib/db.d.ts",
     ],
   },
