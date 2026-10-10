@@ -32,6 +32,7 @@ export interface PostSummary {
     applyCount: number;
     version: number | null;
     previewRenderedAt: Date | null;
+    usesDatabase: boolean;
   } | null;
 }
 
@@ -69,6 +70,9 @@ function summaryQuery() {
       "t.apply_count",
       "v.version",
       "v.preview_rendered_at",
+      sql<boolean>`coalesce(jsonb_array_length(v.data_collections) > 0, false)`.as(
+        "uses_database",
+      ),
     ])
     .where("p.deleted_at", "is", null);
 }
@@ -98,6 +102,7 @@ function toSummary(row: SummaryRow): PostSummary {
           applyCount: row.apply_count ?? 0,
           version: row.version,
           previewRenderedAt: row.preview_rendered_at,
+          usesDatabase: row.uses_database,
         }
       : null,
   };
@@ -107,9 +112,16 @@ export async function listPosts(options: {
   kind: PostKind | null;
   sort: PostSort;
   page: number;
+  // Only templates whose latest version declares data collections.
+  usesDatabase?: boolean;
 }): Promise<{ posts: PostSummary[]; hasMore: boolean }> {
   let query = summaryQuery();
   if (options.kind) query = query.where("p.kind", "=", options.kind);
+  if (options.usesDatabase) {
+    query = query.where(
+      sql<boolean>`jsonb_array_length(v.data_collections) > 0`,
+    );
+  }
 
   if (options.sort === "applied" && options.kind === "template") {
     query = query.orderBy("t.apply_count", "desc").orderBy("p.id", "desc");

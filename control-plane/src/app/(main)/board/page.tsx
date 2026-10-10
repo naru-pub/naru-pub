@@ -28,10 +28,18 @@ const SORT_LABELS: Record<PostSort, string> = {
   applied: "적용 많은순",
 };
 
-function boardHref(kind: PostKind | null, sort: PostSort, page = 1) {
+// `database` filters templates to those that use the site database; the
+// database docs link to it.
+function boardHref(
+  kind: PostKind | null,
+  sort: PostSort,
+  page = 1,
+  database = false,
+) {
   const params = new URLSearchParams();
   if (kind) params.set("kind", kind);
   if (sort !== "activity") params.set("sort", sort);
+  if (database && kind === "template") params.set("database", "1");
   if (page > 1) params.set("page", String(page));
   const query = params.toString();
   return query ? `/board?${query}` : "/board";
@@ -40,7 +48,12 @@ function boardHref(kind: PostKind | null, sort: PostSort, page = 1) {
 export default async function BoardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ kind?: string; sort?: string; page?: string }>;
+  searchParams: Promise<{
+    kind?: string;
+    sort?: string;
+    page?: string;
+    database?: string;
+  }>;
 }) {
   const params = await searchParams;
   const kind = isPostKind(params.kind) ? params.kind : null;
@@ -50,10 +63,11 @@ export default async function BoardPage({
     ? (params.sort as PostSort)
     : "activity";
   const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+  const database = kind === "template" && params.database === "1";
 
   const { user } = await validateRequest();
   const [{ posts, hasMore }, popular, unread] = await Promise.all([
-    listPosts({ kind, sort, page }),
+    listPosts({ kind, sort, page, usesDatabase: database }),
     listPopularTemplatePosts(4),
     user ? countUnreadNotifications(user.id) : null,
   ]);
@@ -101,10 +115,23 @@ export default async function BoardPage({
                 ))}
               </nav>
               <nav aria-label="정렬" className="flex gap-3 px-2 py-2 text-xs">
+                {kind === "template" && (
+                  <Link
+                    href={boardHref(kind, sort, 1, !database)}
+                    aria-pressed={database}
+                    className={
+                      database
+                        ? "font-bold text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }
+                  >
+                    {database ? "✓ " : ""}데이터베이스 사용
+                  </Link>
+                )}
                 {sorts.map((value) => (
                   <Link
                     key={value}
-                    href={boardHref(kind, value)}
+                    href={boardHref(kind, value, 1, database)}
                     aria-current={value === sort ? "true" : undefined}
                     className={
                       value === sort
@@ -130,7 +157,7 @@ export default async function BoardPage({
               <div className="flex justify-center gap-4 border-t border-border p-4 text-sm">
                 {page > 1 && (
                   <Link
-                    href={boardHref(kind, sort, page - 1)}
+                    href={boardHref(kind, sort, page - 1, database)}
                     className="text-muted-foreground hover:text-foreground"
                   >
                     ← 이전
@@ -139,7 +166,7 @@ export default async function BoardPage({
                 <span className="text-foreground">{page}</span>
                 {hasMore && (
                   <Link
-                    href={boardHref(kind, sort, page + 1)}
+                    href={boardHref(kind, sort, page + 1, database)}
                     className="text-muted-foreground hover:text-foreground"
                   >
                     다음 →

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import Code from "../Code";
 import DocsNav from "../DocsNav";
@@ -83,7 +84,9 @@ export default function DatabaseDocs() {
           </p>
           <div className="flex flex-wrap gap-5 text-sm underline underline-offset-4">
             <a href="/database">데이터베이스 제어판 열기 →</a>
-            <a href="https://naru.pub/board?kind=template">템플릿 둘러보기 →</a>
+            <Link href="/board?kind=template&database=1">
+              데이터베이스 템플릿 둘러보기 →
+            </Link>
             <a href="/docs/sdk/1.0.0">SDK 레퍼런스 →</a>
           </div>
         </header>
@@ -412,9 +415,11 @@ await posts.set(id, { ...post.data, cover: image.url },
                 ))}
               </div>
               <p>
-                바로 시작할 수 있는 사이트가 필요하면 게시판의{" "}
-                <a href="https://naru.pub/board?kind=template">템플릿</a>을
-                둘러보세요.
+                바로 시작할 수 있는 사이트가 필요하면 게시판에서{" "}
+                <Link href="/board?kind=template&database=1">
+                  데이터베이스를 쓰는 템플릿
+                </Link>
+                을 둘러보세요.
               </p>
             </Section>
 

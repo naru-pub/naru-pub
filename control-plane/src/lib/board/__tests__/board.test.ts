@@ -526,6 +526,31 @@ integration("board", () => {
       });
     });
 
+    test("filters templates that use the database", async () => {
+      put("alice/retro/index.html");
+      await createCollections(alice, [
+        { name: "guestbook", read_access: "world", write_access: "create" },
+      ]);
+      const withData = await publish({ collections: ["guestbook"] });
+      const plain = await publish();
+
+      const all = await listPosts({ kind: "template", sort: "new", page: 1 });
+      const summary = (postId: string) =>
+        all.posts.find((post) => post.id === postId)?.template;
+      expect(summary(withData.postId)?.usesDatabase).toBe(true);
+      expect(summary(plain.postId)?.usesDatabase).toBe(false);
+
+      const filtered = await listPosts({
+        kind: "template",
+        sort: "new",
+        page: 1,
+        usesDatabase: true,
+      });
+      const ids = filtered.posts.map((post) => post.id);
+      expect(ids).toContain(withData.postId);
+      expect(ids).not.toContain(plain.postId);
+    });
+
     test("applies into a folder and backs up what it overwrites", async () => {
       put("alice/retro/index.html");
       put("alice/retro/guestbook.js", "application/javascript");

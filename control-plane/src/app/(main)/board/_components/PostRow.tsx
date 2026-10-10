@@ -27,6 +27,9 @@ export function PostRow({ post }: { post: PostSummary }) {
           {post.solved && (
             <Badge variant="success">해결됨</Badge>
           )}
+          {post.template?.usesDatabase && (
+            <Badge variant="link">데이터베이스</Badge>
+          )}
           <Link
             href={`/board/${post.id}`}
             className="min-w-0 break-words font-bold text-foreground underline-offset-4 hover:underline"
