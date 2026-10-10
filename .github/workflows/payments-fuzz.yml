@@ -23,7 +23,7 @@ jobs:
         working-directory: control-plane
     permissions:
       contents: read
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -33,10 +33,10 @@ jobs:
       # Same pnpm as the Dockerfile.
       - run: npm install --global pnpm@11.5.2
       - run: pnpm install --frozen-lockfile
-      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-16
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends postgresql-18 postgresql-18-hll
       - run: pnpm test:payments:db src/lib/payments/__tests__/billing-db-chaos
         env:
-          NARU_TEST_PG_BIN: /usr/lib/postgresql/16/bin
+          NARU_TEST_PG_BIN: /usr/lib/postgresql/18/bin
           FUZZ_RUNS: ${{ inputs.runs || '500' }}
           FUZZ_STEPS: ${{ inputs.steps || '100' }}
           # New seeds every night: this run's number, in thousands.
