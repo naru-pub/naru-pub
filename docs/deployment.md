@@ -193,6 +193,15 @@ redirects (`308`) to it, keeping the query. A missing site or file is a `404`
 and a bucket failure a `502`. It needs no database: a site's files are its
 `<login>/` prefix, and deleting an account deletes them.
 
+`r2.naru.pub` serves the whole site bucket, not only sites: any object is
+public to whoever knows its key. What else lives there either is public on
+purpose (`_templates/`, screenshots) or hides behind a random key:
+home directory exports are `__exports/<128-bit token>/<login>-export.zip`,
+reached through the presigned link in their email, and GitHub deploys stage
+under `__deploy_uploads/<user id>/<deployment id>/`. Account deletion removes a
+user's exports with their site, and the export job deletes any zip no export
+row points at.
+
 Pages carry `Cache-Control: public, max-age=0, stale-if-error=86400` and
 redirects `public, max-age=3600, stale-if-error=86400`, for browsers: Worker
 responses are not stored in Cloudflare's cache, so edits appear at once and

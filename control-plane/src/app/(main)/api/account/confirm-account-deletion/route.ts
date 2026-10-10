@@ -19,6 +19,7 @@ import { verify } from "@node-rs/argon2";
 import { deleteUserMedia } from "@/lib/site-data/media";
 import { eraseSiteData } from "@/lib/edge/client";
 import { deleteUserTemplateObjects } from "@/lib/board/templates";
+import { deleteUserExports } from "@/lib/export-storage";
 import {
   CHARGE_IN_FLIGHT_MESSAGE,
   DELETION_LOCK_WAIT_MS,
@@ -148,9 +149,10 @@ export async function POST(request: NextRequest) {
     await deleteUserMedia(user.id);
     // The site's database is a Durable Object, outside this database.
     await eraseSiteData(user.loginName);
-    // Template snapshots and the site screenshot live outside the home
-    // directory.
+    // Template snapshots, export zips and the site screenshot live outside
+    // the home directory.
     await deleteUserTemplateObjects(user.id);
+    await deleteUserExports(user.id, user.loginName);
     await s3Client.send(
       new DeleteObjectCommand({
         Bucket: process.env.S3_BUCKET_NAME!,

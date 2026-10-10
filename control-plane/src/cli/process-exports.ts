@@ -18,6 +18,7 @@ import { Readable } from "stream";
 import { readFile } from "fs/promises";
 import { recoverInterruptedExports } from "@/lib/export-recovery";
 import { appendExportFile } from "@/lib/export-archive";
+import { deleteUnreferencedExports, newExportKey } from "@/lib/export-storage";
 
 async function processExport(exportRow: { id: string; user_id: string }) {
   const user = await db
@@ -102,9 +103,8 @@ async function processExport(exportRow: { id: string; user_id: string }) {
     await archive.finalize();
     await archiveComplete;
 
-    // Upload ZIP to R2
-    const timestamp = Date.now();
-    const r2Key = `__exports/${user.login_name}/export-${timestamp}.zip`;
+    // Upload ZIP to R2, under a key only the presigned link reveals.
+    const r2Key = newExportKey(user.login_name);
     const zipBuffer = await readFile(tmpPath);
 
     await s3Client.send(
@@ -260,6 +260,9 @@ async function main() {
   try {
     await processPendingExports();
     await cleanupExpiredExports();
+    const orphans = await deleteUnreferencedExports();
+    if (orphans)
+      console.log(`[export] Deleted ${orphans} unreferenced export(s)`);
   } catch (error) {
     console.error("[export] Fatal error:", error);
     process.exit(1);
