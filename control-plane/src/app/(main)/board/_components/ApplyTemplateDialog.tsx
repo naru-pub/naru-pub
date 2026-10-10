@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Download } from "lucide-react";
 import { toast } from "sonner";
@@ -101,6 +102,12 @@ export function ApplyTemplateDialog({
     step.name === "review"
       ? step.plan.files.filter((file) => file.action === "overwrite")
       : [];
+  const canCreateCollections =
+    step.name === "review" &&
+    step.plan.collections.some((c) => c.action === "create");
+  const needsDatabase =
+    step.name === "review" &&
+    step.plan.collections.some((c) => c.action === "unavailable");
 
   return (
     <Dialog
@@ -292,13 +299,11 @@ export function ApplyTemplateDialog({
                 <h3 className="text-sm font-bold">데이터</h3>
                 <label className="flex gap-3 border border-border p-3 text-sm">
                   <Checkbox
-                    checked={createCollections}
+                    checked={createCollections && canCreateCollections}
                     onCheckedChange={(checked) =>
                       setCreateCollections(checked === true)
                     }
-                    disabled={
-                      !step.plan.collections.some((c) => c.action === "create")
-                    }
+                    disabled={!canCreateCollections}
                     className="mt-0.5"
                   />
                   <span className="space-y-1">
@@ -322,6 +327,16 @@ export function ApplyTemplateDialog({
                     </span>
                   </span>
                 </label>
+                {needsDatabase && (
+                  <p className="border border-border bg-muted p-3 text-sm">
+                    이 템플릿의 일부 기능은 데이터베이스가 필요해요. 파일은
+                    적용되지만, 컬렉션을 쓰는 기능은 데이터베이스 없이 동작하지
+                    않아요.{" "}
+                    <Link href="/supporter" className="font-bold underline">
+                      서포터 플랜 알아보기
+                    </Link>
+                  </p>
+                )}
               </div>
             )}
 
@@ -364,6 +379,19 @@ export function ApplyTemplateDialog({
                 <li>
                   컬렉션 {step.result.skippedCollections.join(", ")} 은(는)
                   만들지 않았어요.
+                </li>
+              )}
+              {step.result.unavailableCollections.length > 0 && (
+                <li>
+                  컬렉션 {step.result.unavailableCollections.join(", ")} 은(는)
+                  데이터베이스 기능이 필요해서 만들지 않았어요. 이 컬렉션을 쓰는
+                  기능은 동작하지 않아요.{" "}
+                  <Link
+                    href="/supporter"
+                    className="font-bold text-foreground underline"
+                  >
+                    서포터 플랜 알아보기
+                  </Link>
                 </li>
               )}
             </ul>

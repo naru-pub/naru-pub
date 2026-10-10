@@ -50,6 +50,9 @@ jest.mock("@/lib/entitlements", () => ({
 // imports.
 import type { User } from "@/lib/auth";
 const { sql } = require("kysely") as typeof import("kysely");
+const { getUserFeatures } = require("@/lib/entitlements") as {
+  getUserFeatures: jest.Mock;
+};
 const { db } = require("@/lib/database") as typeof import("@/lib/database");
 const { BoardError } = require("../errors") as typeof import("../errors");
 const {
@@ -562,6 +565,35 @@ integration("board", () => {
       expect((await getTemplateForPost(postId))?.applyCount).toBe(1);
 
       expect(templateId).toBeDefined();
+    });
+
+    test("without the database feature, files apply but collections don't", async () => {
+      put("alice/retro/index.html");
+      await createCollections(alice, [
+        { name: "guestbook", read_access: "world", write_access: "create" },
+      ]);
+      const { postId } = await publish({ collections: ["guestbook"] });
+      const versionId = (await getTemplateForPost(postId))!.versions[0].id;
+
+      getUserFeatures.mockResolvedValue(new Set());
+      try {
+        const plan = await planApplication(carol, versionId, "unpaid");
+        expect(plan.collections).toEqual([
+          { name: "guestbook", action: "unavailable" },
+        ]);
+        const result = await applyTemplate(carol, versionId, {
+          targetPath: "unpaid",
+          backup: true,
+          createCollections: true,
+        });
+        expect(bucket.has("carol/unpaid/index.html")).toBe(true);
+        expect(result.createdCollections).toEqual([]);
+        expect(result.skippedCollections).toEqual([]);
+        expect(result.unavailableCollections).toEqual(["guestbook"]);
+        expect(await listCollections(carol, ["guestbook"])).toEqual([]);
+      } finally {
+        getUserFeatures.mockResolvedValue(new Set(["database"]));
+      }
     });
 
     test("without a backup, nothing is kept", async () => {

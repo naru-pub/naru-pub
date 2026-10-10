@@ -643,6 +643,8 @@ export interface ApplicationResult {
   overwritten: number;
   createdCollections: string[];
   skippedCollections: string[];
+  // Not created because the site has no database feature.
+  unavailableCollections: string[];
 }
 
 export async function applyTemplate(
@@ -694,11 +696,16 @@ export async function applyTemplate(
 
   const createdCollections: string[] = [];
   const skippedCollections: string[] = [];
+  const unavailableCollections: string[] = [];
   const wanted = input.createCollections !== false;
   const toCreate = version.data_collections.filter((collection) => {
     const planned = plan.collections.find((c) => c.name === collection.name);
     if (wanted && planned?.action === "create") return true;
-    if (planned?.action !== "exists") skippedCollections.push(collection.name);
+    if (planned?.action === "unavailable") {
+      unavailableCollections.push(collection.name);
+    } else if (planned?.action !== "exists") {
+      skippedCollections.push(collection.name);
+    }
     return false;
   });
 
@@ -758,6 +765,7 @@ export async function applyTemplate(
     overwritten: overwritten.length,
     createdCollections,
     skippedCollections,
+    unavailableCollections,
   };
 }
 
