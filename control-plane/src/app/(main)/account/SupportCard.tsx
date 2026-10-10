@@ -91,6 +91,8 @@ type SubscriptionInfo = {
   status: string;
   billingInterval: string;
   nextBillingAt: string | null;
+  // Whether the time nextBillingAt is charged at has already passed.
+  chargeOverdue: boolean;
 };
 
 export default function SupportCard({
@@ -131,9 +133,7 @@ export default function SupportCard({
   // A renewal (or a scheduled first charge) whose day has passed is being
   // retried: show that, not a healthy plan with a next date in the past.
   const renewalOverdue =
-    (isActive || isScheduled) &&
-    subscription?.nextBillingAt != null &&
-    renewalChargeAt(subscription.nextBillingAt).getTime() <= Date.now();
+    (isActive || isScheduled) && subscription?.chargeOverdue === true;
   const showRecurringOptions = !isActive && !isScheduled;
   // Not beside a plan that charges or may (lib/payments/support-purchases): the
   // supporter cancels it first.

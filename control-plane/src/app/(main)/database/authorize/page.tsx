@@ -11,6 +11,17 @@ import { DataError } from "@/lib/site-data/validation";
 import Consent from "./Consent";
 import Setup from "./Setup";
 
+async function authorizationStep(userId: string, query: URLSearchParams) {
+  const input = authorizationInput({
+    ...Object.fromEntries(query),
+    collections: query.get("collections")?.split(","),
+  });
+  // Setup the owner can finish here comes before consent, in its own step.
+  const setup = await authorizationSetup(userId, input);
+  if (setup) return { input, setup };
+  return { input, preview: await previewAuthorization(userId, input) };
+}
+
 export default async function AuthorizePage({
   searchParams,
 }: {
@@ -34,22 +45,11 @@ export default async function AuthorizePage({
       `/login?next=${encodeURIComponent(`/database/authorize?${query}`)}`,
     );
   if (!(await userHasFeature(user.id, "database"))) redirect("/account");
+  // Only the loading is guarded: a component's render errors happen later and
+  // belong to an error boundary, not this catch.
+  let step: Awaited<ReturnType<typeof authorizationStep>>;
   try {
-    const input = authorizationInput({
-      ...Object.fromEntries(query),
-      collections: query.get("collections")?.split(","),
-    });
-    // Setup the owner can finish here comes before consent, in its own step.
-    const setup = await authorizationSetup(user.id, input);
-    if (setup) return <Setup input={input} setup={setup} />;
-    const { client, collections } = await previewAuthorization(user.id, input);
-    return (
-      <Consent
-        input={input}
-        names={collections.map((c) => c.name)}
-        tokenLifetimeSeconds={client.token_lifetime_seconds}
-      />
-    );
+    step = await authorizationStep(user.id, query);
   } catch (error) {
     return (
       <div className="max-w-xl mx-auto p-6">
@@ -65,4 +65,14 @@ export default async function AuthorizePage({
       </div>
     );
   }
+  if (step.setup)
+    return <Setup input={step.input} setup={step.setup} />;
+  const { client, collections } = step.preview;
+  return (
+    <Consent
+      input={step.input}
+      names={collections.map((c) => c.name)}
+      tokenLifetimeSeconds={client.token_lifetime_seconds}
+    />
+  );
 }

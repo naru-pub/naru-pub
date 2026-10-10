@@ -1,28 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CheckCircle, XCircle, AlertTriangle } from "lucide-react";
 
+type Outcome = { status: "success" | "error"; message: string };
+
 export default function ConfirmAccountDeletionPage() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
-  const [message, setMessage] = useState("");
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [password, setPassword] = useState("");
 
-  useEffect(() => {
-    if (!token) {
-      setStatus("error");
-      setMessage("유효하지 않은 계정 삭제 링크입니다.");
-    } else {
-      setStatus("loading");
-      setMessage("계정 삭제 준비 중...");
-    }
-  }, [token]);
+  // A missing token is knowable from the URL, so it needs no state.
+  const { status, message } = token
+    ? (outcome ?? { status: "loading", message: "" })
+    : { status: "error", message: "유효하지 않은 계정 삭제 링크입니다." };
 
   const handleConfirmDeletion = async () => {
     if (!token) return;
@@ -39,19 +35,19 @@ export default function ConfirmAccountDeletionPage() {
 
       const result = await response.json();
       if (result.success) {
-        setStatus("success");
-        setMessage(result.message);
+        setOutcome({ status: "success", message: result.message });
         // Redirect to home page after successful deletion
         setTimeout(() => {
           window.location.href = "/";
         }, 3000);
       } else {
-        setStatus("error");
-        setMessage(result.message);
+        setOutcome({ status: "error", message: result.message });
       }
     } catch (error) {
-      setStatus("error");
-      setMessage("계정 삭제 중 오류가 발생했습니다.");
+      setOutcome({
+        status: "error",
+        message: "계정 삭제 중 오류가 발생했습니다.",
+      });
     } finally {
       setIsProcessing(false);
     }

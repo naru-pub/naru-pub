@@ -24,6 +24,9 @@ async function api(method = "GET", body?: unknown) {
   if (!response.ok) throw new Error(result.error);
   return result;
 }
+function failureMessage(e: unknown) {
+  return e instanceof Error ? e.message : "요청에 실패했습니다.";
+}
 export default function WebsiteAccess({
   collections,
   websiteUrl,
@@ -38,7 +41,7 @@ export default function WebsiteAccess({
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const confirm = useConfirm();
   const reload = async () => {
     const result = await api();
@@ -51,13 +54,16 @@ export default function WebsiteAccess({
     try {
       await action();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "요청에 실패했습니다.");
+      setError(failureMessage(e));
     } finally {
       setBusy(false);
     }
   }
   useEffect(() => {
-    void run(reload);
+    api()
+      .then((result) => setClients(result.clients))
+      .catch((e) => setError(failureMessage(e)))
+      .finally(() => setBusy(false));
   }, []);
   return (
     <section className="space-y-5">

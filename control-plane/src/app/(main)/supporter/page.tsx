@@ -10,6 +10,7 @@ import { SupportPolicy } from "@/components/SupportPolicy";
 import { validateRequest } from "@/lib/auth";
 import { db } from "@/lib/database";
 import { plansOf } from "@/lib/payments/subscriptions";
+import { renewalChargeAt } from "@/lib/payments/renewal-time";
 import { getUserEntitlement } from "@/lib/entitlements";
 import { hasVerifiedEmail } from "@/lib/payments/support";
 import { ONE_TIME_YEAR_AMOUNT, PLAN_AMOUNTS } from "@/lib/payments/toss";
@@ -119,6 +120,10 @@ export default async function SupportPage({
         nextBillingAt: subscriptionRow.next_billing_at
           ? new Date(subscriptionRow.next_billing_at).toISOString()
           : null,
+        // Read against the clock here, once, rather than on every render.
+        chargeOverdue:
+          subscriptionRow.next_billing_at != null &&
+          renewalChargeAt(subscriptionRow.next_billing_at) <= new Date(),
       }
     : null;
 

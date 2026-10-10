@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -23,6 +23,14 @@ async function api(path = "", method = "GET", body?: unknown) {
   if (!response.ok) throw new Error(result.error);
   return result;
 }
+function failureMessage(e: unknown) {
+  return e instanceof Error ? e.message : "요청에 실패했습니다.";
+}
+// The page's origin never changes, so there is nothing to subscribe to; the
+// server renders it empty and the client fills it in during hydration.
+const subscribeToOrigin = () => () => {};
+const browserOrigin = () => window.location.origin;
+const serverOrigin = () => "";
 export default function DatabaseManager({
   site,
   websiteUrl,
@@ -42,8 +50,12 @@ export default function DatabaseManager({
   const [id, setId] = useState("");
   const [json, setJson] = useState('{\n  "message": "안녕하세요!"\n}');
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [origin, setOrigin] = useState("");
+  const [busy, setBusy] = useState(true);
+  const origin = useSyncExternalStore(
+    subscribeToOrigin,
+    browserOrigin,
+    serverOrigin,
+  );
   const confirm = useConfirm();
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -51,7 +63,7 @@ export default function DatabaseManager({
     try {
       await action();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "요청에 실패했습니다.");
+      setError(failureMessage(e));
     } finally {
       setBusy(false);
     }
@@ -72,8 +84,10 @@ export default function DatabaseManager({
     if (!after) setTotal(result.totalCount);
   }
   useEffect(() => {
-    setOrigin(window.location.origin);
-    void run(refresh);
+    api()
+      .then((result) => setCollections(result.collections))
+      .catch((e) => setError(failureMessage(e)))
+      .finally(() => setBusy(false));
   }, []);
   // A page on the site's own subdomain needs no site option; custom domains do.
   const snippet = `import { createNaru } from "${origin}/sdk/1/naru.js";\nconst naru = createNaru({ site: ${JSON.stringify(site)} });\nconst entries = naru.collection(${JSON.stringify(selected || "guestbook")});\nconst page = await entries.list();`;

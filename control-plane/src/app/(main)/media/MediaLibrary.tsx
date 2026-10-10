@@ -93,6 +93,26 @@ function TypeIcon({ type }: { type: string }) {
   return <FileText aria-hidden="true" />;
 }
 
+type Library = { files: MediaFile[]; usage: Usage };
+
+async function fetchLibrary(): Promise<Library> {
+  // The listing pages now. Search and sort below run over the whole library,
+  // so this walks the cursor to the end rather than showing a truncated set
+  // that would make a search look like it found nothing.
+  const files: MediaFile[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await api(
+      `?size=100${cursor ? `&after=${encodeURIComponent(cursor)}` : ""}`,
+    );
+    files.push(...page.files);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor);
+  // The quota is its own request and no longer rides along with the listing.
+  const { usage } = await api("?usage=1");
+  return { files, usage };
+}
+
 export default function MediaLibrary() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<MediaFile[]>([]);
@@ -110,26 +130,18 @@ export default function MediaLibrary() {
   const [copied, setCopied] = useState("");
   const confirm = useConfirm();
 
+  function show(library: Library) {
+    setFiles(library.files);
+    setUsage(library.usage);
+  }
+
   async function refresh() {
-    // The listing pages now. Search and sort below run over the whole library,
-    // so this walks the cursor to the end rather than showing a truncated set
-    // that would make a search look like it found nothing.
-    const collected: MediaFile[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await api(
-        `?size=100${cursor ? `&after=${encodeURIComponent(cursor)}` : ""}`,
-      );
-      collected.push(...page.files);
-      cursor = page.nextCursor ?? undefined;
-    } while (cursor);
-    setFiles(collected);
-    // The quota is its own request and no longer rides along with the listing.
-    setUsage((await api("?usage=1")).usage);
+    show(await fetchLibrary());
   }
 
   useEffect(() => {
-    refresh()
+    fetchLibrary()
+      .then(show)
       .catch((reason) => setError(reason.message))
       .finally(() => setBusy(false));
   }, []);

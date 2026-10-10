@@ -14,6 +14,12 @@ interface ExportStatus {
   downloadUrl: string | null;
 }
 
+async function readExportStatus(): Promise<ExportStatus | null> {
+  const res = await fetch("/api/account/export/status");
+  const data = await res.json();
+  return data.export;
+}
+
 export default function DownloadDirectoryButton({
   hasVerifiedEmail,
 }: {
@@ -21,51 +27,39 @@ export default function DownloadDirectoryButton({
 }) {
   const [exportStatus, setExportStatus] = useState<ExportStatus | null>(null);
   const [isRequesting, setIsRequesting] = useState(false);
-  const [isPolling, setIsPolling] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/account/export/status");
-      const data = await res.json();
-      setExportStatus(data.export);
-      return data.export as ExportStatus | null;
+      const latest = await readExportStatus();
+      setExportStatus(latest);
+      return latest;
     } catch {
       return null;
     }
   }, []);
 
   useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
+    readExportStatus().then(setExportStatus, () => {});
+  }, []);
 
-  // Poll while pending or in_progress. Depending on the status alone keeps
-  // each refetch from restarting the interval it is being polled by.
+  // Poll while pending or in_progress. Depending on whether to poll alone
+  // keeps each refetch from restarting the interval it is being polled by.
   const status = exportStatus?.status;
+  const isPolling = status === "pending" || status === "in_progress";
   useEffect(() => {
-    if (status !== "pending" && status !== "in_progress") {
-      setIsPolling(false);
-      return;
-    }
+    if (!isPolling) return;
 
-    setIsPolling(true);
     const interval = setInterval(async () => {
       const latest = await fetchStatus();
-      if (
-        latest &&
-        latest.status !== "pending" &&
-        latest.status !== "in_progress"
-      ) {
-        setIsPolling(false);
-        if (latest.status === "completed") {
-          toast.success("갠홈 내보내기가 완료되었습니다.");
-        } else if (latest.status === "failed") {
-          toast.error("갠홈 내보내기에 실패했습니다.");
-        }
+      if (latest?.status === "completed") {
+        toast.success("갠홈 내보내기가 완료되었습니다.");
+      } else if (latest?.status === "failed") {
+        toast.error("갠홈 내보내기에 실패했습니다.");
       }
     }, 10_000);
 
     return () => clearInterval(interval);
-  }, [status, fetchStatus]);
+  }, [isPolling, fetchStatus]);
 
   const handleRequest = async () => {
     setIsRequesting(true);
