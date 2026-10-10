@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { MAX_CHANGELOG_LENGTH } from "@/lib/board/constants";
 import { boardRequest } from "../../_components/api";
 import { FolderPicker } from "../../_components/FolderPicker";
+import CollectionName from "@/components/CollectionName";
 
 export function NewVersionForm({
   templateId,
@@ -66,9 +67,10 @@ export function NewVersionForm({
             {collections.map((name) => (
               <label
                 key={name}
-                className="flex h-10 cursor-pointer items-center gap-2 border border-border px-3 text-sm"
+                className="flex min-h-10 min-w-0 cursor-pointer items-center gap-2 border border-border px-3 py-2 text-sm"
               >
                 <Checkbox
+                  className="shrink-0"
                   checked={chosen.includes(name)}
                   onCheckedChange={(checked) =>
                     setChosen((current) =>
@@ -78,7 +80,9 @@ export function NewVersionForm({
                     )
                   }
                 />
-                <code>{name}</code>
+                <code className="min-w-0">
+                  <CollectionName name={name} />
+                </code>
               </label>
             ))}
           </div>

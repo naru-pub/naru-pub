@@ -23,6 +23,7 @@ import { Select } from "@/components/ui/select";
 import { formatBytes } from "@/lib/board/constants";
 import type { ApplicationPlan, ApplicationResult } from "@/lib/board/templates";
 import { boardRequest } from "./api";
+import CollectionName from "@/components/CollectionName";
 
 type Step =
   | { name: "where" }
@@ -129,8 +130,7 @@ export function ApplyTemplateDialog({
             }
           }}
         >
-          <Download aria-hidden="true" />
-          내 사이트에 적용
+          <Download aria-hidden="true" />내 사이트에 적용
         </Button>
       </DialogTrigger>
 
@@ -262,7 +262,9 @@ export function ApplyTemplateDialog({
                         <td
                           className={`whitespace-nowrap px-3 py-2 font-bold ${file.action === "overwrite" ? "text-primary" : "text-success"}`}
                         >
-                          {file.action === "overwrite" ? "~ 덮어씀" : "+ 새 파일"}
+                          {file.action === "overwrite"
+                            ? "~ 덮어씀"
+                            : "+ 새 파일"}
                         </td>
                         <td className="break-all px-3 py-2">/{file.path}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-right text-muted-foreground">
@@ -312,8 +314,10 @@ export function ApplyTemplateDialog({
                     </span>
                     <span className="block text-xs text-muted-foreground">
                       {step.plan.collections.map((c) => (
-                        <span key={c.name} className="mr-3 inline-block">
-                          <code className="text-foreground">{c.name}</code>{" "}
+                        <span key={c.name} className="mr-3 inline">
+                          <code className="text-foreground">
+                            <CollectionName name={c.name} />
+                          </code>{" "}
                           {c.action === "create"
                             ? "(새로 만듦)"
                             : c.action === "exists"

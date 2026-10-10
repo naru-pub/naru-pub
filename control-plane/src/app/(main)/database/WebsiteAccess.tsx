@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useConfirm } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
-import CollectionName from "./CollectionName";
+import CollectionName from "@/components/CollectionName";
 
 type Client = {
   id: string;

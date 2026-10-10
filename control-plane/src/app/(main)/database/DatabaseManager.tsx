@@ -6,7 +6,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ui/confirm";
-import CollectionName from "./CollectionName";
+import CollectionName from "@/components/CollectionName";
 import WebsiteAccess from "./WebsiteAccess";
 
 type Collection = { name: string; read_access: string; write_access: string };

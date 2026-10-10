@@ -21,6 +21,7 @@ import { ReplyThread, type ThreadReply } from "../_components/ReplyThread";
 import { Thumbnail } from "../_components/Thumbnail";
 import { formatDate, formatRelative } from "../_components/format";
 import { PostTitle } from "../_components/PostTitle";
+import CollectionName from "@/components/CollectionName";
 
 function parsePostId(value: string): string | null {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
@@ -279,7 +280,7 @@ export default async function PostPage({
                         <span key={c.name}>
                           {index > 0 && ", "}
                           <code className="bg-secondary px-1 text-foreground">
-                            {c.name}
+                            <CollectionName name={c.name} />
                           </code>
                         </span>
                       ))}
