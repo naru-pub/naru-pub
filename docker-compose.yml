@@ -4,6 +4,11 @@
 # deliberately no `build:`: a build here is what ran this machine out of memory.
 # Without one, a missing image would send compose to Docker Hub, so fail
 # instead.
+# Fixed rather than taken from the directory's name, which has changed
+# (~/Git/naru-pub, now ~/naru) while the containers, their names and the
+# network kept this one.
+name: naru-pub
+
 x-control-plane: &control-plane
   image: naru-pub-control-plane:current
   pull_policy: never
