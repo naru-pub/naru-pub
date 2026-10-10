@@ -367,7 +367,7 @@ export default async function Home() {
         <HomeBoard posts={boardPosts} />
       </section>
 
-      <section>
+      <section className="border-y-2 border-line">
         <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-16 sm:px-6 lg:px-8">
           <h2 className="text-3xl font-bold tracking-tight">
             나루는 이렇게 써요
