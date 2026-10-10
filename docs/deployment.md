@@ -2,11 +2,11 @@
 
 Production runs the images GitHub Actions builds. Every push to `main` runs
 [`.github/workflows/main.yml`](../.github/workflows/main.yml) in
-[naru-pub/naru-pub](https://github.com/naru-pub/naru-pub), which pushes:
+[naru-pub/naru](https://github.com/naru-pub/naru), which pushes:
 
 ```
-ghcr.io/naru-pub/naru-pub-control-plane:git-<commit>-arm64
-ghcr.io/naru-pub/naru-pub-control-plane-jobs:git-<commit>-arm64
+ghcr.io/naru-pub/naru-control-plane:git-<commit>-arm64
+ghcr.io/naru-pub/naru-control-plane-jobs:git-<commit>-arm64
 ```
 
 The two images are targets of one multi-stage

@@ -6,8 +6,8 @@
 #   ./deploy.sh rollback   switch HTTP traffic back to the stopped slot
 #
 # By default production runs what GitHub Actions built: every push to main
-# builds and pushes ghcr.io/naru-pub/naru-pub-control-plane:git-<commit>-arm64
-# and ghcr.io/naru-pub/naru-pub-control-plane-jobs:git-<commit>-arm64
+# builds and pushes ghcr.io/naru-pub/naru-control-plane:git-<commit>-arm64
+# and ghcr.io/naru-pub/naru-control-plane-jobs:git-<commit>-arm64
 # (.github/workflows/main.yml). This waits for that run to succeed, then runs deploy-server.sh
 # <commit> on the server, which pulls the images from the registry.
 #
@@ -45,7 +45,7 @@ DEPLOY_HOST=${DEPLOY_HOST:-naru-pub-deploy}
 # Expanded by the server's shell, not this one.
 REMOTE_DIR=${REMOTE_DIR:-'~/Git/naru-pub'}
 # The repository whose workflow builds the production images.
-CI_REPO=${CI_REPO:-naru-pub/naru-pub}
+CI_REPO=${CI_REPO:-naru-pub/naru}
 CI_WORKFLOW=${CI_WORKFLOW:-main.yml}
 # A checkout of its own for the build path rather than the one this script was
 # run from: that one holds node_modules, .next, target and the rest of a

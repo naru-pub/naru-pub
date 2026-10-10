@@ -12,8 +12,8 @@
 # those are used. Otherwise they are pulled from the images GitHub Actions
 # built for <commit>:
 #
-#   ghcr.io/naru-pub/naru-pub-control-plane:git-<commit>-arm64
-#   ghcr.io/naru-pub/naru-pub-control-plane-jobs:git-<commit>-arm64
+#   ghcr.io/naru-pub/naru-control-plane:git-<commit>-arm64
+#   ghcr.io/naru-pub/naru-control-plane-jobs:git-<commit>-arm64
 #
 # Nothing is compiled here. The builds used to run on this machine, where a
 # Next.js build ran the Docker VM out of memory while
@@ -365,7 +365,7 @@ if [[ "${NARU_DEPLOY_AFTER_PULL:-0}" != 1 ]]; then
 fi
 
 # Where CI pushes the images for each commit on main (.github/workflows/main.yml).
-IMAGE_REGISTRY=${IMAGE_REGISTRY:-ghcr.io/naru-pub/naru-pub}
+IMAGE_REGISTRY=${IMAGE_REGISTRY:-ghcr.io/naru-pub/naru}
 # The packages are private, so this pulls with the `docker login ghcr.io` in
 # ~/.docker/config.json. That login has to be kept in the file, not the macOS
 # keychain, which the ssh session deploy.sh runs this in cannot open; see
