@@ -6,6 +6,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ui/confirm";
+import CollectionName from "./CollectionName";
 import WebsiteAccess from "./WebsiteAccess";
 
 type Collection = { name: string; read_access: string; write_access: string };
@@ -167,7 +168,7 @@ export default function DatabaseManager({
                 {collections.map((c) => (
                   <Button
                     key={c.name}
-                    className="h-auto justify-start whitespace-normal break-all text-left"
+                    className="h-auto justify-start whitespace-normal text-left"
                     aria-pressed={selected === c.name}
                     variant={selected === c.name ? "default" : "outline"}
                     onClick={() =>
@@ -183,7 +184,7 @@ export default function DatabaseManager({
                       })
                     }
                   >
-                    {c.name}
+                    <CollectionName name={c.name} />
                   </Button>
                 ))}
               </div>
@@ -205,8 +206,8 @@ export default function DatabaseManager({
               {selected && (
                 <>
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h2 className="text-xl font-semibold break-all">
-                      {selected}
+                    <h2 className="text-xl font-semibold">
+                      <CollectionName name={selected} />
                     </h2>
                     <span className="text-sm text-muted-foreground">
                       {total === null
@@ -222,7 +223,9 @@ export default function DatabaseManager({
                       공개 읽기는 누구나 조회할 수 있습니다. 공개 생성은 추가만,
                       전체 공개 쓰기는 덮어쓰기와 삭제까지 허용합니다.
                     </p>
-                    <h2 className="font-bold">{selected} · 접근 권한</h2>
+                    <h2 className="font-bold">
+                      <CollectionName name={selected} /> · 접근 권한
+                    </h2>
                     <div className="flex flex-wrap items-center gap-4">
                       <label className="flex items-center gap-2 text-sm font-medium">
                         읽기

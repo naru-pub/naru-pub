@@ -1,9 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useConfirm } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
+import CollectionName from "./CollectionName";
 
 type Client = {
   id: string;
@@ -151,7 +152,7 @@ export default function WebsiteAccess({
             <div className="flex gap-3 flex-wrap">
               {collections.map((c) => (
                 <label
-                  className="flex min-w-0 gap-2 items-center border px-3 py-2 text-sm break-all"
+                  className="flex min-w-0 gap-2 items-center border px-3 py-2 text-sm"
                   key={c.name}
                 >
                   <Checkbox
@@ -164,7 +165,7 @@ export default function WebsiteAccess({
                       )
                     }
                   />
-                  {c.name}
+                  <CollectionName name={c.name} />
                 </label>
               ))}
             </div>
@@ -201,7 +202,15 @@ export default function WebsiteAccess({
             <div className="border p-4 space-y-3" key={c.id}>
               <p className="break-all">{c.redirectUri}</p>
               <p className="text-sm">
-                컬렉션: {c.collections.join(", ") || "(삭제됨)"}
+                컬렉션:{" "}
+                {c.collections.length
+                  ? c.collections.map((name, index) => (
+                      <Fragment key={name}>
+                        {index > 0 && ", "}
+                        <CollectionName name={name} />
+                      </Fragment>
+                    ))
+                  : "(삭제됨)"}
               </p>
               <p className="text-sm">
                 토큰 유효 시간: {c.tokenLifetimeSeconds / 60}분
