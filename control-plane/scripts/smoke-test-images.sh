@@ -122,17 +122,20 @@ if [[ "$(docker inspect -f '{{.State.ExitCode}}' "$run-worker")" != 0 ]]; then
   echo "Worker did not exit cleanly on SIGTERM." >&2
   exit 1
 fi
-if ! docker logs "$run-worker" 2>&1 | grep -q 'Database connections closed'; then
+# Read once: under pipefail, grep -q quitting at its match can kill a
+# `docker logs` still writing, failing the check on a line that is there.
+worker_logs=$(docker logs "$run-worker" 2>&1)
+if ! grep -q 'Database connections closed' <<<"$worker_logs"; then
   echo "Worker did not finish closing its database connections." >&2
   exit 1
 fi
 
-if ! docker logs "$run-worker" 2>&1 | grep -q 'payments-worker.*Drained'; then
+if ! grep -q 'payments-worker.*Drained' <<<"$worker_logs"; then
   echo "Worker did not drain its payment tasks." >&2
   exit 1
 fi
 
-if ! docker logs "$run-worker" 2>&1 | grep -q 'maintenance-worker.*Drained'; then
+if ! grep -q 'maintenance-worker.*Drained' <<<"$worker_logs"; then
   echo "Worker did not drain its maintenance tasks." >&2
   exit 1
 fi
