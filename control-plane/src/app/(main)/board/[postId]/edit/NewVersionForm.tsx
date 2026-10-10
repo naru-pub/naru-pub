@@ -112,7 +112,7 @@ export function NewVersionForm({
       </div>
       <div className="flex justify-end">
         <Button type="submit" size="lg" disabled={busy} className="text-sm">
-          {busy ? "파일을 복사하는 중…" : "새 버전 올리기"}
+          {busy ? "게시하는 중…" : "새 버전 올리기"}
         </Button>
       </div>
     </form>

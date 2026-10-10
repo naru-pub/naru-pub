@@ -252,7 +252,7 @@ export function NewPostForm({
         <Button type="submit" size="lg" disabled={busy} className="text-sm">
           {busy
             ? kind === "template"
-              ? "파일을 복사하는 중…"
+              ? "게시하는 중…"
               : "올리는 중…"
             : "게시하기"}
         </Button>
