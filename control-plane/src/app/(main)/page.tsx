@@ -367,7 +367,7 @@ export default async function Home() {
         <HomeBoard posts={boardPosts} />
       </section>
 
-      <section className="bg-foreground text-background">
+      <section>
         <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-16 sm:px-6 lg:px-8">
           <h2 className="text-3xl font-bold tracking-tight">
             나루는 이렇게 써요
@@ -376,26 +376,26 @@ export default async function Home() {
             {STEPS.map((step, index) => (
               <li
                 key={step.title}
-                className="flex flex-col gap-2.5 border-t-2 border-background pt-4"
+                className="flex flex-col gap-2.5 border-t-2 border-line pt-4"
               >
-                <span className="font-mono text-sm font-semibold text-sun">
+                <span className="font-mono text-sm font-semibold text-primary">
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <h3 className="text-xl font-bold">{step.title}</h3>
-                <p className="leading-relaxed opacity-80">{step.body}</p>
+                <p className="leading-relaxed text-muted-foreground">{step.body}</p>
               </li>
             ))}
           </ol>
-          <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] gap-x-8 gap-y-3 border-[1.5px] border-background px-6 py-5 text-sm leading-relaxed">
+          <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] gap-x-8 gap-y-3 border-[1.5px] border-line px-6 py-5 text-sm leading-relaxed">
             {RULES.map(([term, text]) => (
               <div key={term}>
                 <dt className="inline font-bold">{term}</dt>
-                <dd className="inline opacity-80"> — {text}</dd>
+                <dd className="inline text-muted-foreground"> — {text}</dd>
               </div>
             ))}
             <div>
               <dt className="inline font-bold">문의</dt>
-              <dd className="inline opacity-80">
+              <dd className="inline text-muted-foreground">
                 {" "}
                 —{" "}
                 <Link
