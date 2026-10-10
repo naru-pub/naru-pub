@@ -83,6 +83,7 @@ const {
   applyTemplate,
   commonDirectory,
   deleteTemplateObjects,
+  filesStillPresent,
   getTemplateForPost,
   planApplication,
   publishTemplatePost,
@@ -493,6 +494,20 @@ integration("board", () => {
       });
       expect(bucket.has("bob/hello-world/index.html")).toBe(true);
       expect(bucket.has("bob/hello-world/hello-world/index.html")).toBe(false);
+    });
+
+    test("a new version starts from the files still on the site", async () => {
+      put("alice/retro/index.html");
+      put("alice/retro/app.js", "text/javascript");
+      // The folder is renamed after v1: its old paths are gone.
+      bucket.delete("alice/retro/app.js");
+      put("alice/renamed/app.js", "text/javascript");
+      expect(
+        await filesStillPresent("alice", "retro/", [
+          "retro/index.html",
+          "retro/app.js",
+        ]),
+      ).toEqual(["retro/index.html"]);
     });
 
     test("refuses unhostable, missing, backup and escaping paths", async () => {

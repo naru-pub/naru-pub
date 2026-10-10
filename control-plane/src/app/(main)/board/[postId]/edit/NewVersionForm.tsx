@@ -15,6 +15,7 @@ export function NewVersionForm({
   templateId,
   postId,
   initialFiles,
+  missingFiles,
   collections,
   initialCollections,
 }: {
@@ -22,6 +23,8 @@ export function NewVersionForm({
   postId: string;
   // The previous version's files, checked to start with.
   initialFiles: string[];
+  // The previous version's files no longer on the site, left unchecked.
+  missingFiles: string[];
   collections: string[];
   initialCollections: string[];
 }) {
@@ -57,6 +60,13 @@ export function NewVersionForm({
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      {missingFiles.length > 0 && (
+        <p className="border border-border p-3 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+          지난 버전의 파일 중 {missingFiles.length}개는 사이트에 없어서 빼고
+          시작해요: {missingFiles.join(", ")}. 폴더를 옮겼다면 새 위치에서 골라
+          주세요.
+        </p>
+      )}
       <FolderPicker value={selection} onChange={setSelection} />
       {collections.length > 0 && (
         <fieldset className="space-y-2">

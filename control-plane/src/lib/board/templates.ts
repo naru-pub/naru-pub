@@ -95,6 +95,24 @@ export function commonDirectory(paths: string[]): string {
   return common.length > 0 ? `${common.join("/")}/` : "";
 }
 
+// The previous version's files that are still where they were, so the form for
+// a new version starts with only those checked. After a folder is renamed or a
+// file deleted, the old paths would otherwise stay checked where the picker,
+// which lists only what exists, cannot show them to be unchecked.
+export async function filesStillPresent(
+  loginName: string,
+  folder: string,
+  paths: string[],
+): Promise<string[]> {
+  const home = `${getUserHomeDirectory(loginName)}/`;
+  const present = new Set(
+    (await storage.listObjects(`${home}${folder}`)).map((object) =>
+      object.key.slice(home.length),
+    ),
+  );
+  return paths.filter((path) => present.has(path));
+}
+
 // The files the author checked, relative to their home directory. The
 // template's root is the deepest folder holding all of them, so checking
 // hello-world/index.html shares index.html under the root hello-world/.

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { validateRequest } from "@/lib/auth";
 import { getPost } from "@/lib/board/posts";
-import { getTemplateForPost } from "@/lib/board/templates";
+import { filesStillPresent, getTemplateForPost } from "@/lib/board/templates";
 import { listCollections } from "@/lib/site-data/service";
 import { EditPostForm } from "./EditPostForm";
 import { NewVersionForm } from "./NewVersionForm";
@@ -32,6 +32,13 @@ export default async function EditPostPage({
     post.kind === "template" ? await getTemplateForPost(post.id) : null;
   const collections = template ? await listCollections(user) : [];
   const latest = template?.versions[0] ?? null;
+  const previousFiles =
+    template && latest
+      ? template.files.map((file) => `${latest.sourcePath}${file.path}`)
+      : [];
+  const presentFiles = latest
+    ? await filesStillPresent(user.loginName, latest.sourcePath, previousFiles)
+    : [];
 
   return (
     <div className="bg-background min-h-screen p-4 sm:p-6">
@@ -59,8 +66,9 @@ export default async function EditPostPage({
             <NewVersionForm
               templateId={template.id}
               postId={post.id}
-              initialFiles={template.files.map(
-                (file) => `${latest.sourcePath}${file.path}`,
+              initialFiles={presentFiles}
+              missingFiles={previousFiles.filter(
+                (path) => !presentFiles.includes(path),
               )}
               collections={collections.map((c) => c.name)}
               initialCollections={latest.collections.map((c) => c.name)}
