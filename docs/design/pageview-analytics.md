@@ -36,9 +36,12 @@ log to forget them. The batch's last id is stored in `edge_pageview_cursors` in
 the same transaction, so a batch handed out again after a lost acknowledgement
 is skipped, not counted twice. Nothing is dropped while PostgreSQL or the whole
 host is down: the log keeps up to six million events, dropping the oldest past
-that, and they are counted when the control plane is back. The job fails, and
-so alerts the operator through the ordinary job-failure alert, while the oldest
-waiting pageview is more than 30 minutes old.
+that, and they are counted when the control plane is back. The job fails while
+the oldest waiting pageview is more than 30 minutes old, and also on any run
+whose call to the log fails (a timeout, a Cloudflare 503). The ordinary
+job-failure alert reports only failures that last 30 minutes without a
+successful run, so a single failed call, which the next run makes up, is
+silent.
 
 ## Daily rollups and distinct visitors
 

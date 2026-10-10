@@ -94,6 +94,10 @@ export const MAINTENANCE_JOBS = [
     script: "drain-edge-pageviews.ts",
     minutes: 1,
     timeout: 120,
+    // A call to the pageview log can time out or meet a Cloudflare 503 for a
+    // run, and the log keeps every event until a later run takes it: report
+    // only failures that last half an hour.
+    alertAfterMinutes: 30,
   },
   {
     name: "site-data-grant-cleanup",
