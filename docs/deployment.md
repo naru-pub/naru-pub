@@ -84,8 +84,8 @@ edge Worker serves them ([below](#hosted-sites-at-the-edge)).
 
 For each deployment, `deploy-server.sh`:
 
-1. fast-forwards the server checkout to exactly the commit the images were
-   built from;
+1. replaces its own copies of `deploy-server.sh` and `docker-compose.yml`
+   with the ones committed at exactly the commit the images were built from;
 2. pulls that commit's images from ghcr.io unless they are already loaded;
 3. points the `:current` tags at that commit's images;
 4. keeps the active web slot serving, stops the worker, and runs compatible
@@ -105,9 +105,16 @@ processes before migration. Backward compatibility is not required for these
 explicit cutovers; downtime remains acceptable when needed (see `AGENTS.md`). The Absurd payment migration imports existing work and
 removes the old queue; see [the payment deployment notes](design/absurd-payments.md#deployment).
 
-After the checkout moves, the script re-executes the checked-in copy once
-before it reads the Compose topology. This keeps a deployment safe when the
-deployment script or Compose file itself changes in that commit.
+The server holds no git checkout. Its directory (`~/naru`, where `deploy.sh`
+looks for it as `REMOTE_DIR`) has only `.env`, `.deploy-state/`,
+`deploy-server.sh` and `docker-compose.yml`. The script downloads the last two
+from `raw.githubusercontent.com` at the commit being deployed (the repository
+is public, so no credentials), then re-executes the new copy before it reads
+the Compose topology. This keeps a deployment safe when the deployment script
+or Compose file itself changes in that commit. It records the commit in
+`.deploy-state/commit` and refuses one that GitHub's compare API does not
+report as ahead of it, so an older release cannot go live by accident; use
+rollback for that.
 
 The previous HTTP slot is stopped once traffic has left it. nginx finishes
 in-flight requests on its old workers after a reload, so the script waits for

@@ -43,7 +43,7 @@ esac
 
 DEPLOY_HOST=${DEPLOY_HOST:-naru-pub-deploy}
 # Expanded by the server's shell, not this one.
-REMOTE_DIR=${REMOTE_DIR:-'~/Git/naru-pub'}
+REMOTE_DIR=${REMOTE_DIR:-'~/naru'}
 # The repository whose workflow builds the production images.
 CI_REPO=${CI_REPO:-naru-pub/naru}
 CI_WORKFLOW=${CI_WORKFLOW:-main.yml}
@@ -92,8 +92,8 @@ if [[ -z "$COMMIT" ]]; then
 fi
 echo "Deploying $(git -C "$SOURCE_DIR" log -1 --format='%h %s' "$COMMIT" 2>/dev/null || echo "$COMMIT")"
 
-# Only what has been pushed goes out, because the server checks out the same
-# commit for its compose file and deploy-server.sh.
+# Only what has been pushed goes out, because the server fetches its compose
+# file and deploy-server.sh from GitHub at the same commit.
 if [[ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" != "$COMMIT" ]]; then
   echo "  (not this checkout's HEAD, $(git -C "$SOURCE_DIR" rev-parse --short HEAD); push first to deploy that)"
 fi
@@ -215,12 +215,10 @@ else
   wait_for_ci
 fi
 
-# One ssh session for the rest. First, one-time: a server checkout from before
-# deploy-server.sh existed has none to run, so bring it up to the commit being
-# deployed. Every later deploy leaves moving the checkout to deploy-server.sh,
-# which does it under its lock.
+# One ssh session for the rest. deploy-server.sh replaces itself and the compose
+# file with <commit>'s, under its lock, before it reads either.
 echo "Switching the server to $COMMIT..."
-remote "test -x $REMOTE_DIR/deploy-server.sh || (cd $REMOTE_DIR && git fetch --quiet origin && git merge --ff-only --quiet $COMMIT) && DEPLOY_DOWNTIME=$DEPLOY_DOWNTIME $REMOTE_DIR/deploy-server.sh $COMMIT"
+remote "DEPLOY_DOWNTIME=$DEPLOY_DOWNTIME $REMOTE_DIR/deploy-server.sh $COMMIT"
 
 # The server has the images now, and any copies built here only existed to be
 # sent there. Keeping the ones just deployed makes a retry cheap; the build

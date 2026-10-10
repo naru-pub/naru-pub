@@ -250,7 +250,22 @@ switch_gateway() {
   fi
   cp "$next_config" "$config"
 
-  if docker compose ps --status running --services | grep -qx gateway; then
+  # The gateway bind-mounts $NGINX_DIR by the absolute path it had when it was
+  # created, so after this directory moves it would keep reading the old one.
+  # Recreating it then costs a moment of control-plane requests.
+  local mounted
+  mounted=$(docker inspect naru-pub-gateway \
+    --format '{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d"}}{{.Source}}{{end}}{{end}}' \
+    2>/dev/null || true)
+
+  if [[ -n "$mounted" && "$mounted" != "$PWD/$NGINX_DIR" ]]; then
+    echo "The gateway reads $mounted, not $PWD/$NGINX_DIR; recreating it..."
+    docker compose up -d --no-deps --force-recreate gateway
+    if ! wait_for_healthy gateway; then
+      [[ -f "$previous_config" ]] && cp "$previous_config" "$config"
+      return 1
+    fi
+  elif docker compose ps --status running --services | grep -qx gateway; then
     if ! docker compose exec -T gateway nginx -t; then
       [[ -f "$previous_config" ]] && cp "$previous_config" "$config"
       return 1
@@ -326,10 +341,10 @@ usage() {
 
 LOCK_DIR=.deploy.lock
 
-# One deploy or rollback at a time. Taken before the checkout moves, because
-# moving it is itself a change to the machine. The restart below keeps the
-# lock: bash runs no EXIT trap on exec, and NARU_DEPLOY_LOCK_HELD tells the new
-# process that it already holds it.
+# One deploy or rollback at a time. Taken before the release files are
+# replaced, because that is itself a change to the machine. The restart below
+# keeps the lock: bash runs no EXIT trap on exec, and NARU_DEPLOY_LOCK_HELD
+# tells the new process that it already holds it.
 if [[ -z "${NARU_DEPLOY_LOCK_HELD:-}" ]] && ! mkdir "$LOCK_DIR" 2>/dev/null; then
   echo "Another deploy is in progress (remove $LOCK_DIR if it is not)." >&2
   exit 1
@@ -346,23 +361,52 @@ CONTROL_PLANE_IMAGE="naru-pub-control-plane:$COMMIT"
 JOBS_IMAGE="naru-pub-control-plane-jobs:$COMMIT"
 
 # The images were built from <commit>, and the Compose topology and this script
-# come from this checkout, so the two have to agree. Fast-forward to exactly
-# that commit rather than to whatever main is now, then start over from the
-# checked-out script before reading any of it.
+# have to agree with them. This directory is not a git checkout: it holds .env,
+# .deploy-state/ and the two files below, fetched from GitHub as committed at
+# exactly <commit> (the repository is public). Each is swapped in with mv, so
+# this running copy keeps reading the file it opened, then the script starts
+# over from the new copy before reading any of it.
+SOURCE_REPO=${SOURCE_REPO:-naru-pub/naru}
+RELEASE_FILES=(deploy-server.sh docker-compose.yml)
+COMMIT_FILE="$STATE_DIR/commit"
+
 if [[ "${NARU_DEPLOY_AFTER_PULL:-0}" != 1 ]]; then
-  echo "Checking out $COMMIT..."
-  if ! git fetch --quiet origin || ! git merge --ff-only --quiet "$COMMIT"; then
-    echo "Could not fast-forward the checkout to $COMMIT." >&2
-    exit 1
+  # Refuse to go backwards, as a fast-forward of a checkout did: only a commit
+  # that contains the one last deployed. A server that still has its git
+  # checkout from before says what it was at.
+  deployed=$(cat "$COMMIT_FILE" 2>/dev/null || git rev-parse HEAD 2>/dev/null || true)
+  if [[ -n "$deployed" && "$deployed" != "$COMMIT" ]]; then
+    relation=$(curl -fsSL --retry 3 \
+      "https://api.github.com/repos/$SOURCE_REPO/compare/$deployed...$COMMIT?per_page=1" \
+      | jq -r .status) || relation=unknown
+    if [[ "$relation" != ahead ]]; then
+      echo "$COMMIT is not ahead of the deployed ${deployed:0:7} (GitHub says '$relation');" >&2
+      echo "refusing to put an older release live. Use rollback instead." >&2
+      exit 1
+    fi
   fi
-  if [[ "$(git rev-parse HEAD)" != "$COMMIT" ]]; then
-    # merge --ff-only onto an ancestor is a no-op, not a failure.
-    echo "The checkout is at $(git rev-parse --short HEAD), which is ahead of $COMMIT;" >&2
-    echo "refusing to put an older release live. Use rollback instead." >&2
-    exit 1
-  fi
+
+  echo "Fetching ${RELEASE_FILES[*]} at $COMMIT..."
+  rm -rf .deploy-incoming
+  mkdir .deploy-incoming
+  for file in "${RELEASE_FILES[@]}"; do
+    if ! curl -fsSL --retry 3 -o ".deploy-incoming/$file" \
+      "https://raw.githubusercontent.com/$SOURCE_REPO/$COMMIT/$file"; then
+      echo "Could not fetch $file at $COMMIT from $SOURCE_REPO." >&2
+      exit 1
+    fi
+  done
+  chmod +x .deploy-incoming/deploy-server.sh
+  for file in "${RELEASE_FILES[@]}"; do
+    mv ".deploy-incoming/$file" "$file"
+  done
+  rmdir .deploy-incoming
   exec env NARU_DEPLOY_AFTER_PULL=1 NARU_DEPLOY_LOCK_HELD=1 "$0" "$@"
 fi
+# What the files here are now from. Written here rather than above so that the
+# first deploy, which the previous script started by moving its checkout, also
+# records it.
+printf '%s\n' "$COMMIT" > "$COMMIT_FILE"
 
 # Where CI pushes the images for each commit on main (.github/workflows/main.yml).
 IMAGE_REGISTRY=${IMAGE_REGISTRY:-ghcr.io/naru-pub/naru}
