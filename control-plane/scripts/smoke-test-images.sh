@@ -60,9 +60,11 @@ docker network create "$run" >/dev/null
 
 echo "Starting PostgreSQL..."
 # The major version production runs, so a migration that needs it fails here
-# first.
-start db -e POSTGRES_PASSWORD=smoke -e POSTGRES_DB=naru postgres:18-alpine
+# first. The Debian image, whose PostgreSQL apt repository has the extensions
+# the migrations create; they need no restart, only their files.
+start db -e POSTGRES_PASSWORD=smoke -e POSTGRES_DB=naru postgres:18
 wait_for PostgreSQL 60 docker exec "$run-db" pg_isready -U postgres -d naru
+docker exec "$run-db" sh -c 'apt-get update -qq && apt-get install -qq --yes --no-install-recommends "postgresql-$PG_MAJOR-hll"' >/dev/null
 
 echo "Migrating, twice: the second run must find nothing to do..."
 for _ in 1 2; do
