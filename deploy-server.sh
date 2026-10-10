@@ -250,36 +250,16 @@ switch_gateway() {
   fi
   cp "$next_config" "$config"
 
-  # The gateway bind-mounts $NGINX_DIR by the absolute path it had when it was
-  # created, so after this directory moves it would keep reading the old one.
-  # Recreating it then costs a moment of control-plane requests.
-  local mounted
-  mounted=$(docker inspect naru-gateway \
-    --format '{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d"}}{{.Source}}{{end}}{{end}}' \
-    2>/dev/null || true)
-
-  if [[ -n "$mounted" && "$mounted" != "$PWD/$NGINX_DIR" ]]; then
-    echo "The gateway reads $mounted, not $PWD/$NGINX_DIR; recreating it..."
-    docker compose up -d --no-deps --force-recreate gateway
-    if ! wait_for_healthy gateway; then
-      [[ -f "$previous_config" ]] && cp "$previous_config" "$config"
-      return 1
-    fi
-  elif docker compose ps --status running --services | grep -qx gateway; then
+  if docker compose ps --status running --services | grep -qx gateway; then
     if ! docker compose exec -T gateway nginx -t; then
       [[ -f "$previous_config" ]] && cp "$previous_config" "$config"
       return 1
     fi
     docker compose exec -T gateway nginx -s reload
   else
-    # The first deployment of this Compose project replaces whatever owns the
-    # public port: the gateway of the project before it was renamed from
-    # naru-pub, or the containers from before blue-green deployments. Every
-    # later deployment keeps the gateway running.
-    docker compose pull gateway
-    docker compose create gateway
-    docker rm -f naru-pub-gateway naru-pub-control-plane naru-pub-proxy 2>/dev/null || true
-    docker compose start gateway
+    # Only the first deployment starts the gateway. Every later one keeps it
+    # running and reloads it.
+    docker compose up -d --no-deps gateway
     wait_for_healthy gateway
   fi
 
@@ -373,10 +353,8 @@ RELEASE_FILES=(deploy-server.sh docker-compose.yml)
 COMMIT_FILE="$STATE_DIR/commit"
 
 if [[ "${NARU_DEPLOY_AFTER_PULL:-0}" != 1 ]]; then
-  # Refuse to go backwards, as a fast-forward of a checkout did: only a commit
-  # that contains the one last deployed. A server that still has its git
-  # checkout from before says what it was at.
-  deployed=$(cat "$COMMIT_FILE" 2>/dev/null || git rev-parse HEAD 2>/dev/null || true)
+  # Refuse to go backwards: only a commit that contains the one last deployed.
+  deployed=$(cat "$COMMIT_FILE" 2>/dev/null || true)
   if [[ -n "$deployed" && "$deployed" != "$COMMIT" ]]; then
     relation=$(curl -fsSL --retry 3 \
       "https://api.github.com/repos/$SOURCE_REPO/compare/$deployed...$COMMIT?per_page=1" \
@@ -403,12 +381,9 @@ if [[ "${NARU_DEPLOY_AFTER_PULL:-0}" != 1 ]]; then
     mv ".deploy-incoming/$file" "$file"
   done
   rmdir .deploy-incoming
+  printf '%s\n' "$COMMIT" > "$COMMIT_FILE"
   exec env NARU_DEPLOY_AFTER_PULL=1 NARU_DEPLOY_LOCK_HELD=1 "$0" "$@"
 fi
-# What the files here are now from. Written here rather than above so that the
-# first deploy, which the previous script started by moving its checkout, also
-# records it.
-printf '%s\n' "$COMMIT" > "$COMMIT_FILE"
 
 # Where CI pushes the images for each commit on main (.github/workflows/main.yml).
 IMAGE_REGISTRY=${IMAGE_REGISTRY:-ghcr.io/naru-pub/naru}
@@ -448,60 +423,16 @@ control_plane_service="control-plane-$target"
 docker tag "$CONTROL_PLANE_IMAGE" naru-control-plane:current
 docker tag "$JOBS_IMAGE" naru-control-plane-jobs:current
 
-# The Compose project was called naru-pub until it was renamed naru, and
-# Compose sees nothing of the old project's containers: its gateway, slots and
-# worker, and from older releases the retired hosted-site proxies and cron.
-# They are stopped alongside their counterparts here and removed once traffic
-# has moved to this project (see remove_legacy_project).
-LEGACY_PROJECT=naru-pub
-
-# The old project's containers whose service is not one of the arguments.
-legacy_containers_except() {
-  local id service
-  for id in $(docker ps -aq --filter "label=com.docker.compose.project=$LEGACY_PROJECT"); do
-    service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$id")
-    if [[ " $* " != *" $service "* ]]; then
-      printf '%s\n' "$id"
-    fi
-  done
-}
-
-stop_legacy_except() {
-  local ids
-  ids=$(legacy_containers_except "$@")
-  if [[ -n "$ids" ]]; then
-    docker stop --timeout 300 $ids >/dev/null
-  fi
-}
-
-remove_legacy_project() {
-  local ids repository tag
-  ids=$(docker ps -aq --filter "label=com.docker.compose.project=$LEGACY_PROJECT")
-  if [[ -z "$ids" ]]; then
-    return 0
-  fi
-  echo "Removing the containers of the $LEGACY_PROJECT Compose project..."
-  docker rm -f $ids >/dev/null
-  docker network rm "${LEGACY_PROJECT}_default" >/dev/null 2>&1 || true
-  for repository in naru-pub-control-plane naru-pub-control-plane-jobs naru-pub-proxy; do
-    for tag in $(docker image ls "$repository" --format '{{.Tag}}'); do
-      docker rmi "$repository:$tag" >/dev/null 2>&1 || true
-    done
-  done
-}
-
 # Ordinary releases keep the active HTTP slot serving until its replacement
 # passes health checks. Breaking migrations explicitly opt into a full cutover.
 case "$DEPLOY_DOWNTIME" in
   0)
     echo "Keeping the active web slot serving; stopping background processes before migrations..."
     docker compose stop --timeout 300 worker
-    stop_legacy_except gateway control-plane-blue control-plane-green
     ;;
   1)
     echo "Stopping application and background processes for a breaking schema cutover..."
     docker compose stop --timeout 300 control-plane-blue control-plane-green worker
-    stop_legacy_except gateway
     ;;
   *) echo "DEPLOY_DOWNTIME must be 0 or 1." >&2; exit 2 ;;
 esac
@@ -527,12 +458,10 @@ docker compose up -d --no-deps --force-recreate worker
 if [[ "$current" != none ]]; then
   stop_slot "$current"
 fi
-remove_legacy_project
 
 # Nothing else removes old releases. docker refuses to remove the last tag of
 # an image a container still uses, so the stopped slot's image stays for a
-# rollback until the next deploy recreates that slot. `latest` is what
-# `docker compose build` tagged before images were built elsewhere.
+# rollback until the next deploy recreates that slot.
 echo "Removing old release images..."
 for repository in "${REPOSITORIES[@]}"; do
   for tag in $(docker image ls "$repository" --format '{{.Tag}}'); do

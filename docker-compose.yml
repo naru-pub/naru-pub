@@ -4,8 +4,7 @@
 # deliberately no `build:`: a build here is what ran this machine out of memory.
 # Without one, a missing image would send compose to Docker Hub, so fail
 # instead.
-# Fixed rather than taken from the directory's name. It was naru-pub until
-# deploy-server.sh moved everything over to this one.
+# Fixed rather than taken from the directory's name.
 name: naru
 
 x-control-plane: &control-plane
