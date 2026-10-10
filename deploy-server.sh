@@ -5,8 +5,8 @@
 #   ./deploy-server.sh <commit>
 #   ./deploy-server.sh rollback
 #
-# It deploys naru-pub-control-plane:<commit> (the Next.js server) and
-# naru-pub-control-plane-jobs:<commit> (worker and migrations). Hosted sites
+# It deploys naru-control-plane:<commit> (the Next.js server) and
+# naru-control-plane-jobs:<commit> (worker and migrations). Hosted sites
 # are served by the edge Worker (edge/), not from here. When `deploy.sh build`
 # has already loaded them,
 # those are used. Otherwise they are pulled from the images GitHub Actions
@@ -254,7 +254,7 @@ switch_gateway() {
   # created, so after this directory moves it would keep reading the old one.
   # Recreating it then costs a moment of control-plane requests.
   local mounted
-  mounted=$(docker inspect naru-pub-gateway \
+  mounted=$(docker inspect naru-gateway \
     --format '{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d"}}{{.Source}}{{end}}{{end}}' \
     2>/dev/null || true)
 
@@ -272,11 +272,13 @@ switch_gateway() {
     fi
     docker compose exec -T gateway nginx -s reload
   else
-    # The first blue-green deployment replaces the two legacy containers that
-    # own the public ports. Every later deployment keeps the gateway running.
+    # The first deployment of this Compose project replaces whatever owns the
+    # public port: the gateway of the project before it was renamed from
+    # naru-pub, or the containers from before blue-green deployments. Every
+    # later deployment keeps the gateway running.
     docker compose pull gateway
     docker compose create gateway
-    docker rm -f naru-pub-control-plane naru-pub-proxy 2>/dev/null || true
+    docker rm -f naru-pub-gateway naru-pub-control-plane naru-pub-proxy 2>/dev/null || true
     docker compose start gateway
     wait_for_healthy gateway
   fi
@@ -357,8 +359,8 @@ if [[ "$1" == rollback ]]; then
 fi
 
 COMMIT=$1
-CONTROL_PLANE_IMAGE="naru-pub-control-plane:$COMMIT"
-JOBS_IMAGE="naru-pub-control-plane-jobs:$COMMIT"
+CONTROL_PLANE_IMAGE="naru-control-plane:$COMMIT"
+JOBS_IMAGE="naru-control-plane-jobs:$COMMIT"
 
 # The images were built from <commit>, and the Compose topology and this script
 # have to agree with them. This directory is not a git checkout: it holds .env,
@@ -415,17 +417,17 @@ IMAGE_REGISTRY=${IMAGE_REGISTRY:-ghcr.io/naru-pub/naru}
 # keychain, which the ssh session deploy.sh runs this in cannot open; see
 # docs/deployment.md.
 
-REPOSITORIES=(naru-pub-control-plane naru-pub-control-plane-jobs)
+REPOSITORIES=(naru-control-plane naru-control-plane-jobs)
 
 # Pulled under the registry name, then renamed to the local one, so everything
-# below and the cleanup at the end only ever see naru-pub-*:<commit> and
-# naru-pub-*:current. An image `deploy.sh build` shipped is used as is.
+# below and the cleanup at the end only ever see naru-*:<commit> and
+# naru-*:current. An image `deploy.sh build` shipped is used as is.
 for repository in "${REPOSITORIES[@]}"; do
   image="$repository:$COMMIT"
   if docker image inspect "$image" >/dev/null 2>&1; then
     continue
   fi
-  remote_image="$IMAGE_REGISTRY-${repository#naru-pub-}:git-$COMMIT-arm64"
+  remote_image="$IMAGE_REGISTRY-${repository#naru-}:git-$COMMIT-arm64"
   echo "Pulling $remote_image..."
   if ! docker pull --quiet --platform linux/arm64 "$remote_image" >/dev/null; then
     echo "Could not pull $remote_image. Check that CI built it and that this" >&2
@@ -443,28 +445,50 @@ control_plane_service="control-plane-$target"
 # Every service is declared with the :current tags. Moving them does not touch
 # the running containers: a container holds the image it was created from, not
 # the name, which is also what keeps the stopped slot able to roll back.
-docker tag "$CONTROL_PLANE_IMAGE" naru-pub-control-plane:current
-docker tag "$JOBS_IMAGE" naru-pub-control-plane-jobs:current
+docker tag "$CONTROL_PLANE_IMAGE" naru-control-plane:current
+docker tag "$JOBS_IMAGE" naru-control-plane-jobs:current
 
-# Remove the retired hosted-site proxy, which the edge Worker replaced, and
-# its images. Neither slot's container is declared in Compose any more.
-for service in proxy-blue proxy-green; do
-  retired_proxy=$(docker ps -aq --filter label=com.docker.compose.project=naru-pub --filter "label=com.docker.compose.service=$service")
-  if [[ -n "$retired_proxy" ]]; then
-    docker rm -f $retired_proxy >/dev/null
+# The Compose project was called naru-pub until it was renamed naru, and
+# Compose sees nothing of the old project's containers: its gateway, slots and
+# worker, and from older releases the retired hosted-site proxies and cron.
+# They are stopped alongside their counterparts here and removed once traffic
+# has moved to this project (see remove_legacy_project).
+LEGACY_PROJECT=naru-pub
+
+# The old project's containers whose service is not one of the arguments.
+legacy_containers_except() {
+  local id service
+  for id in $(docker ps -aq --filter "label=com.docker.compose.project=$LEGACY_PROJECT"); do
+    service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$id")
+    if [[ " $* " != *" $service "* ]]; then
+      printf '%s\n' "$id"
+    fi
+  done
+}
+
+stop_legacy_except() {
+  local ids
+  ids=$(legacy_containers_except "$@")
+  if [[ -n "$ids" ]]; then
+    docker stop --timeout 300 $ids >/dev/null
   fi
-done
-for tag in $(docker image ls naru-pub-proxy --format '{{.Tag}}'); do
-  docker rmi "naru-pub-proxy:$tag" >/dev/null 2>&1 || true
-done
+}
 
-# Stop and remove the retired scheduler from older releases. It is no longer
-# declared in Compose; do not let it overlap the durable maintenance worker.
-retired_cron=$(docker ps -aq --filter label=com.docker.compose.project=naru-pub --filter label=com.docker.compose.service=cron)
-if [[ -n "$retired_cron" ]]; then
-  docker stop --timeout 300 $retired_cron
-  docker rm $retired_cron
-fi
+remove_legacy_project() {
+  local ids repository tag
+  ids=$(docker ps -aq --filter "label=com.docker.compose.project=$LEGACY_PROJECT")
+  if [[ -z "$ids" ]]; then
+    return 0
+  fi
+  echo "Removing the containers of the $LEGACY_PROJECT Compose project..."
+  docker rm -f $ids >/dev/null
+  docker network rm "${LEGACY_PROJECT}_default" >/dev/null 2>&1 || true
+  for repository in naru-pub-control-plane naru-pub-control-plane-jobs naru-pub-proxy; do
+    for tag in $(docker image ls "$repository" --format '{{.Tag}}'); do
+      docker rmi "$repository:$tag" >/dev/null 2>&1 || true
+    done
+  done
+}
 
 # Ordinary releases keep the active HTTP slot serving until its replacement
 # passes health checks. Breaking migrations explicitly opt into a full cutover.
@@ -472,10 +496,12 @@ case "$DEPLOY_DOWNTIME" in
   0)
     echo "Keeping the active web slot serving; stopping background processes before migrations..."
     docker compose stop --timeout 300 worker
+    stop_legacy_except gateway control-plane-blue control-plane-green
     ;;
   1)
     echo "Stopping application and background processes for a breaking schema cutover..."
     docker compose stop --timeout 300 control-plane-blue control-plane-green worker
+    stop_legacy_except gateway
     ;;
   *) echo "DEPLOY_DOWNTIME must be 0 or 1." >&2; exit 2 ;;
 esac
@@ -501,6 +527,7 @@ docker compose up -d --no-deps --force-recreate worker
 if [[ "$current" != none ]]; then
   stop_slot "$current"
 fi
+remove_legacy_project
 
 # Nothing else removes old releases. docker refuses to remove the last tag of
 # an image a container still uses, so the stopped slot's image stays for a

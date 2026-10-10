@@ -4,13 +4,12 @@
 # deliberately no `build:`: a build here is what ran this machine out of memory.
 # Without one, a missing image would send compose to Docker Hub, so fail
 # instead.
-# Fixed rather than taken from the directory's name, which has changed
-# (~/Git/naru-pub, now ~/naru) while the containers, their names and the
-# network kept this one.
-name: naru-pub
+# Fixed rather than taken from the directory's name. It was naru-pub until
+# deploy-server.sh moved everything over to this one.
+name: naru
 
 x-control-plane: &control-plane
-  image: naru-pub-control-plane:current
+  image: naru-control-plane:current
   pull_policy: never
   # deploy.sh stops the slot that is not serving. `always` would bring it back
   # whenever the Docker daemon restarts; this leaves it stopped.
@@ -38,7 +37,7 @@ x-control-plane: &control-plane
 services:
   gateway:
     image: nginx:1.30.4-alpine
-    container_name: naru-pub-gateway
+    container_name: naru-gateway
     restart: always
     ports:
       - "40000:3000"
@@ -60,7 +59,7 @@ services:
   # image above is only the Next.js server and cannot run these.
   worker:
     stop_grace_period: 5m
-    image: naru-pub-control-plane-jobs:current
+    image: naru-control-plane-jobs:current
     pull_policy: never
     restart: always
     # Compiled by scripts/build-cli.mjs, so plain node with no tsx loader.

@@ -12,7 +12,7 @@
 # <commit> on the server, which pulls the images from the registry.
 #
 # `build` is the manual path, for when CI is unavailable: it builds
-# naru-pub-control-plane:<commit> and naru-pub-control-plane-jobs:<commit> from
+# naru-control-plane:<commit> and naru-control-plane-jobs:<commit> from
 # origin/main here, ships them over ssh, and runs the same deploy-server.sh
 # <commit>, which
 # then finds them already loaded and pulls nothing. `mise run deploy` runs the
@@ -141,8 +141,8 @@ wait_for_ci() {
 }
 
 build_and_ship() {
-  local control_plane_image="naru-pub-control-plane:$COMMIT"
-  local jobs_image="naru-pub-control-plane-jobs:$COMMIT"
+  local control_plane_image="naru-control-plane:$COMMIT"
+  local jobs_image="naru-control-plane-jobs:$COMMIT"
 
   if ! docker info >/dev/null 2>&1; then
     if command -v orb >/dev/null; then
@@ -224,7 +224,7 @@ remote "DEPLOY_DOWNTIME=$DEPLOY_DOWNTIME $REMOTE_DIR/deploy-server.sh $COMMIT"
 # sent there. Keeping the ones just deployed makes a retry cheap; the build
 # cache that makes the next build fast is separate and stays.
 if [[ "$MODE" == build ]]; then
-  for repository in naru-pub-control-plane naru-pub-control-plane-jobs; do
+  for repository in naru-control-plane naru-control-plane-jobs; do
     for tag in $(docker image ls "$repository" --format '{{.Tag}}'); do
       if [[ "$tag" != "$COMMIT" ]]; then
         docker rmi "$repository:$tag" >/dev/null 2>&1 || true

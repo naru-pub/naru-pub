@@ -28,8 +28,8 @@ mise run deploy        # same as ./deploy.sh
 It resolves `origin/main`, waits with `gh` for that commit's CI run to succeed,
 and runs `deploy-server.sh <commit>` on the host named by the `naru-pub-deploy`
 alias in `~/.ssh/config`. The server pulls the images from ghcr.io and tags
-them `naru-pub-control-plane:<commit>` and
-`naru-pub-control-plane-jobs:<commit>`. Only `origin/main` is deployed, so push first. `./deploy-server.sh <commit>` on the
+them `naru-control-plane:<commit>` and
+`naru-control-plane-jobs:<commit>`. Only `origin/main` is deployed, so push first. `./deploy-server.sh <commit>` on the
 server does the same deployment without the CI wait.
 
 This path is meant for a metered connection such as a phone hotspot. The
