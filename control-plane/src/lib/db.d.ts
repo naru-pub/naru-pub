@@ -404,13 +404,6 @@ export interface HomeDirectoryExports {
   user_id: string;
 }
 
-export interface HomeDirectorySizeHistory {
-  id: Generated<string>;
-  recorded_at: Generated<Timestamp>;
-  size_bytes: number;
-  user_id: string | null;
-}
-
 export interface PageviewDailyStats {
   date: Timestamp;
   unique_visitors: Generated<number>;
@@ -705,7 +698,6 @@ export interface DB {
   github_deploy_targets: GithubDeployTargets;
   github_deployments: GithubDeployments;
   home_directory_exports: HomeDirectoryExports;
-  home_directory_size_history: HomeDirectorySizeHistory;
   pageview_daily_stats: PageviewDailyStats;
   pageview_daily_visitors: PageviewDailyVisitors;
   pageviews: Pageviews;

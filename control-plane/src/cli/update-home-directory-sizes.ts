@@ -59,16 +59,6 @@ async function processUserBatch(
         .where("id", "=", user.id)
         .execute();
 
-      // Insert a record into the history table
-      await db
-        .insertInto("home_directory_size_history")
-        .values({
-          user_id: user.id,
-          size_bytes: directorySize,
-          recorded_at: now,
-        })
-        .execute();
-
       console.log(`Updated ${user.login_name}: ${directorySize} bytes`);
       return { success: true, user: user.login_name, size: directorySize };
     } catch (error) {

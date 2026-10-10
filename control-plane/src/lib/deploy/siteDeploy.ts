@@ -231,15 +231,6 @@ async function updateUserHomeDirectorySize(userId: string, loginName: string) {
     .where("id", "=", userId)
     .execute();
 
-  await db
-    .insertInto("home_directory_size_history")
-    .values({
-      user_id: userId,
-      size_bytes: directorySize,
-      recorded_at: now,
-    })
-    .execute();
-
   return directorySize;
 }
 
